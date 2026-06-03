@@ -2,7 +2,7 @@
 
 ## Purpose
 
-OneCode is a code agent runtime project. This file is a short orientation guide for agents entering the repository. It should help agents quickly understand where project knowledge lives and how to use it before starting work.
+OneCode is a code agent runtime project written in Python. This file is a short orientation guide for agents entering the repository. It should help agents quickly understand where project knowledge lives and how to use it before starting work.
 
 This file is not an execution plan, architecture document, or task list. For architecture details, use `architecture.md`.
 
@@ -21,7 +21,11 @@ Before making project changes, read these sources in order:
    - Always check relevant active execution plans before implementing related behavior.
    - Active plans describe work that is currently intended, in progress, or still being shaped.
 
-4. `docs/references/`
+4. `docs/tech-debt/tech-debt-tracker.md`
+   - Check active technical debt before changing related code.
+   - Use it to understand known shortcuts, accepted risks, and intended remediation directions.
+
+5. `docs/references/`
    - Use reference material as supporting context, examples, or external notes.
    - References can inform implementation, but they do not override `architecture.md`, design docs, or active execution plans.
 
@@ -43,6 +47,11 @@ Before making project changes, read these sources in order:
   - Holds archived execution plans that have already been implemented.
   - Use it for historical context only.
 
+- `docs/tech-debt/`
+  - Holds the project technical debt tracker.
+  - Read `docs/tech-debt/tech-debt-tracker.md` when working near known debt or when deciding whether an issue is an accepted shortcut.
+  - Use `tech_debt_tracker_guide.md` for the required fields, structure, and update rules when adding, changing, or resolving debt entries.
+
 - `docs/references/`
   - Holds reference documents, notes, images, example code, and topic-specific research material.
   - Existing reference topics include agent loops, tool use, permissions, hooks, context compaction, memory, system prompts, error recovery, and task systems.
@@ -52,7 +61,20 @@ Before making project changes, read these sources in order:
 - Keep this file concise and general. Do not add task-specific instructions here.
 - Do not duplicate the contents of `architecture.md`; link agents to it instead.
 - Prefer active execution plans over completed plans when judging current implementation intent.
+- Prefer the tech debt tracker over ad hoc assumptions when working around known shortcuts or deciding whether to preserve, fix, or document a debt item.
 - Treat reference material as background context unless a design doc or active plan explicitly promotes it into project direction.
 - If the repository contains target architecture before implementation files exist, follow the documented target structure when adding new project code.
-- When adding new documentation, place conceptual material in `docs/design-docs/`, implementation plans in `docs/exec-plans/active/`, completed plans in `docs/exec-plans/completed/`, and supporting examples or research in `docs/references/`.
+- When adding new documentation, place conceptual material in `docs/design-docs/`, implementation plans in `docs/exec-plans/active/`, completed plans in `docs/exec-plans/completed/`, technical debt records in `docs/tech-debt/`, and supporting examples or research in `docs/references/`.
+- When adding, updating, or resolving technical debt, follow `tech_debt_tracker_guide.md` and keep entries concrete, code-linked, and remediation-oriented.
 
+# ExecPlans
+
+When writing complex features or significant refactors, use an ExecPlan (as described in PLANS.md) from design to implementation.
+
+## uv Environment
+
+- Sync the virtual environment with `uv sync --dev`.
+- Activate it on Windows with `.\.venv\Scripts\Activate.ps1`.
+- Run tests without activating via `uv run python -m pytest tests -q`.
+- Run compile checks with `uv run python -m compileall core services infrastructure`.
+- Copy `.env.example` to `.env` for local model provider settings. OneCode reads model provider variables only from `.env`.
