@@ -83,7 +83,6 @@ OneCode/
       chat_completions.py
     config/
       env.py
-      project_config.py
     filesystem/
       paths.py
 
@@ -232,9 +231,9 @@ tools/read_file/
 
 `infrastructure/providers/chat_completions.py` 实现 Chat Completions 兼容 provider，把外部协议转换为 `services/model/types.py` 中的内部结构。
 
-`infrastructure/config/env.py` 读取环境变量。
+`infrastructure/config/env.py` 读取项目根目录 `.env` 文件。
 
-`infrastructure/config/project_config.py` 读取项目配置，例如默认模型、guard 策略、启用工具、UI 配置。
+`infrastructure/config/env.py` 从项目根目录 `.env` 读取运行时配置，例如默认模型 provider、模型名、网关地址、API key 和请求参数。模型 provider 配置只从 `.env` 读取，不从系统环境变量或项目 JSON/TOML 配置读取。
 
 `infrastructure/filesystem/paths.py` 放跨平台路径处理的底层工具函数。更高层的边界判断仍属于 `services/guard/`。
 
@@ -423,4 +422,3 @@ CLI 可以提供：
 - trace 和 transition 展示。
 
 CLI 不应该直接执行工具、拼 prompt、判断路径权限或处理 provider 协议。
-

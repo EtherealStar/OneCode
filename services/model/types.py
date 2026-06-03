@@ -8,6 +8,26 @@ from typing import Any
 from services.tools.types import ToolCall
 
 
+class ProviderError(Exception):
+    """Provider-neutral model error raised by infrastructure adapters."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_id: str | None = None,
+        status_code: int | None = None,
+        error_type: str | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.provider_id = provider_id
+        self.status_code = status_code
+        self.error_type = error_type
+        self.retryable = retryable
+
+
 @dataclass
 class ModelUsage:
     input_tokens: int = 0

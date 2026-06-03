@@ -1,0 +1,16 @@
+[project]
+name = "onecode"
+version = "0.1.0"
+description = "A code agent runtime."
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv>=1.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
