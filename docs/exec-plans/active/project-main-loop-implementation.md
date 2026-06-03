@@ -1,353 +1,402 @@
-# OneCode 项目主循环实现计划
+# OneCode 主循环与上下文重建实现计划
 
-目标：把当前 MVP 的 `AgentLoop` 演进为项目级主循环。主循环仍保持薄，只负责稳定编排；上下文重建、工具执行、压缩、错误恢复、hook 和观测事件分别进入各自边界。
+目标：只实现项目级主循环和它每轮模型调用必须依赖的上下文重建边界。当前阶段不实现完整工具系统、guard、CLI、真实 provider、压缩策略、hook 系统或可观测性系统；只为它们预留主循环所需的最小接口，保证后续模块可以接入而不需要重写主循环。
+
+本计划的核心交付是：
+
+- `core/loop.py`：薄主循环。
+- `core/context_engine.py`：每轮重建 `ContextSnapshot`。
+- `core/runtime_state.py`：主循环状态。
+- `core/transitions.py`：主循环 transition reason。
+- 最小协议类型：模型客户端、工具执行器、消息存储、prompt assembler、tool schema provider。
+- 单元测试：用 fake model、fake tool executor、fake context dependencies 验证主循环行为。
 
 ## 参考依据
 
+- `architecture.md`
+  - `core/loop.py` 只负责 agent 生命周期编排。
+  - `core/context_engine.py` 负责把当前运行状态转换为一次模型调用所需的完整快照。
+  - 主循环不能 import 具体工具目录，不能 import 具体 provider，不能实现路径规则、prompt 文本、压缩策略或 UI 渲染。
+
 - `docs/design-docs/core-beliefs.md`
   - 主循环只表达“准备上下文 -> 调模型 -> 执行工具或停止”的编排。
-  - 新能力优先进入 registry、hook、prompt section、compaction layer、state transition 或 model client。
-  - 上下文是受管理的工作内存；全量压缩前必须写 transcript。
-  - 错误恢复应成为明确 transition，而不是散落异常分支。
+  - 新能力应进入 registry、hook、prompt section、compaction layer、state transition 或 model client。
+  - 错误恢复应成为明确 transition。
+  - 上下文是受管理的工作内存，但本阶段只实现重建边界，不实现完整压缩系统。
 
 - `docs/references/s01_agent_loop/`
   - 最小循环是 `while True`：模型需要工具则执行并回填工具结果；没有工具调用则结束。
-  - mvp使用 `stop_reason == "tool_use"`，但完整实现不能只依赖这个字段。
+  - 教学版本用 `stop_reason == "tool_use"`，但项目级主循环应以实际 `tool_calls` 作为续轮信号。
 
 - `docs/references/主循环和重建上下文/query.ts`
-  - 每轮循环从状态重建 `messagesForQuery`，而不是无条件把完整历史发给模型。
-  - 续轮信号以内容里实际出现的 tool use 为准；流式场景中 `stop_reason` 可能晚到或为空。
-  - 状态需要保存 `turnCount`、`transition`、`hasAttemptedReactiveCompact`、`maxOutputTokensRecoveryCount` 等恢复字段。
-  - 模型调用前按顺序处理工具结果预算、snip/sliding window、micro compact、auto compact。
+  - 每轮循环从状态重建 `messagesForQuery`。
+  - `stop_reason` 在流式场景可能晚到或为空，不能作为唯一续轮信号。
+  - 状态需要保存 `turnCount`、`transition`、`hasAttemptedReactiveCompact`、`maxOutputTokensRecoveryCount` 等字段；本阶段只实现字段和 transition，不实现完整恢复策略。
 
 - `docs/references/主循环和重建上下文/QueryEngine.ts`
-  - Engine 持有会话级 mutable messages、usage、permission denials、read-file cache 等跨 turn 状态。
-  - 用户消息进入循环前应先记录 transcript，保证请求中断时仍可恢复。
-  - compact boundary 之后应裁剪旧 mutable messages，让后续 query 只从 compact 后上下文重建。
-  - usage 从流式 `message_delta/message_stop` 或普通响应中累积，作为 session state 的一部分。
+  - 用户消息进入循环前应先进入会话状态，后续由上下文重建生成模型可见消息。
+  - usage 是 session state 的一部分。
+  - compact boundary 之后的裁剪属于上下文服务责任；本阶段只预留接口。
 
 ## 当前状态
 
-当前仓库已有 MVP：
+当前仓库已经不再保留 MVP demo 源码。`docs/exec-plans/completed/cli-code-agent-mvp.md` 只能作为历史参考，不能作为当前实现基础。
 
-- `onecode_demo/loop.py` 已实现基本 `while True`、工具调用、Stop hook、rate limit retry、max output recovery、reactive compact。
-- `onecode_demo/compaction.py` 已实现工具结果预算、旧工具结果清理、滑动窗口、full compact、reactive compact 和 transcript 写入。
-- `onecode_demo/model_client.py` 已把 Chat Completions 响应归一为 `LLMResponse` 和 `ToolCall`。
-- `onecode_demo/state.py` 已保存 usage、turn count、reactive compact guard、output recovery count 和 last transition。
+当前阶段不追求一次性实现完整 runtime。它只建立主循环和上下文重建的稳定骨架，使后续工具、guard、prompt、provider、compaction、hook、CLI 和 observability 能按架构逐步接入。
 
-主要缺口：
+## 本阶段范围
 
-- 没有独立的上下文重建层；压缩和模型可见消息投影直接散在 `AgentLoop`/`Compactor`。
-- transcript 只在 full compact 时写；用户消息 accepted 后、assistant/tool result 后还没有持续写入。
-- `state.messages` 既是完整会话历史，又是模型可见工作内存；未来恢复、compact boundary、content replacement 难以扩展。
-- transition 只是字符串，尚未形成可观测事件或结构化记录。
-- 模型客户端目前非流式，但主循环契约应提前以 `response.tool_calls` 作为续轮信号，避免未来流式迁移时改 loop。
+### 必须实现
 
-## 实现边界
+- `core/loop.py`
+  - 接收用户输入。
+  - 追加用户消息。
+  - 每轮调用 `ContextEngine.build_for_model()`。
+  - 调用注入的 `ModelClient`。
+  - 追加 assistant message。
+  - 如果 `LLMResponse.tool_calls` 非空，调用注入的 `ToolExecutor`，追加 tool result message，并继续。
+  - 如果没有 tool calls，返回最终文本。
+  - 处理 `max_turns`。
+  - 设置基础 transition。
 
-### 主循环职责
+- `core/context_engine.py`
+  - 从 `MessageStore` 读取当前消息。
+  - 调用可选的 `ContextPreparer` 接口，允许后续 compaction 接入。
+  - 调用 `PromptAssembler` 接口生成 system prompt。
+  - 调用 `ToolSchemaProvider` 接口生成 tool schemas。
+  - 返回不可变 `ContextSnapshot`。
 
-`AgentLoop` 只保留这些职责：
+- `core/runtime_state.py`
+  - 保存 turn count、usage、transition、恢复字段和 session metadata。
+  - 不保存复杂业务状态。
 
-1. 接收用户 prompt，触发 `UserPromptSubmit`。
-2. 把被接受的用户消息追加到会话状态并记录 transcript。
-3. 进入 `while True`。
-4. 调用上下文重建层生成本轮 `ContextSnapshot`。
-5. 调用模型客户端。
-6. 根据响应更新 usage、追加 assistant message、记录 transcript。
-7. 如果有 tool calls，交给工具执行器，追加 tool result message，记录 transcript，并继续。
-8. 如果没有 tool calls，触发 Stop hook；Stop hook 不要求继续则返回最终文本。
-9. 对 rate limit、context limit、max output、max turns 等恢复路径设置 transition。
+- `core/transitions.py`
+  - 定义本阶段主循环会设置的 transition reason。
 
-主循环不直接实现：
+- 最小协议或类型
+  - `LLMResponse`
+  - `ToolCall`
+  - `ModelUsage` 或 `UsageSnapshot`
+  - `ContextSnapshot`
+  - `MessageStore`
+  - `ModelClient`
+  - `ToolExecutor`
+  - `PromptAssembler`
+  - `ToolSchemaProvider`
+  - `ContextPreparer`
 
-- 具体工具名分支。
-- 路径权限策略。
-- prompt section 文本细节。
-- 压缩策略细节。
-- provider-specific 字段解析。
-- transcript 文件格式细节。
+- 测试
+  - 主循环 tool call 续轮。
+  - 主循环最终停止。
+  - 主循环不依赖 `stop_reason == "tool_use"`。
+  - 每轮都会重建 `ContextSnapshot`。
+  - tool results 会进入下一轮上下文来源。
+  - `max_turns` transition。
 
-### 上下文重建层
+### 只预留接口，不实现功能
 
-新增 `onecode/context.py`，提供：
+- 具体工具实现。
+- 工具 registry 的完整发现、metadata、schema 转换。
+- 文件 guard、路径安全、permission ask/deny。
+- hook registry 和 builtin hooks。
+- compaction 策略、transcript、result store。
+- prompt section 文案和动态 prompt 完整策略。
+- 真实 Chat Completions provider。
+- CLI。
+- observability JSONL trace。
+- 流式输出。
+- 并发工具执行。
+- session resume、memory、task、plugin、skill。
+
+这些能力后续实现时必须接入本阶段定义的接口，而不是修改主循环核心结构。
+
+## 设计
+
+### 主循环边界
+
+`core/loop.py` 的主流程只做编排：
+
+```text
+accept user prompt
+append user message
+while running:
+  build ContextSnapshot
+  call model
+  append assistant message
+  if response.tool_calls:
+    execute tool calls through ToolExecutor
+    append tool result message
+    continue
+  return final text
+```
+
+主循环不做：
+
+- 具体工具选择。
+- 具体路径判断。
+- prompt 文案拼接。
+- provider response 字段解析。
+- 压缩算法。
+- hook 分发。
+- CLI 输出。
+
+### ContextSnapshot
+
+`ContextSnapshot` 是主循环调用模型的唯一上下文输入。
 
 ```python
-@dataclass
+from dataclasses import dataclass, field
+
+@dataclass(frozen=True)
 class ContextSnapshot:
     system_prompt: str
-    messages: list[dict]
-    tool_schemas: list[dict]
-    transcript_refs: list[str] = field(default_factory=list)
+    messages: tuple[dict, ...]
+    tool_schemas: tuple[dict, ...] = field(default_factory=tuple)
+    usage_hints: dict = field(default_factory=dict)
+    transcript_refs: tuple[str, ...] = field(default_factory=tuple)
     transition: str | None = None
+```
 
-class ContextBuilder:
-    def build_for_model(self, state: AgentState) -> ContextSnapshot:
+本阶段 `transcript_refs` 可以始终为空；字段保留给后续 transcript/compaction。
+
+### ContextEngine
+
+`ContextEngine.build_for_model(state)` 的顺序固定：
+
+1. 从 `MessageStore` 读取当前内部消息。
+2. 交给 `ContextPreparer.prepare(messages, state)`。
+3. 交给 projector 或最小投影函数生成模型可见 messages。
+4. 调用 `PromptAssembler.assemble(state)`。
+5. 调用 `ToolSchemaProvider.tool_schemas(state)`。
+6. 返回 `ContextSnapshot`。
+
+第一阶段的 `ContextPreparer` 可以是 no-op。它存在的原因是避免未来把 compaction 塞回主循环。
+
+### RuntimeState
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class UsageSnapshot:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+@dataclass
+class RuntimeState:
+    usage: UsageSnapshot = field(default_factory=UsageSnapshot)
+    turn_count: int = 0
+    max_turns: int = 20
+    has_attempted_reactive_compact: bool = False
+    max_output_recovery_count: int = 0
+    last_transition: str | None = None
+    session_id: str | None = None
+```
+
+`has_attempted_reactive_compact` 和 `max_output_recovery_count` 本阶段只作为状态字段保留，不实现对应恢复流程。
+
+### ModelClient 协议
+
+```python
+class ModelClient(Protocol):
+    def send(self, snapshot: ContextSnapshot) -> LLMResponse:
         ...
 ```
 
-`ContextBuilder.build_for_model()` 的固定顺序：
+真实 provider 不在本阶段实现。测试使用 fake model client。
 
-1. 从 `state.messages` 或 compact boundary 之后的消息生成候选历史。
-2. 调用 `Compactor.prepare_before_model_call()`：
-   - `apply_tool_result_budget`
-   - `cleanup_old_tool_results`
-   - `apply_sliding_window`
-   - `full_compact` when usage ratio crosses threshold
-3. 使用 `assemble_system_prompt(PromptContext(...))` 组装系统提示词。
-4. 使用 `ToolRegistry.api_schemas()` 动态组装模型可见工具。
-5. 返回不可变快照给 `AgentLoop`。
-
-关键约束：
-
-- `build_for_model()` 可以更新 `state.messages`，但必须只通过 compactor 或明确的 compact boundary 规则更新。
-- tool schema 必须来自当前 registry，不能在 loop 中硬编码。
-- prompt 必须按当前 runtime 状态组装，不能缓存过期工具列表。
-- 如果未来引入 deny-first 权限，ContextBuilder 必须只暴露未被拒绝的工具。
-
-### Transcript 和会话历史
-
-把 transcript 从“压缩前备份”扩展为“会话恢复来源”：
-
-- 用户 prompt 被 hook 接受后立即写 transcript。
-- assistant message 追加后写 transcript。
-- tool result message 追加后写 transcript。
-- full compact/reactive compact 前继续写完整 transcript。
-
-实现方式：
-
-- 保留现有 `write_transcript(messages, transcript_dir)` 作为 full snapshot 写入。
-- 新增 `TranscriptRecorder.append(message_or_messages)`，用于按事件追加 JSONL。
-- `AgentState` 增加 `transcript_path: Path | None` 或 `session_id`，让同一会话写入同一个 transcript。
-- full compact summary 中保留 transcript 路径，模型可看到可恢复来源。
-
-### 状态结构
-
-扩展 `AgentState`，但保持字段稳定：
+### LLMResponse
 
 ```python
 @dataclass
-class AgentState:
-    messages: list[dict]
-    usage: UsageSnapshot
-    turn_count: int = 0
-    has_reactive_compacted: bool = False
-    max_output_recovery_count: int = 0
-    last_transition: str | None = None
-    consecutive_compact_failures: int = 0
-    session_id: str | None = None
-    transcript_path: Path | None = None
+class LLMResponse:
+    assistant_message: dict
+    final_text: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    stop_reason: str | None = None
+    usage: UsageSnapshot | None = None
+    output_interrupted: bool = False
 ```
 
-暂不把完整 QueryEngine 的所有字段照搬进 Python。以下字段只预留边界：
+主循环续轮只看 `tool_calls`，不看 `stop_reason == "tool_use"`。
 
-- `pending_tool_use_summary`
-- `read_file_state`
-- `permission_denials`
-- `compact_generation`
-- `content_replacement_index`
-
-### 模型响应契约
-
-`LLMResponse` 继续作为 provider 归一化边界：
-
-- `assistant_message` 是可直接追加进 `state.messages` 的内部消息。
-- `tool_calls` 是主循环唯一续轮信号。
-- `stop_reason` 只作为恢复和观测辅助字段。
-- `usage` 由 `UsageSnapshot.from_usage()` 归一化。
-- `output_interrupted` 由 model client 根据 provider 字段判断。
-
-未来流式实现也必须在 `ModelClient` 内部完成：
-
-- 流式时发现 tool use block 就收集到 `tool_calls`。
-- `message_delta` 或等价事件中更新最终 `stop_reason`。
-- `message_stop` 或最终响应中汇总 usage。
-- loop 仍只读取 `LLMResponse`，不解析 provider stream event。
-
-### 工具执行器
-
-从 `AgentLoop._execute_tool_calls()` 抽出 `ToolExecutor`：
+### ToolExecutor 协议
 
 ```python
-class ToolExecutor:
-    def execute(self, tool_calls: list[ToolCall], state: AgentState) -> list[dict]:
+class ToolExecutor(Protocol):
+    def execute(self, tool_calls: tuple[ToolCall, ...], state: RuntimeState) -> list[dict]:
         ...
 ```
 
-职责：
+本阶段不实现具体工具。测试使用 fake tool executor 返回 tool result blocks。
 
-- 使用 `partition_tool_calls(tool_calls, registry)` 保留未来并发接口。
-- 查找工具、校验输入、触发 `PreToolUse`。
-- hook 阻断、未知工具、参数错误、handler 异常都返回 `is_error=True` tool result。
-- 执行成功后触发 `PostToolUse`。
-- 不决定是否继续主循环。
+### MessageStore
 
-## 主循环算法
+第一阶段可以实现内存版 message store：
 
-目标伪代码：
+```python
+class MessageStore:
+    def append_user(self, content: str | list[dict]) -> dict:
+        ...
+
+    def append_assistant(self, message: dict) -> dict:
+        ...
+
+    def append_tool_results(self, result_blocks: list[dict]) -> dict:
+        ...
+
+    def current_messages(self) -> tuple[dict, ...]:
+        ...
+```
+
+后续 transcript、compact boundary、message projection 都应扩展 message/context 服务，不应改主循环。
+
+### Transition
+
+本阶段只实现主循环需要的 transition：
+
+```python
+class TransitionReason(StrEnum):
+    TOOL_USE = "tool_use"
+    COMPLETED = "completed"
+    MAX_TURNS = "max_turns"
+```
+
+可以预留但不要求实现：
+
+- `rate_limit_retry`
+- `reactive_compact_retry`
+- `max_output_tokens_escalate`
+- `max_output_tokens_recovery`
+- `stop_hook_continue`
+
+## 主循环伪代码
 
 ```python
 def run(prompt: str) -> str:
-    accepted = hooks.emit("UserPromptSubmit", prompt=prompt, state=state)
-    if accepted.blocked:
-        return accepted.message or "Prompt blocked."
-
-    append_user_message(accepted.message or prompt)
-    transcript.record(state.messages[-1])
-
+    message_store.append_user(prompt)
     return run_loop()
 
 def run_loop() -> str:
     while True:
         state.turn_count += 1
-        if state.turn_count > config.max_turns:
+        if state.turn_count > state.max_turns:
             state.last_transition = "max_turns"
             return "Stopped: maximum turn count reached."
 
-        snapshot = context_builder.build_for_model(state)
+        snapshot = context_engine.build_for_model(state)
+        response = model_client.send(snapshot)
 
-        try:
-            response = send_with_rate_limit_retries(snapshot)
-        except ContextLimitError:
-            if compactor.reactive_compact(state, model_client, hooks):
-                state.last_transition = "reactive_compact_retry"
-                continue
-            return "Stopped: context is still too large after reactive compact."
+        if response.usage:
+            state.usage.add(response.usage)
 
-        update_usage(response.usage)
-
-        if response.output_interrupted or response.stop_reason == "max_tokens":
-            if recover_output_limit(response):
-                continue
-            return response.final_text
-
-        state.messages.append(response.assistant_message)
-        transcript.record(response.assistant_message)
+        message_store.append_assistant(response.assistant_message)
 
         if response.tool_calls:
             result_blocks = tool_executor.execute(response.tool_calls, state)
-            tool_result_message = {"role": "user", "content": result_blocks}
-            state.messages.append(tool_result_message)
-            transcript.record(tool_result_message)
+            message_store.append_tool_results(result_blocks)
             state.last_transition = "tool_use"
-            state.max_output_recovery_count = 0
-            state.has_reactive_compacted = False
-            continue
-
-        stop_result = hooks.emit("Stop", state=state)
-        if stop_result.force_continue and stop_result.message:
-            continuation = {"role": "user", "content": stop_result.message}
-            state.messages.append(continuation)
-            transcript.record(continuation)
-            state.last_transition = "stop_hook_continue"
             continue
 
         state.last_transition = "completed"
         return response.final_text
 ```
 
-## 错误恢复策略
-
-- `rate_limit_retry`
-  - 由 `_send_with_rate_limit_retries()` 保持同一次 snapshot 重试。
-  - 不追加部分 assistant message。
-  - 使用 `Retry-After` 或指数退避加 jitter。
-
-- `reactive_compact_retry`
-  - 捕获 `ContextLimitError` 后最多执行一次 reactive compact。
-  - reactive compact 前写 transcript。
-  - 重试失败直接停止，不触发 Stop hook。
-
-- `max_output_tokens_escalate`
-  - 第一次 max output 中断时提高 `max_output_tokens`，不追加截断输出。
-
-- `max_output_tokens_recovery`
-  - 升级后仍中断时，追加截断 assistant message 和 continuation user message。
-  - 最多使用 `config.max_output_recovery_retries`。
-
-- `tool_use`
-  - 工具错误作为 tool result 回填，让模型修正。
-  - 主循环不因单个工具失败崩溃。
-
-- `stop_hook_continue`
-  - Stop hook 可以追加一条 user message 继续。
-  - 如果 Stop hook 产生 blocking error 后再次遇到 context limit，不重置 reactive compact guard，避免重复压缩循环。
-
-- `max_turns`
-  - 达到 turn 上限后直接停止，并记录 transition。
-
 ## 实施步骤
 
-1. 新增上下文重建模块
-   - 创建 `onecode/context.py`。
-   - 定义 `ContextSnapshot` 和 `ContextBuilder`。
-   - 把 `assemble_system_prompt()`、`ToolRegistry.api_schemas()`、`Compactor.prepare_before_model_call()` 串到 builder 中。
+1. 建立最小目录
+   - 创建 `core/`、`services/model/`、`services/tools/`、`services/context/`、`tests/`。
+   - 只创建本阶段需要的文件。
+   - 不创建 `prompts/`、具体 `tools/*`、`services/guard/*`、`ui/cli/*`、`infrastructure/providers/*`。
+   - prompt 组装在本阶段只作为 `ContextEngine` 注入协议或测试 fake，不落地完整 prompt 模块。
 
-2. 新增 transcript recorder
-   - 扩展 `onecode/transcript.py`。
-   - 支持会话级 JSONL append。
-   - `AgentState` 保存 `session_id` 和 `transcript_path`。
-   - 保留 full compact 使用的 snapshot transcript。
+2. 定义类型
+   - `core/runtime_state.py`
+   - `core/transitions.py`
+   - `services/model/types.py`
+   - `services/tools/types.py`
+   - `services/context/snapshot.py`
 
-3. 抽出工具执行器
-   - 创建 `onecode/tool_executor.py` 或放在 `onecode/tools/executor.py`。
-   - 从 `AgentLoop` 移出 `_execute_tool_calls()` 和 `_execute_one_tool()`。
-   - 保持现有 hook、validation、截断行为不变。
+3. 实现 message store
+   - `services/context/message_store.py`
+   - 内存实现即可。
+   - 支持 append user、assistant、tool result。
 
-4. 收敛 `AgentLoop`
-   - `AgentLoop` 注入 `ContextBuilder`、`ToolExecutor`、`TranscriptRecorder`。
-   - loop 内只保留编排和 transition。
-   - 以 `response.tool_calls` 是否为空作为是否继续的判断。
+4. 实现上下文重建
+   - `core/context_engine.py`
+   - 接收 message store、context preparer、prompt assembler、tool schema provider。
+   - no-op preparer 和静态 prompt/schema provider 可作为测试或默认实现。
 
-5. 完善 context-limit 和 compact boundary 行为
-   - full compact 后生成可识别 compact summary message。
-   - reactive compact 后保留 summary 和最近尾部消息。
-   - 为未来 `get_messages_after_compact_boundary()` 预留函数。
+5. 实现主循环
+   - `core/loop.py`
+   - 只依赖协议和 context engine。
+   - 不导入具体工具、provider、guard、CLI。
 
-6. 结构化观测事件
-   - 先用 lightweight JSONL trace 或 hook payload 记录：
-     - `model_call_start`
-     - `model_call_end`
-     - `tool_use`
-     - `compact_start`
-     - `compact_end`
-     - `transition`
-   - CLI 文本日志继续通过 hook 输出。
+6. 建立测试
+   - `tests/test_loop.py`
+   - `tests/test_context_engine.py`
+   - 用 fake dependencies 驱动行为。
 
-7. 测试覆盖
-   - 保留现有 `tests/test_loop.py` 和 `tests/test_compaction.py`。
-   - 新增 `tests/test_context.py`：
-     - builder 按顺序调用 compactor、prompt、tool schema。
-     - registry 变化后 tool schema 动态变化。
-   - 新增 `tests/test_transcript.py`：
-     - 用户消息 accepted 后立即写 transcript。
-     - assistant 和 tool result 都写入同一会话 transcript。
-   - 更新 loop 测试：
-     - 有 `tool_calls` 即继续，即使 `stop_reason` 为空。
-     - 没有 `tool_calls` 时停止，即使 `stop_reason` 是非标准值。
-     - context limit 后 reactive compact 只重试一次。
-     - max output 升级前不污染 messages。
+## 测试计划
+
+- `test_loop_stops_without_tool_calls`
+  - fake model 返回无 tool calls。
+  - loop 返回 final text。
+  - transition 为 `completed`。
+
+- `test_loop_continues_when_tool_calls_present`
+  - fake model 第一轮返回 tool call，第二轮返回 final text。
+  - fake tool executor 被调用一次。
+  - tool result message 写入 message store。
+  - context engine 被调用两次。
+
+- `test_loop_uses_tool_calls_not_stop_reason`
+  - fake model 返回 `tool_calls` 且 `stop_reason=None`。
+  - loop 仍继续。
+  - fake model 返回无 `tool_calls` 且 `stop_reason="tool_use"`。
+  - loop 仍停止。
+
+- `test_loop_max_turns`
+  - fake model 持续返回 tool calls。
+  - 超过 max turns 后停止。
+  - transition 为 `max_turns`。
+
+- `test_context_engine_rebuilds_snapshot_from_current_messages`
+  - message store 追加用户消息和 tool result。
+  - snapshot messages 反映当前消息。
+  - prompt assembler 和 tool schema provider 都被调用。
+
+- `test_context_preparer_can_replace_projected_messages`
+  - fake preparer 返回裁剪后的 messages。
+  - snapshot 使用 preparer 输出。
+  - 证明后续 compaction 可以接入此点。
 
 ## 验收标准
 
-- 主循环文件中不出现具体工具名分支。
-- 模型可见工具只来自 `ToolRegistry.api_schemas()`。
-- 每轮模型调用前都会通过 `ContextBuilder` 重建 `ContextSnapshot`。
-- 工具调用续轮信号只依赖 `LLMResponse.tool_calls` 是否为空。
-- 用户消息、assistant message、tool result message 都写入 session transcript。
-- full compact/reactive compact 前写完整 transcript，compact summary 中包含 transcript 路径。
-- 上下文超限触发 reactive compact retry；二次失败明确停止。
-- 429、max output、tool error、Stop hook continue、max turns 都设置可测试 transition。
-- 现有测试通过，并新增 context/transcript/loop 信号测试。
+- `core/loop.py` 只做主循环编排。
+- `core/loop.py` 不 import 具体工具、具体 provider、guard、CLI 或 compaction 实现。
+- 每轮模型调用前都会通过 `ContextEngine` 重建 `ContextSnapshot`。
+- 主循环只以 `LLMResponse.tool_calls` 是否为空判断是否继续。
+- tool result 通过 `ToolExecutor` 接口返回，并写回 message store。
+- 无 tool calls 时返回最终文本并设置 `completed`。
+- 超过 max turns 时停止并设置 `max_turns`。
+- 测试使用 fake dependencies 验证主循环，不需要真实 API key、不需要真实工具、不需要文件系统 guard。
 
-## 暂不实现
+## 明确不做
 
-- 真正流式输出和 streaming tool executor。
-- 并发工具执行。
-- session resume UI。
-- long-term memory。
-- task DAG 和子 Agent。
-- 完整 deny-first 权限系统。
-- provider-specific prompt cache 或 cache edit。
+本阶段不实现以下内容：
 
-这些能力只保留接口位置，不能提前侵入主循环。
+- 具体工具。
+- 工具 registry 的完整实现。
+- guard 和路径安全。
+- hook 系统。
+- compaction、transcript、result store。
+- 真实 provider。
+- CLI。
+- observability trace。
+- 流式输出。
+- 错误恢复的完整执行逻辑。
+
+这些内容在后续独立计划中实现，只能通过本阶段留下的接口接入。
