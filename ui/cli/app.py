@@ -9,12 +9,15 @@ from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.providers.factory import create_model_client
+from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.model.types import ProviderError
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from tools.edit_file import descriptor as edit_file_descriptor
+from tools.glob import descriptor as glob_descriptor
+from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from ui.cli import renderer
 from ui.cli.commands import handle_command
@@ -29,8 +32,20 @@ def build_runtime(workspace: Path) -> CliRuntime:
         session_id=state.session_id,
         cwd=workspace,
     )
-    registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
-    context_engine = ContextEngine(message_store, tool_schema_provider=registry)
+    registry = ToolRegistry(
+        [
+            read_file_descriptor(),
+            edit_file_descriptor(),
+            glob_descriptor(),
+            grep_descriptor(),
+        ]
+    )
+    prompt_assembler = DynamicPromptAssembler(workspace, tool_registry=registry)
+    context_engine = ContextEngine(
+        message_store,
+        prompt_assembler=prompt_assembler,
+        tool_schema_provider=registry,
+    )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
     tool_executor = RegistryToolExecutor(registry, guard=guard)
     model_client = create_model_client(workspace / ".env")

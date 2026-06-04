@@ -17,7 +17,7 @@ OneCode 是一个 code agent runtime。它的核心不是 CLI wrapper，而是�
 - CLI 是 UI 的一种实现，放在 `ui/cli/`。
 - 模型 provider、配置加载、文件系统适配等基础设施放在 `infrastructure/`。
 
-当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` 两个文件工具，以及第一版标准库 `ui/cli/` 交互主界面。`prompts/`、`services/compaction/` 和 `services/observability/` 仍是目标模块。
+当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` / `glob` / `grep` 文件工具、第一版动态 system prompt 组装，以及第一版标准库 `ui/cli/` 交互主界面。`services/compaction/` 和 `services/observability/` 仍是目标模块。
 
 ## 目标目录结构
 
@@ -60,8 +60,9 @@ OneCode/
       events.py
       trace.py
 
-  prompts/                       # 目标，尚未实现
+  prompts/
     assembler.py
+    cache.py
     sections.py
     runtime_context.py
 
@@ -80,7 +81,12 @@ OneCode/
     bash/                        # 目标，尚未实现
       tool.py
       prompt.py
-    glob/                        # 目标，尚未实现
+    glob/
+      __init__.py
+      tool.py
+      prompt.py
+    grep/
+      __init__.py
       tool.py
       prompt.py
 
@@ -117,7 +123,7 @@ OneCode/
 
 当前 `core/loop.py` 还没有直接触发 `UserPromptSubmit` 或 `Stop` hook，也没有捕获 provider error、context limit、max output interruption 等恢复路径。这些 transition 名称已在 `core/transitions.py` 中定义，恢复行为仍是目标能力。
 
-`core/context_engine.py` 是上下文重建边界。当前实现从 `MessageStore` 读取当前消息，调用可注入的 `ContextPreparer`、`PromptAssembler` 和 `ToolSchemaProvider`，返回 `ContextSnapshot`。默认 preparer 是 no-op，默认 prompt assembler 是静态空 prompt，默认 tool schema provider 返回空 schema。它已经支持由 `ToolRegistry` 动态提供模型可见工具 schema，但尚未落地完整 `prompts/`、context projector 或 compaction service。
+`core/context_engine.py` 是上下文重建边界。当前实现从 `MessageStore` 读取当前消息，调用可注入的 `ContextPreparer`、`PromptAssembler` 和 `ToolSchemaProvider`，返回 `ContextSnapshot`。默认 preparer 是 no-op，默认 prompt assembler 是 `DynamicPromptAssembler`，默认 tool schema provider 返回空 schema。它已经支持由 `ToolRegistry` 动态提供模型可见工具 schema，并能通过 `prompts/` 生成基础动态 system prompt；context projector 和 compaction service 仍是目标能力。
 
 `core/runtime_state.py` 保存会话运行状态。当前字段包括 usage、turn count、max turns、reactive compact 标记、max-output recovery 计数、last transition、session id 和 metadata。文件工具通过 metadata 记录本轮已读文件，供 `edit_file` 执行前校验。
 
@@ -129,13 +135,13 @@ OneCode/
 
 #### services/tools/
 
-工具服务负责工具注册、schema 生成、工具执行和结果归一化。
+工具服务负责工具注册、schema 生成、工具 prompt 暴露、工具执行和结果归一化。
 
 `types.py` 当前定义 provider-neutral 的 `ToolCall`、`ToolExecutionResult`、`ToolRuntime`、`ToolDescriptor`、`ValidationResult`、`ToolTarget`、`ToolResultPolicy` 和 `ToolCallClassification`。工具 descriptor 已包含 `output_schema`、工具 prompt、search hint、工具级 validator、input-aware classifier 和 handler。
 
 当前工具分类以单次调用输入为准。`ToolCallClassification` 描述本次调用是否只读、是否修改文件系统、是否可并发、触达哪些 `ToolTarget`、结果预算策略和权限审计 subject。分类失败默认 fail closed。
 
-`registry.py` 管理当前启用的工具集合。模型可见工具从 registry 动态生成，不能在主循环中硬编码。当前 registry 会按工具名排序输出 descriptor，并通过 `tool_schemas(state)` 生成 OpenAI-compatible function schema。
+`registry.py` 管理当前启用的工具集合。模型可见工具从 registry 动态生成，不能在主循环中硬编码。当前 registry 会按工具名排序输出 descriptor，并通过 `visible_descriptors(state)` 生成统一的模型可见工具视图；`tool_schemas(state)` 和 `tool_prompt_sections(state)` 都基于该视图。第一版可见性支持 registry 构造期的 disabled/denied 工具名和 `RuntimeState.metadata` 中的 `disabled_tools`、`denied_tools` 或 `hidden_tools`，真实 permission policy 深度接入仍是后续工作。
 
 `schema.py` 负责把内部工具描述转换为 provider 所需的 tool schema。当前实现是 OpenAI Chat Completions compatible 的 function schema 投影。
 
@@ -213,17 +219,17 @@ guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命�
 
 ### prompts/
 
-`prompts/` 负责动态 prompt 组装。当前目录尚未实现。
+`prompts/` 负责动态 prompt 组装。第一版已经实现 `PromptRuntimeContext`、可组合 `PromptSection`、进程内 `PromptSectionCache` 和 `DynamicPromptAssembler`。
 
-当前 `core/context_engine.py` 只定义了可注入的 `PromptAssembler` protocol 和 `StaticPromptAssembler` 默认实现。工具 descriptor 已携带 `prompt` 字段，`tools/<tool_name>/prompt.py` 已存在于当前文件工具中，但还没有统一的 prompt assembler 从 registry 汇总工具 prompt。
+当前 `core/context_engine.py` 定义可注入的 `PromptAssembler` protocol，默认使用 `DynamicPromptAssembler(Path.cwd())` 生成非空 system prompt。CLI 装配会显式创建 `DynamicPromptAssembler(workspace, tool_registry=registry)`，因此模型可见 prompt 会包含 OneCode identity、行为规则、当前工作目录、已读文件、可用工具摘要和每个可见工具的工具专属 prompt。
 
-目标上，`runtime_context.py` 定义 prompt 组装所需的输入，例如当前工作状态、工具 registry、guard 策略、compaction 状态、用户偏好和 UI 模式。
+`runtime_context.py` 定义 prompt 组装所需的第一版输入：`RuntimeState`、cwd、可见工具、已读文件和 transition。它刻意不包含 session id、CLI mode、provider 配置、API key 或 transcript 路径。
 
-`sections.py` 放可组合 section，例如 identity、行为规则、工具策略、guard 策略、compaction 说明、上下文恢复说明。
+`sections.py` 放可组合 section。当前 section 包括 identity、behavior rules、workspace state、available tools 和 per-tool prompt。section 输出顺序稳定，空工具 prompt 会被跳过。
 
-`assembler.py` 根据 `PromptRuntimeContext` 生成最终 system prompt。
+`cache.py` 提供 section 级缓存。缓存 key 由 section key 和 fingerprint 组成；fingerprint 覆盖 cwd、已读文件、可见工具、工具 prompt 文本和 prompt 版本等会影响输出的输入。
 
-工具专属 prompt 不放在 `prompts/`，而是放在对应的 `tools/<tool_name>/prompt.py`。`prompts/assembler.py` 可以从工具 registry 读取工具 prompt 摘要，再决定是否注入。
+工具专属 prompt 不放在 `prompts/`，而是放在对应的 `tools/<tool_name>/prompt.py`。`prompts/assembler.py` 从 `ToolRegistry.visible_descriptors(state)` 读取当前可见工具，再注入这些工具的 prompt。用户偏好、语言偏好、memory、skill、task 和 compaction 状态仍是后续 prompt section 的目标能力。
 
 ### tools/
 
@@ -233,8 +239,10 @@ guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命�
 
 - `tools/read_file/`：读取 sandbox 内 UTF-8 文本文件，返回带行号内容。输入包括 `file_path`、`offset` 和 `limit`。分类为只读、可并发、文件 read target，结果策略为无限制且不持久化。执行成功后会把规范化路径记录到 `RuntimeState.metadata["files_read"]`。
 - `tools/edit_file/`：对 sandbox 内文本文件执行 exact string replacement。输入包括 `file_path`、`old_string`、`new_string` 和 `replace_all`。分类为文件 write target、不可并发。编辑已有文件前要求该文件已在本 session 中被读取；当目标文件不存在且 `old_string` 为空时可以创建新文件；多重匹配默认要求更精确上下文或 `replace_all=true`。
+- `tools/glob/`：按路径通配模式发现 sandbox 内文件。输入包括 `pattern`、`path`、`head_limit` 和 `offset`。分类为只读、可并发、directory list target，handler 会对搜索根和每个候选结果执行 guard 检查，结果按修改时间降序分页返回。
+- `tools/grep/`：通过 `rg` ripgrep 搜索 sandbox 内文件内容。输入包括 `pattern`、`path`、`glob`、`output_mode`、上下文参数、大小写和分页参数。分类为只读、可并发、文件系统 read target，handler 会对搜索根和每个 ripgrep 结果执行 guard 过滤，并把 ripgrep 失败转换为结构化工具错误。
 
-目标工具仍包括 `write_file`、`bash` 和 `glob`。
+目标工具仍包括 `write_file` 和 `bash`。
 
 `tool.py` 定义工具描述、输入 schema、输出 schema、metadata、validator、classifier 和 handler。
 
@@ -278,7 +286,7 @@ tools/read_file/
 
 `ui/` 放用户界面。CLI 是 UI 的一种具体实现。当前 `ui/cli/` 已落地第一版标准库交互界面，可通过 `uv run python -m ui.cli.app` 启动。
 
-`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` 工具 registry、`SandboxGuard` 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
+`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` / `glob` / `grep` 工具 registry、`SandboxGuard` 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
 
 `ui/cli/commands.py` 处理 `/help`、`/tools`、`/status`、`/history`、`/resume`、`/clear`、`/exit` 和 `/quit`。`/resume` 可以从 `.onecode/<session_id>/messages.jsonl` 或显式 JSONL 路径恢复当前会话。
 
@@ -295,7 +303,7 @@ flowchart TD
   UI["ui/cli"] --> Loop["core/loop.py"]
   Loop --> Engine["core/context_engine.py"]
   Engine --> Context["services/context"]
-  Engine --> Prompts["PromptAssembler protocol / prompts target"]
+  Engine --> Prompts["PromptAssembler protocol / prompts"]
   Engine --> ToolRegistry["services/tools/registry.py"]
   Loop --> ModelClient["services/model/client.py"]
   ModelClient --> Provider["infrastructure/providers"]
@@ -436,7 +444,7 @@ tools/<tool_name>/
 - metadata，例如 read-only、是否修改文件系统、是否可并发、是否需要 guard、结果预算。
 - handler。
 
-工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 从 registry 动态生成。目标上，prompt 工具说明也应从 registry 动态生成；当前 prompt 字段和工具 prompt 文件已存在，但统一 prompt assembler 尚未实现。
+工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 和工具 prompt 说明都从 registry 的可见工具视图动态生成。当前 `DynamicPromptAssembler` 会读取可见 descriptor 中的工具 prompt；执行入口仍会重复做 schema validation、工具级 validation、classification 和 guard 检查。
 
 当前工具执行入口遵循：
 
@@ -471,7 +479,7 @@ compaction 负责降低上下文体积，生成 compact summary，并维护 tran
 5. 从 tool registry 获取当前工具 schema。
 6. 返回 `ContextSnapshot`。
 
-当前实现已经完成第 1、4、5、6 步的可注入边界，但第 2、3 步仍是目标能力；默认第 4 步只是静态 prompt。
+当前实现已经完成第 1、4、5、6 步的可注入边界，但第 2、3 步仍是目标能力；第 4 步已经由 `prompts/` 第一版动态 assembler 负责。
 
 ## 模型边界
 

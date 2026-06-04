@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from core.context_engine import ContextEngine
+from core.context_engine import ContextEngine, StaticPromptAssembler
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
@@ -480,7 +480,10 @@ def test_real_provider_client_can_be_injected_into_loop_for_final_text(
     loop = AgentLoop(
         state=state,
         message_store=message_store,
-        context_engine=ContextEngine(message_store),
+        context_engine=ContextEngine(
+            message_store,
+            prompt_assembler=StaticPromptAssembler(),
+        ),
         model_client=model_client,
         tool_executor=FakeToolExecutor(),
     )
@@ -541,7 +544,10 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
     loop = AgentLoop(
         state=state,
         message_store=message_store,
-        context_engine=ContextEngine(message_store),
+        context_engine=ContextEngine(
+            message_store,
+            prompt_assembler=StaticPromptAssembler(),
+        ),
         model_client=model_client,
         tool_executor=tool_executor,
     )

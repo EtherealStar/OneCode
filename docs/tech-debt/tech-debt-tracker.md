@@ -10,8 +10,9 @@
 |:---|:---|:---|:---|:---|:---|
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
 | TD-005 | 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 部分缓解 |
-| TD-006 | 工具 metadata 尚未驱动结果预算、只读策略和并发执行策略 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py` | 低 | 已识别 |
+| TD-006 | 工具 metadata 已驱动结果预算，但只读策略和并发执行策略仍未落地 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py` | 低 | 部分缓解 |
 | TD-007 | CLI 主界面已落地，但缺少结构化运行事件、streaming 和权限交互 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 已识别 |
+| TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/` | 中 | 已识别 |
 
 ---
 
@@ -71,27 +72,28 @@ Context 和 compaction 应保持为由 `core/context_engine.py` 编排的 servic
 
 ---
 
-### TD-006: 工具 metadata 尚未驱动结果预算、只读策略和并发执行策略
+### TD-006: 工具 metadata 已驱动结果预算，但只读策略和并发执行策略仍未落地
 
 - **类型：** 架构 / 测试
-- **区域：** `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`
+- **区域：** `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py`
 - **优先级：** 低
-- **状态：** 已识别
-- **影响：** 工具 descriptor 已经能表达 `read_only`、`concurrency_safe` 和 `max_result_size_chars`，但 executor 尚未消费这些字段。后续增加更多工具时，结果大小治理、并发调度和只读策略仍可能退化为分散实现。
+- **状态：** 部分缓解
+- **影响：** 工具 descriptor 已经能表达 `read_only`、`concurrency_safe` 和 `max_result_size_chars`，executor 已消费 `ToolResultPolicy.max_result_size_chars` 生成结构化截断预览，但 `read_only` 和 `concurrency_safe` 仍未驱动运行时策略。后续增加更多工具时，只读权限裁剪和并发调度仍可能退化为分散实现。
 
 **描述：**
-`ToolDescriptor` 已包含工具元数据，`RegistryToolExecutor` 也已经使用 `modifies_filesystem` 决定 guard read/write 检查。但 `read_only` 目前没有参与策略判断，`concurrency_safe` 没有驱动并发分批，`max_result_size_chars` 没有截断、持久化或转交 compaction/result store。`read_file` 通过行数上限控制常见输出规模，但没有接入统一 result-size budget。
+`ToolDescriptor` 已包含工具元数据，`RegistryToolExecutor` 也已经使用 `modifies_filesystem` 决定 guard read/write 检查，并通过 `_apply_result_policy()` 对超过 `max_result_size_chars` 的工具结果生成 JSON 预览和截断 metadata。`grep` 声明 20KB 结果预算并依赖该机制。但 `read_only` 目前没有参与策略判断，`concurrency_safe` 没有驱动并发分批，超大结果也还没有持久化或转交 compaction/result store。`read_file` 通过行数上限控制常见输出规模，但没有接入统一 result-size budget。
 
 **引入原因：**
 当前文件工具集成优先完成 provider-compatible 工具循环、guard 强制执行和 hooks。完整工具调度与结果预算依赖后续 compaction/result store 能力。
 
 **修复方向：**
-让 executor 或工具运行时统一消费 descriptor metadata：基于 `read_only`/权限策略裁剪能力，基于 `concurrency_safe` 批量调度安全工具，基于 `max_result_size_chars` 对大结果生成结构化错误、预览或 result-store 引用。补充覆盖大输出、并发调度和只读策略的测试。
+让 executor 或工具运行时继续消费 descriptor metadata：基于 `read_only`/权限策略裁剪能力，基于 `concurrency_safe` 批量调度安全工具，基于 `max_result_size_chars` 在现有预览基础上接入 durable result-store 引用。补充覆盖并发调度、只读策略和 result-store 持久化的测试。
 
 **关联代码：**
 - `services/tools/types.py:L61` - `ToolDescriptor` 已定义 `read_only`、`concurrency_safe` 和 `max_result_size_chars`。
-- `services/tools/executor.py:L224` - executor 目前只消费 `modifies_filesystem` 来选择 guard read/write 检查。
+- `services/tools/executor.py:L224` - executor 消费 guard target 和 result policy，但尚未用 `read_only` 或 `concurrency_safe` 调度。
 - `tools/read_file/tool.py:L42` - `read_file` 未设置统一 result-size budget。
+- `tools/grep/tool.py:L142` - `grep` 已设置 20KB result policy，但超过预算时仍只有预览，没有 durable result-store 引用。
 
 **架构约束：**
 工具行为应由 registry metadata 驱动，避免在具体工具或主循环中散落 tool-name 分支。大结果治理应与 compaction/result store 边界协同。
@@ -123,6 +125,34 @@ CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面�
 
 **架构约束：**
 CLI 不应直接实现 runtime recovery、权限策略或 provider-specific 分支；应消费 core/services 发布的 provider-neutral 状态和事件。
+
+---
+
+### TD-008: 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy
+
+- **类型：** 架构 / 安全
+- **区域：** `prompts/`, `services/tools/registry.py`, `services/guard/`
+- **优先级：** 中
+- **状态：** 已识别
+- **影响：** 第一版 `ToolRegistry.visible_descriptors(state)` 已让 tool schema 和 tool prompt section 使用同一个可见工具视图，但它只支持 registry 构造期的 disabled/denied 工具名和 `RuntimeState.metadata` 中的简单工具名集合。真实项目权限、用户规则、组织策略或 guard policy 还不能在模型调用前完整裁剪工具能力。
+
+**描述：**
+`DynamicPromptAssembler` 会从 `ToolRegistry.visible_descriptors(state)` 读取工具 prompt，`tool_schemas(state)` 也基于同一视图生成 provider-visible schema。当前可见性接口用于保持 prompt/schema 一致，并为后续 deny-first policy 接入提供边界；它还没有把路径级 guard、项目配置、会话 allow/deny 或未来 permission policy 合并成完整工具可见性判断。执行入口仍依赖 `RegistryToolExecutor` 对具体 `ToolTarget` 重复执行 guard 检查。
+
+**引入原因：**
+动态 prompt 架构需要先有统一可见工具视图，才能避免 schema 和 prompt 看到不同工具集合。完整 permission policy 需要独立设计规则来源、优先级、审计和用户确认 flow，因此未塞进第一版 prompt assembler。
+
+**修复方向：**
+设计并实现 provider-neutral permission policy service，让 registry 可见性查询消费该 service 的 blanket deny/disabled 结果。保持 deny-first 顺序：任意有效 deny 都应同时裁剪 schema、prompt 和执行入口。路径参数级判断仍应在工具执行前基于实际输入重复校验，不应由 prompt 组装阶段猜测。
+
+**关联代码：**
+- `services/tools/registry.py:L31` - `visible_descriptors(state)` 是 prompt/schema 统一视图入口。
+- `prompts/assembler.py:L33` - assembler 从 registry 读取当前可见工具。
+- `services/tools/executor.py:L96` - executor 仍在执行入口检查具体工具调用。
+- `services/guard/policy.py:L19` - guard policy 已能对具体路径返回 allow/ask/deny。
+
+**架构约束：**
+Prompt 裁剪只能减少模型看到不可用能力的机会，不能替代执行入口的确定性权限检查。Hook、会话 allow 和用户确认都不能覆盖 deny。
 
 ---
 
