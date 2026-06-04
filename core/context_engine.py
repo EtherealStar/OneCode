@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Iterable, Protocol
 
 from core.runtime_state import RuntimeState
+from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 
@@ -38,6 +40,8 @@ class NoOpContextPreparer:
 
 
 class StaticPromptAssembler:
+    """Testing helper for callers that need a fixed prompt."""
+
     def __init__(self, system_prompt: str = "") -> None:
         self._system_prompt = system_prompt
 
@@ -59,7 +63,7 @@ class ContextEngine:
         context_preparer: ContextPreparer | None = None,
     ) -> None:
         self._message_store = message_store
-        self._prompt_assembler = prompt_assembler or StaticPromptAssembler()
+        self._prompt_assembler = prompt_assembler or DynamicPromptAssembler(Path.cwd())
         self._tool_schema_provider = tool_schema_provider or EmptyToolSchemaProvider()
         self._context_preparer = context_preparer or NoOpContextPreparer()
 

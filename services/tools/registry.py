@@ -13,8 +13,16 @@ if TYPE_CHECKING:
 
 
 class ToolRegistry:
-    def __init__(self, descriptors: Iterable[ToolDescriptor] = ()) -> None:
+    def __init__(
+        self,
+        descriptors: Iterable[ToolDescriptor] = (),
+        *,
+        disabled_tools: Iterable[str] = (),
+        denied_tools: Iterable[str] = (),
+    ) -> None:
         self._descriptors: dict[str, ToolDescriptor] = {}
+        self._disabled_tools = {name for name in disabled_tools if name}
+        self._denied_tools = {name for name in denied_tools if name}
         for descriptor in descriptors:
             self.register(descriptor)
 
@@ -35,8 +43,43 @@ class ToolRegistry:
             self._descriptors[name] for name in sorted(self._descriptors.keys())
         )
 
+    def visible_descriptors(self, state: RuntimeState) -> tuple[ToolDescriptor, ...]:
+        hidden_tools = self._hidden_tool_names(state)
+        return tuple(
+            descriptor
+            for descriptor in self.descriptors()
+            if descriptor.name not in hidden_tools
+        )
+
     def tool_schemas(self, state: RuntimeState) -> tuple[dict[str, Any], ...]:
         return tuple(
             descriptor_to_openai_tool_schema(descriptor)
-            for descriptor in self.descriptors()
+            for descriptor in self.visible_descriptors(state)
         )
+
+    def tool_prompt_sections(self, state: RuntimeState) -> tuple[str, ...]:
+        return tuple(
+            descriptor.prompt
+            for descriptor in self.visible_descriptors(state)
+            if descriptor.prompt.strip()
+        )
+
+    def _hidden_tool_names(self, state: RuntimeState) -> set[str]:
+        hidden = set(self._disabled_tools)
+        hidden.update(self._denied_tools)
+        hidden.update(_metadata_tool_names(state, "disabled_tools"))
+        hidden.update(_metadata_tool_names(state, "denied_tools"))
+        hidden.update(_metadata_tool_names(state, "hidden_tools"))
+        return hidden
+
+
+def _metadata_tool_names(state: RuntimeState, key: str) -> set[str]:
+    value = state.metadata.get(key, ())
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value} if value else set()
+    try:
+        return {str(item) for item in value if str(item)}
+    except TypeError:
+        return {str(value)} if str(value) else set()

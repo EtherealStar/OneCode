@@ -9,6 +9,7 @@ from typing import Any
 from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
+from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutor
 from services.tools.registry import ToolRegistry
@@ -32,7 +33,14 @@ class CliRuntime:
         state: RuntimeState,
         message_store: MessageStore,
     ) -> "CliRuntime":
-        context_engine = ContextEngine(message_store, tool_schema_provider=self.registry)
+        context_engine = ContextEngine(
+            message_store,
+            prompt_assembler=DynamicPromptAssembler(
+                self.workspace,
+                tool_registry=self.registry,
+            ),
+            tool_schema_provider=self.registry,
+        )
         loop = AgentLoop(
             state=state,
             message_store=message_store,

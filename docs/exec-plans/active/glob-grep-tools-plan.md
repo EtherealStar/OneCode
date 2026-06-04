@@ -1,228 +1,246 @@
-# Implement glob and grep tools
+# 实现 glob 和 grep 工具
 
-This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+本 ExecPlan 是一个活文档。实现过程中必须持续维护 `Progress`、`Surprises & Discoveries`、`Decision Log` 和 `Outcomes & Retrospective`。
 
-This plan follows `PLANS.md` in the repository root. It is self-contained so a contributor can implement the feature from this document and the current working tree.
+本计划遵守仓库根目录的 `PLANS.md`，并把必要背景写入本文，使后续执行者只阅读本文和当前工作区也能完成实现。
 
 ## Purpose / Big Picture
 
-After this change, OneCode agents can discover files by glob pattern and search file contents with ripgrep through first-class runtime tools. The model will use `glob` when it needs filenames matching patterns such as `**/*.py`, and `grep` when it needs regex search across file contents. Both tools will be registered like existing `read_file` and `edit_file`, protected by the sandbox guard, visible through the dynamic tool registry, and covered by focused tests.
+完成本改动后，OneCode agent 可以通过一等 runtime 工具发现文件和搜索文件内容。模型需要按通配模式查找文件时使用 `glob`，例如 `**/*.py`；需要用正则搜索代码内容时使用 `grep`。两个工具都像现有 `read_file` 和 `edit_file` 一样通过 `ToolRegistry` 注册，通过 sandbox guard 保护，通过动态工具 schema 暴露给模型，并由 focused tests 覆盖。
 
-This plan intentionally does not implement `ask_user_question`. That tool depends on the future UI interaction layer and will be planned after the UI can present questions and collect answers.
+本计划不实现 `ask_user_question`。该工具依赖未来 UI 交互层来展示问题、收集答案和返回结果；等 UI 能承载用户交互后再单独计划。
 
 ## Progress
 
-- [x] (2026-06-04 10:45Z) Read `AGENTS.md`, `PLANS.md`, `architecture.md`, `docs/design-docs/tool-design-guidelines.md`, active plans, tech debt, current file tools, and reference `GlobTool`, `GrepTool`, and `AskUserQuestionTool`.
-- [x] (2026-06-04 10:45Z) Recorded user decisions: tool names use snake_case; `grep` uses ripgrep; search results should be filtered through guard with caching for performance; `grep` should support the reference fields; `ask_user_question` is excluded until UI exists.
-- [ ] Extend the shared tool input validator enough to enforce the new strict schemas.
-- [ ] Add the `tools/glob/` descriptor, prompt, implementation, and tests.
-- [ ] Add the `tools/grep/` descriptor, prompt, ripgrep runner, implementation, and tests.
-- [ ] Add registry prompt-section support if it is still missing.
-- [ ] Update architecture and tech debt documentation for the new tools and any remaining limitations.
-- [ ] Run compile checks and focused/full tests.
+- [x] (2026-06-04 10:45Z) 阅读 `AGENTS.md`、`PLANS.md`、`architecture.md`、`docs/design-docs/tool-design-guidelines.md`、active plans、tech debt、当前文件工具，以及参考 `GlobTool`、`GrepTool`。
+- [x] (2026-06-04 10:45Z) 记录用户决策：工具名使用 snake_case；`grep` 使用 ripgrep；搜索结果需要通过 guard 过滤并用缓存降低性能开销；`grep` 支持参考实现字段。
+- [x] (2026-06-04 11:05Z) 按用户要求把计划改为中文，并把校验方案从 JS Zod / 手写 JSON Schema 子集改为 Python Pydantic v2。
+- [x] (2026-06-04 12:45Z) 引入 Pydantic v2，并在 `glob` / `grep` 工具模块内用 Pydantic model 生成 provider-visible JSON Schema，同时让工具级 validator 执行复杂约束。
+- [x] (2026-06-04 12:45Z) 新增 `tools/glob/` descriptor、prompt、实现和 focused tests，覆盖分页、guard root 阻断、逐项 denied result 过滤和只读 classification。
+- [x] (2026-06-04 12:45Z) 新增 `tools/grep/` descriptor、prompt、ripgrep runner、实现和 focused tests，覆盖 fake runner、真实 `rg` smoke、三种输出模式、结构化 ripgrep 错误和 denied result 过滤。
+- [x] (2026-06-04 12:45Z) 补充 `ToolRegistry.tool_prompt_sections()`，并用 search tool schema/prompt 测试证明稳定排序和 prompt 暴露。
+- [x] (2026-06-04 12:45Z) 更新 `architecture.md` 和 `docs/tech-debt/tech-debt-tracker.md`，记录 `glob` / `grep` 已实现，并保留 durable result store、只读策略和并发调度限制。
+- [x] (2026-06-04 12:55Z) 运行 compile checks、focused tests 和 full tests：`uv run python -m compileall core services infrastructure tools tests` 通过，`uv run python -m pytest tests/test_tool_registry_and_executor.py tests/test_search_tools.py -q` 为 20 passed，`uv run python -m pytest tests -q` 为 99 passed。
 
 ## Surprises & Discoveries
 
-- Observation: OneCode is a Python project, while the reference tools use TypeScript and Zod.
-  Evidence: `pyproject.toml` only defines Python dependencies, and existing tool descriptors use JSON Schema dictionaries consumed by `services/tools/executor.py`. The plan therefore uses strict JSON Schema plus an expanded internal validator instead of adding the JavaScript `zod` package.
+- Observation: OneCode 是 Python 项目，而参考工具使用 TypeScript 和 Zod。
+  Evidence: `pyproject.toml` 当前只定义 Python 依赖，已有工具 descriptor 使用 JSON Schema 形状的字典交给 `services/tools/executor.py` 投影为 provider schema。用户要求使用 Pydantic 替代 JS Zod，因此本计划采用 Pydantic v2 输入模型做运行时校验，并用 Pydantic 生成 provider 可见 JSON Schema。
 
-- Observation: Current shared schema validation is intentionally small.
-  Evidence: `services/tools/executor.py` currently validates required fields, unexpected fields, `string`, `boolean`, and `integer` with `minimum`. It does not yet validate `enum`, arrays, nested objects, number types, max/min array lengths, or object maps. `grep` and `ask_user_question` reference schemas need richer validation, but this plan only needs the subset required by `glob` and `grep`.
+- Observation: 当前共享 schema validation 很小，不能完整表达 `grep` 的字段约束。
+  Evidence: `services/tools/executor.py` 目前只校验 required、unexpected fields、`string`、`boolean`、`integer` 和 `minimum`。它不校验 `enum`、数组、嵌套对象、数字类型、map 字段等。新工具应通过 Pydantic `BaseModel` 做严格校验，而不是继续扩大手写 JSON Schema validator。
 
-- Observation: The executor already applies `ToolResultPolicy`.
-  Evidence: `RegistryToolExecutor._apply_result_policy()` turns oversized result content into a JSON preview with truncation metadata. `grep` can rely on this for the 20KB result budget even though durable result store is still a future capability.
+- Observation: executor 已经消费 `ToolResultPolicy`。
+  Evidence: `RegistryToolExecutor._apply_result_policy()` 会把过大的结果内容替换成 JSON 预览和 truncation metadata。`grep` 可以依赖该机制实现 20KB 结果预算，即使 durable result store 仍是未来能力。
 
-- Observation: Guard currently handles filesystem targets only when `ToolTarget.kind` is `file` or `directory`.
-  Evidence: `RegistryToolExecutor._check_guard()` skips non-filesystem target kinds, and accepts operations `read`, `write`, `list`, and `delete`. `glob` and `grep` should therefore classify their root access as `directory/list`, `directory/read`, or `file/read`, then do extra per-result filtering in the handler.
+- Observation: guard 当前只对 `ToolTarget.kind` 为 `file` 或 `directory` 的 target 做文件系统检查。
+  Evidence: `RegistryToolExecutor._check_guard()` 跳过非文件系统 target，并接受 `read`、`write`、`list`、`delete` 操作。`glob` 和 `grep` 应先把搜索根声明为 `directory/list`、`directory/read` 或 `file/read` target，再在 handler 中额外过滤每个候选结果。
+
+- Observation: `grep` content 模式不能按第一个 `-` 切路径前缀。
+  Evidence: ripgrep context 输出会使用 `path-line-text`，但普通文件名也可能包含连字符。实现改为优先匹配 `:\d+:` 或 `-\d+-` 这类带行号分隔符，并补充 `my-file.py:1:needle` 测试，避免误把 `my-file.py` 切成 `my`。
 
 ## Decision Log
 
-- Decision: Provider-visible tool names will be `glob` and `grep`.
-  Rationale: The tool design guideline requires snake_case names that match registry keys and tool directories. The TypeScript reference names `Glob` and `Grep` are treated as source material, not OneCode naming.
-  Date/Author: 2026-06-04 / User and Codex
+- Decision: provider-visible 工具名使用 `glob` 和 `grep`。
+  Rationale: 工具设计指南要求 snake_case，并且目录名、registry key、provider-visible function name 和测试 fixture 保持一致。TypeScript 参考实现中的 `Glob` 和 `Grep` 只作为行为参考，不作为 OneCode 命名。
+  
 
-- Decision: `grep` will execute the `rg` ripgrep binary through a small Python runner wrapper.
-  Rationale: The reference tool is built on ripgrep, and the user explicitly requested ripgrep. A wrapper isolates subprocess details and makes tests easy to fake.
-  Date/Author: 2026-06-04 / User and Codex
+- Decision: `grep` 通过 Python wrapper 调用 `rg` ripgrep 可执行文件。
+  Rationale: 参考工具基于 ripgrep，用户也明确要求引入 ripgrep。wrapper 可以隔离 subprocess 细节，并让测试用 monkeypatch 或 fake runner 覆盖输出解析。
+  
 
-- Decision: `glob` will use Python filesystem traversal and `fnmatch`, not shell glob expansion.
-  Rationale: Python traversal keeps behavior cross-platform, avoids shell injection concerns, and lets the handler filter each candidate through the sandbox guard before returning it.
+- Decision: `glob` 使用 Python 文件系统遍历和 `fnmatch`，不通过 shell glob expansion。
+  Rationale: Python 遍历跨平台、避免 shell 注入风险，并能在返回前对每个候选路径执行 sandbox guard 过滤。
   Date/Author: 2026-06-04 / Codex
 
-- Decision: Search handlers will filter candidate result paths through the guard, with per-call caching keyed by normalized absolute path and operation.
-  Rationale: Guarding only the root directory could leak denied filenames from broad searches. Per-result guard checks prevent leakage, while a call-local cache avoids repeated boundary classification for duplicate paths in content and count modes.
-  Date/Author: 2026-06-04 / User and Codex
+- Decision: 搜索 handler 必须对候选结果路径做 guard 过滤，并使用单次调用内缓存。
+  Rationale: 只 guard 搜索根目录可能泄露被 deny pattern 命中的文件名。逐项 guard 可以避免泄露；用 call-local cache 按规范化绝对路径和操作缓存结果，可降低 content/count 模式中重复路径的分类开销。
+  
 
-- Decision: The plan will not introduce JavaScript Zod into the Python runtime.
-  Rationale: The user allowed Zod-style validation, but the current runtime is Python and already uses JSON Schema-shaped descriptors. The compatible approach is to expand the internal validator to enforce the new schemas strictly.
+- Decision: 使用 Pydantic v2 替代 JS Zod 和大规模手写 JSON Schema validator。
+  Rationale: OneCode 是 Python runtime。Pydantic v2 能提供严格字段、枚举、默认值、额外字段禁止、自定义校验和 JSON Schema 生成，更适合承载 `grep` 的复杂输入约束。
+  
+- Decision: `grep` runner 参数固定加入 `--with-filename`。
+  Rationale: 单文件搜索时 ripgrep 默认可能省略文件名前缀，而 OneCode 需要从 content/count 输出中解析路径并做逐项 guard 过滤。强制带文件名让目录和单文件搜索的解析行为一致。
   Date/Author: 2026-06-04 / Codex
 
-- Decision: `ask_user_question` is explicitly out of scope.
-  Rationale: The user wants to implement the UI first. The question tool requires a UI/callback contract for presenting options, adding an automatic "Other" choice, and returning answers without hanging the agent loop.
-  Date/Author: 2026-06-04 / User
+- Decision: `grep` 的 `context` 和 `-C` 同时出现时由 Pydantic 解析后优先 `context`。
+  Rationale: 计划要求记录这个优先级。实现中 `_build_rg_args()` 先读取 `parsed.context`，仅当它缺失时再使用 `parsed.context_flag`。
+  Date/Author: 2026-06-04 / Codex
 
 ## Outcomes & Retrospective
 
-Not implemented yet. Update this section after implementation with the final behavior, test results, and any limitations discovered while integrating ripgrep or guard filtering.
+已实现 `glob` 和 `grep` 两个只读搜索工具，并接入 CLI 的固定工具 registry。`glob` 使用 Python `Path.rglob()` 与 `fnmatch`，`grep` 使用 subprocess 参数列表调用 PATH 上的 `rg`。两者都通过 executor 的 input validation、classification、guard、hook 和 result policy 流程，并在 handler 内对候选结果做逐项 guard 过滤，避免广泛搜索泄露 denied path。
+
+Focused validation 已通过：
+
+    uv run python -m pytest tests/test_tool_registry_and_executor.py tests/test_search_tools.py -q
+    20 passed
+
+最终验证也已通过：
+
+    uv run python -m compileall core services infrastructure tools tests
+    uv run python -m pytest tests -q
+    99 passed
+
+仍保留的限制是 durable result store、真正并发调度和只读策略裁剪尚未实现；这些限制已在技术债 TD-006 中保持为部分缓解而非完全解决。
 
 ## Context and Orientation
 
-OneCode is a Python code-agent runtime. The main loop in `core/loop.py` is intentionally thin: it appends user messages, builds a `ContextSnapshot`, calls the model, executes any tool calls through the injected tool executor, appends tool results, and repeats until completion. New tools must not be hard-coded into the loop.
+OneCode 是 Python code-agent runtime。`core/loop.py` 中的主循环保持薄：追加用户消息，构建 `ContextSnapshot`，调用模型，通过注入的 tool executor 执行工具调用，追加工具结果，并循环到完成。新增工具不能硬编码进主循环。
 
-The tool runtime lives under `services/tools/`. `services/tools/types.py` defines `ToolDescriptor`, `ToolCallClassification`, `ToolTarget`, `ToolResultPolicy`, and `ToolRuntime`. A concrete tool lives under `tools/<tool_name>/` and exports `descriptor()` from `tool.py`; its prompt text lives in `prompt.py`.
+工具 runtime 位于 `services/tools/`。`services/tools/types.py` 定义 `ToolDescriptor`、`ToolCallClassification`、`ToolTarget`、`ToolResultPolicy` 和 `ToolRuntime`。具体工具放在 `tools/<tool_name>/`，并从 `tool.py` 导出 `descriptor()`；工具专属 prompt 放在 `prompt.py`。
 
-`services/tools/registry.py` owns enabled tool descriptors. It already returns provider-visible OpenAI-compatible schemas through `tool_schemas(state)`. If prompt-section support is still missing when this plan is implemented, add `tool_prompt_sections(state) -> tuple[str, ...]` returning non-empty descriptor prompts in stable descriptor order. This should not assemble the whole system prompt; it only exposes tool prompt text for the future prompt assembler.
+`services/tools/registry.py` 管理启用的工具 descriptor。它当前通过 `tool_schemas(state)` 返回 OpenAI-compatible provider schema。实现本计划时，如果 prompt section 支持仍缺失，应补充 `tool_prompt_sections(state) -> tuple[str, ...]`，按稳定 descriptor 顺序返回非空 prompt 字符串。该方法只暴露工具 prompt，不负责组装完整 system prompt。
 
-`services/tools/executor.py` owns the execution pipeline. It looks up the descriptor, validates input shape, runs tool-level validation, classifies the call, checks the sandbox guard for filesystem targets, runs hooks, invokes the handler, applies result policy, and emits structured errors. Do not bypass this pipeline from new tools.
+`services/tools/executor.py` 管理执行流程：查找 descriptor、校验输入形状、运行工具级校验、分类本次调用、对文件系统 target 执行 guard、运行 hooks、调用 handler、应用 result policy、返回结构化错误。新工具不得绕过该流程。
 
-`services/guard/` owns path safety. `SandboxGuard.check_path()` classifies a path as allowed, ask-required, or denied. The executor already checks declared `ToolTarget`s before handler execution. Broad search tools need an additional handler-level filtering step because the target root can be allowed while individual discovered paths match deny rules.
+`services/guard/` 管理路径安全。`SandboxGuard.check_path()` 会把路径分类为 allow、ask-required 或 denied。executor 已经会检查 descriptor classification 声明的 `ToolTarget`。搜索工具还必须在 handler 中额外过滤结果路径，因为搜索根可能允许，但某些结果文件可能命中 deny pattern。
 
-`tools/read_file/` and `tools/edit_file/` are the local implementation pattern. Each has `__init__.py`, `tool.py`, and `prompt.py`; each descriptor includes a strict input schema, a prompt string, a search hint, a validator, an input-aware classifier, and a handler.
+`tools/read_file/` 和 `tools/edit_file/` 是当前本地工具实现模式。每个工具都有 `__init__.py`、`tool.py` 和 `prompt.py`；descriptor 包含严格 input schema、prompt、search hint、validator、input-aware classifier 和 handler。
 
-The reference TypeScript tools live in `docs/references/Tools_full/GlobTool/` and `docs/references/Tools_full/GrepTool/`. They establish the desired product behavior: `Glob` finds files by wildcard pattern and sorts by modification time; `Grep` uses ripgrep with output modes `content`, `files_with_matches`, and `count`, supports file filters and context flags, defaults to bounded output, and uses result-size budgeting.
+参考 TypeScript 工具位于 `docs/references/Tools_full/GlobTool/` 和 `docs/references/Tools_full/GrepTool/`。它们定义目标产品行为：`Glob` 按通配符查找文件并按修改时间排序；`Grep` 使用 ripgrep，支持 `content`、`files_with_matches`、`count` 三种输出模式，支持文件过滤和上下文参数，默认限制输出，并通过 result-size budget 管理大结果。
 
 ## Plan of Work
 
-First, extend shared schema validation in `services/tools/executor.py`. Keep it intentionally small, but add the JSON Schema subset required by the new tools: `enum`, `number`, arrays with `items`, `minItems`, and `maxItems`, nested `object` validation, and `additionalProperties` as either `False` or a schema for string-keyed maps. Keep error messages deterministic and short. Existing tests for validation must continue to pass. Add tests for each new supported validator feature in `tests/test_tool_registry_and_executor.py`.
+第一阶段引入 Pydantic v2 校验约定。编辑 `pyproject.toml`，在 runtime dependencies 中加入 `pydantic>=2.0`。新工具的输入 schema 不再手写复杂 JSON Schema，而是在 `tools/glob/tool.py` 和 `tools/grep/tool.py` 中定义 Pydantic `BaseModel`，使用 `model_config = ConfigDict(extra="forbid", strict=True)` 禁止额外字段并启用严格类型。descriptor 的 `input_schema` 由 `InputModel.model_json_schema()` 生成，供 provider schema 使用；descriptor 的 `validate_input` 调用 `InputModel.model_validate(tool_input)`，把 `ValidationError` 转换成 `ValidationResult.failure(...)`。handler 和 classifier 可以复用同一个解析 helper，例如 `_parse_input(tool_input) -> InputModel`，避免重复处理默认值。
 
-Second, add registry prompt-section support if it is not already present. Edit `services/tools/registry.py` to expose `tool_prompt_sections(state)`. Return prompts in the same stable descriptor order as `descriptors()`, skip empty prompt strings, and do not add policy logic that belongs to permission/enablement work. Add a test proving prompts follow stable descriptor order and skip empty prompts.
+第二阶段保留 executor 的轻量 schema validation，但不要把它扩展成完整 JSON Schema 引擎。`services/tools/executor.py` 当前的基础校验仍可提前拦截缺失字段、额外字段和简单类型错误；Pydantic 负责复杂约束，例如 enum、默认值、字段别名、自定义校验和上下文规则。如果 Pydantic 生成的 JSON Schema 包含当前 executor 不理解的关键字，executor 应忽略这些关键字，不应把合法 schema 当作错误。新增测试应证明工具级 Pydantic validator 能拦截 unsupported `output_mode`、负数、错误布尔值、额外字段和空 pattern。
 
-Third, add `tools/glob/`. Create `tools/glob/__init__.py`, `tools/glob/prompt.py`, and `tools/glob/tool.py`. The descriptor name is `glob`, description is a short sentence, search hint is `find files by name pattern`, and result policy is 100KB with preview around 4000 chars. The input schema is a strict object:
+第三阶段如有必要，补充 registry prompt-section 支持。编辑 `services/tools/registry.py`，新增 `tool_prompt_sections(state)`。返回顺序与 `descriptors()` 一致，跳过空 prompt，不引入 permission/enablement 逻辑。新增测试证明 prompt section 稳定排序并跳过空 prompt。
 
-    {
-      "pattern": "string, required",
-      "path": "string, optional",
-      "head_limit": "integer >= 0, optional",
-      "offset": "integer >= 0, optional"
-    }
+第四阶段新增 `tools/glob/`。创建 `tools/glob/__init__.py`、`tools/glob/prompt.py` 和 `tools/glob/tool.py`。descriptor name 是 `glob`，description 是一句短描述，search hint 是 `find files by name pattern`，result policy 是 100KB，preview 约 4000 chars。Pydantic 输入模型字段为：
 
-`path` defaults to the sandbox cwd. `head_limit` defaults to 100; explicit `0` means unlimited and should be used sparingly. `offset` defaults to 0.
+    pattern: str
+    path: str | None = None
+    head_limit: int | None = None
+    offset: int = 0
 
-The `glob` validator should reject empty patterns, negative limits, and a provided path that resolves to an allowed existing non-directory. If the provided path is outside the sandbox, do not stat it directly in the validator; let the classification and executor guard return the structured ask/deny result. The classifier returns `read_only=True`, `modifies_filesystem=False`, `concurrency_safe=True`, one target `ToolTarget(kind="directory", operation="list", value=path_or_dot)`, and permission subject `glob:<path>:<pattern>`.
+模型校验规则：`pattern` 去除首尾空白后不能为空；`head_limit` 如果提供必须大于或等于 0；`offset` 必须大于或等于 0；禁止额外字段。`path` 默认为 sandbox cwd。`head_limit` 默认语义是 100；显式 `0` 表示 unlimited，应谨慎使用。
 
-The `glob` handler should require `runtime.guard`. It should run under the normalized allowed root from `guard.check_path(root, operation="list", kind="directory")`. It should recursively enumerate files under the root, match paths against the glob pattern using paths relative to the search root and normalized slash separators, skip directories from results, and collect matching files. Sort matches by modification time descending with path as a deterministic tiebreaker. Apply offset and head limit after sorting. Convert returned filenames to paths relative to `runtime.guard.boundary.cwd` when possible, again using slash separators; otherwise return absolute normalized paths. Filter each candidate through `guard.check_path(candidate, operation="read", kind="file")` before it is returned. Use a call-local cache so repeated candidate paths are classified once. The content returned to the model is one filename per line, with a short truncation/pagination note if a limit was applied. Metadata should include `num_files`, `total_matches_before_pagination`, `filtered_count`, `applied_limit`, `applied_offset`, `truncated`, and `path`.
+`glob` 的工具级 validator 还应处理文件系统语义：如果提供的 `path` 在 sandbox 内且存在但不是目录，应返回 invalid input。若 `path` 在 sandbox 外，不要在 validator 中直接 stat；让 classification 和 executor guard 返回结构化 ask/deny 结果。classifier 返回 `read_only=True`、`modifies_filesystem=False`、`concurrency_safe=True`，一个 `ToolTarget(kind="directory", operation="list", value=path_or_dot)`，以及 permission subject `glob:<path>:<pattern>`。
 
-Fourth, add `tools/grep/`. Create `tools/grep/__init__.py`, `tools/grep/prompt.py`, and `tools/grep/tool.py`. The descriptor name is `grep`, description is a short sentence, search hint is `search file contents with regex`, and result policy is 20KB with preview around 4000 chars. The strict input schema should support the reference fields:
+`glob` handler 必须要求 `runtime.guard`。它先通过 `guard.check_path(root, operation="list", kind="directory")` 取得允许的规范化 root。然后递归枚举 root 下的文件，用相对 root 的 slash-normalized 路径和 `fnmatch` 匹配 pattern，跳过目录，只收集文件。匹配结果按修改时间降序排序，路径作为稳定 tiebreaker。排序后应用 offset 和 head limit。返回路径尽量相对 `runtime.guard.boundary.cwd`，并统一使用 `/`。每个候选文件返回前都要通过 `guard.check_path(candidate, operation="read", kind="file")` 过滤。使用单次调用内 cache，避免重复分类同一路径。模型可见 content 每行一个文件名，并在分页时附短提示。metadata 至少包含 `num_files`、`total_matches_before_pagination`、`filtered_count`、`applied_limit`、`applied_offset`、`truncated` 和 `path`。
 
-    pattern: string, required
-    path: string, optional
-    glob: string, optional
-    output_mode: enum ["content", "files_with_matches", "count"], optional
-    -B: integer >= 0, optional
-    -A: integer >= 0, optional
-    -C: integer >= 0, optional
-    context: integer >= 0, optional
-    -n: boolean, optional
-    -i: boolean, optional
-    type: string, optional
-    head_limit: integer >= 0, optional
-    offset: integer >= 0, optional
-    multiline: boolean, optional
+第五阶段新增 `tools/grep/`。创建 `tools/grep/__init__.py`、`tools/grep/prompt.py` 和 `tools/grep/tool.py`。descriptor name 是 `grep`，description 是一句短描述，search hint 是 `search file contents with regex`，result policy 是 20KB，preview 约 4000 chars。Pydantic 输入模型字段支持参考实现：
 
-Defaults should match the reference intent: `output_mode` defaults to `files_with_matches`; `head_limit` defaults to 250; explicit `head_limit=0` means unlimited; `offset` defaults to 0; `-n` defaults to true only for `content`; `-i` and `multiline` default to false.
+    pattern: str
+    path: str | None = None
+    glob: str | None = None
+    output_mode: Literal["content", "files_with_matches", "count"] = "files_with_matches"
+    before: int | None = Field(default=None, alias="-B")
+    after: int | None = Field(default=None, alias="-A")
+    context_flag: int | None = Field(default=None, alias="-C")
+    context: int | None = None
+    show_line_numbers: bool | None = Field(default=None, alias="-n")
+    case_insensitive: bool = Field(default=False, alias="-i")
+    type: str | None = None
+    head_limit: int | None = None
+    offset: int = 0
+    multiline: bool = False
 
-The `grep` validator should reject empty patterns; reject negative numeric fields; reject context flags used with non-`content` modes if this makes the user intent ambiguous, or ignore them consistently and record ignored fields in metadata. Prefer rejecting ambiguous input with a helpful validation message. If both `context` and `-C` are provided, prefer `context` and record that decision in the implementation comments and tests. `path` may point to a file or directory; if it is outside sandbox, let executor guard produce ask/deny instead of doing a direct stat first.
+使用字段 alias 保持 provider-visible 参数名和参考实现一致，例如 `-B`、`-A`、`-C`、`-n`、`-i`。模型配置需要允许通过 alias 校验。默认语义：`output_mode` 默认为 `files_with_matches`；`head_limit` 默认为 250；显式 `head_limit=0` 表示 unlimited；`offset` 默认为 0；`-n` 只在 `content` 模式默认 true；`-i` 和 `multiline` 默认 false。
 
-The `grep` classifier should return `read_only=True`, `modifies_filesystem=False`, `concurrency_safe=True`, and a filesystem read target. If `path` is absent, the target is `ToolTarget(kind="directory", operation="read", value=".")`. If `path` is present, classification can use `kind="directory"` by default because the guard will safely classify the path; the handler can later detect file versus directory for ripgrep. The permission subject is `grep:<path_or_dot>:<pattern>`.
+`grep` Pydantic validator 应拒绝空 pattern、负数 numeric fields、空 `glob`、空 `type`。上下文参数只允许在 `content` 模式使用；如果 `output_mode` 不是 `content` 且传入 `-A`、`-B`、`-C` 或 `context`，应返回清晰 invalid input，而不是静默忽略。若同时提供 `context` 和 `-C`，优先 `context`，并在实现注释和测试中记录该决策。`path` 可以指向文件或目录；如果在 sandbox 外，让 executor guard 处理 ask/deny，不要在 validator 中直接 stat。
 
-The `grep` handler should require `runtime.guard`, check the search path through `guard.check_path(path_or_dot, operation="read", kind="directory")`, and then call ripgrep through a wrapper. The wrapper can be a small private function in `tools/grep/tool.py` or a testable class in the same module. Use `subprocess.run()` with an argument list, not shell strings. Always include flags that reduce noisy output: `--hidden`, `--max-columns 500`, and excludes for VCS directories `.git`, `.svn`, `.hg`, `.bzr`, `.jj`, and `.sl`. For `files_with_matches`, add `-l`; for `count`, add `-c`; for `content`, add line numbers if `-n` is true. For multiline, add `-U` and `--multiline-dotall`. For case-insensitive search, add `-i`. For `type`, add `--type <type>`. For `glob`, split simple whitespace-separated patterns while preserving brace patterns as much as practical; pass each as `--glob <pattern>`. If the regex pattern begins with `-`, pass it with `-e <pattern>`.
+`grep` classifier 返回 `read_only=True`、`modifies_filesystem=False`、`concurrency_safe=True`，以及文件系统 read target。如果 `path` 缺失，target 是 `ToolTarget(kind="directory", operation="read", value=".")`。如果 `path` 存在，默认使用 `kind="directory"` 即可让 guard 安全分类；handler 后续可检测实际是文件还是目录。permission subject 为 `grep:<path_or_dot>:<pattern>`。
 
-Handle ripgrep return codes explicitly. Return code 0 means matches found. Return code 1 means no matches and should produce a non-error result saying no files or matches were found. Return code 2 or missing executable should produce a structured tool error with metadata error codes such as `ripgrep_error` or `ripgrep_not_found`. Do not let subprocess exceptions escape the handler.
+`grep` handler 必须要求 `runtime.guard`，先通过 `guard.check_path(path_or_dot, operation="read", kind="directory")` 检查搜索路径，再调用 ripgrep wrapper。wrapper 可以是 `tools/grep/tool.py` 中的私有函数或小型 runner 类。必须使用 `subprocess.run()` 的参数列表，不使用 shell 字符串。ripgrep 参数始终包含降低噪音的选项：`--hidden`、`--max-columns 500`，并排除 VCS 目录 `.git`、`.svn`、`.hg`、`.bzr`、`.jj`、`.sl`。`files_with_matches` 加 `-l`；`count` 加 `-c`；`content` 根据 `-n` 加行号。`multiline` 加 `-U` 和 `--multiline-dotall`；`-i` 加 case-insensitive；`type` 加 `--type <type>`；`glob` 拆成一个或多个 `--glob <pattern>`。如果 regex pattern 以 `-` 开头，用 `-e <pattern>` 传入。
 
-For `files_with_matches`, parse ripgrep output as paths, filter each path through guard read checks using a per-call cache, sort by modification time descending with path as a tiebreaker, then apply offset/head_limit. Return `Found N files` followed by one path per line, relative to workspace where possible. For `content`, parse each result line to identify the path prefix, filter by that path through the same cache, relativize the path prefix, then apply offset/head_limit to output lines. For `count`, parse `path:count` lines, filter paths, relativize them, apply offset/head_limit, and compute totals from the shown lines. Metadata should include mode, num files, num lines or matches where relevant, filtered count, applied limit, applied offset, and whether truncation occurred.
+显式处理 ripgrep return code。返回码 0 表示找到匹配。返回码 1 表示没有匹配，应返回非错误结果。返回码 2、缺失 executable 或 subprocess 异常应返回结构化 tool error，metadata error 可为 `ripgrep_error` 或 `ripgrep_not_found`。不要让 subprocess exception 逃出 handler。
 
-Fifth, add tests for the new tools. Prefer focused tests in a new file `tests/test_search_tools.py`. Use `tmp_path` workspaces and `SandboxGuard(SandboxBoundary(cwd=workspace, denied_patterns=...))`. Tests should cover descriptor schema projection, classification, prompt-section exposure, invalid inputs, guard deny/ask behavior, no handler execution on blocked root paths, denied-result filtering, pagination, stable sorting, and each grep output mode. For ripgrep integration, first check whether `rg --version` is available. If available, run real subprocess tests. If not available, skip only the tests that require the executable and keep parser/handler unit tests using a fake runner or monkeypatch.
+`files_with_matches` 模式把 ripgrep 输出解析为路径，对每个路径通过 guard read check 过滤，使用单次调用内 cache，按修改时间降序排序并用路径 tiebreaker，然后应用 offset/head_limit。结果 content 为 `Found N files` 加每行一个路径，路径尽量相对 workspace。`content` 模式解析每行 path prefix，通过同一 cache 过滤路径，relativize path prefix，再对输出行应用 offset/head_limit。`count` 模式解析 `path:count`，过滤路径，relativize，应用 offset/head_limit，并从显示行计算总匹配数。metadata 至少包含 mode、num files、num lines 或 num matches、filtered count、applied limit、applied offset 和 truncated。
 
-Sixth, update documentation. Edit `architecture.md` so the `tools/` section lists `glob` and `grep` as implemented, while `write_file`, `bash`, and `ask_user_question` remain future or out of scope. Update `docs/tech-debt/tech-debt-tracker.md` if implementation leaves known debt, such as no durable result store for oversized search results or no true concurrent execution despite the tools being marked concurrency-safe. Do not claim that full result-store or concurrency scheduling is solved unless the implementation actually changes those services.
+第六阶段增加测试。建议新增 `tests/test_search_tools.py`。使用 `tmp_path` workspace 和 `SandboxGuard(SandboxBoundary(cwd=workspace, denied_patterns=...))`。测试覆盖 descriptor schema projection、Pydantic validation、classification、prompt section、guard deny/ask、blocked root 时 handler 不执行、denied result filtering、pagination、stable sorting、grep 三种 output mode。ripgrep 集成测试先检查 `rg --version` 是否可用；可用则跑真实 subprocess 测试，不可用则只 skip 需要 real rg 的测试，保留 parser/handler fake runner 单元测试。
+
+第七阶段更新文档。编辑 `architecture.md`，把 `tools/` 章节中的 `glob` 和 `grep` 标为已实现；`write_file`、`bash` 仍保持 future 或 out of scope。更新 `docs/tech-debt/tech-debt-tracker.md`：如果实现后仍缺 durable result store 或真正并发调度，应保留相关技术债，不要把结果治理或并发能力错误标记为完全解决。
 
 ## Concrete Steps
 
-Run all commands from the repository root:
+所有命令都在仓库根目录执行：
 
     cd D:\study\OneCode
 
-Before editing, inspect the worktree so existing user changes are not overwritten:
+开始前查看工作区，确保不覆盖用户已有改动：
 
     git status --short
 
-Verify ripgrep availability:
+确认 ripgrep 是否可用：
 
     rg --version
 
-If `rg --version` fails in the developer environment, continue implementing the tool so it returns `ripgrep_not_found` at runtime, and skip only real-ripgrep integration tests. Do not install external software inside this plan unless the user separately approves that environment change.
+如果开发环境中 `rg --version` 失败，仍继续实现 `grep` 工具，使其运行时返回结构化 `ripgrep_not_found`；只 skip 真实 ripgrep 集成测试。除非用户另行批准，不在本计划中安装系统软件。
 
-Edit files in this order:
+按以下顺序编辑：
 
-1. Update `services/tools/executor.py` validator support and tests in `tests/test_tool_registry_and_executor.py`.
-2. Update `services/tools/registry.py` with `tool_prompt_sections()` and tests.
-3. Add `tools/glob/__init__.py`, `tools/glob/prompt.py`, and `tools/glob/tool.py`.
-4. Add `tools/grep/__init__.py`, `tools/grep/prompt.py`, and `tools/grep/tool.py`.
-5. Add `tests/test_search_tools.py`.
-6. Update `architecture.md` and `docs/tech-debt/tech-debt-tracker.md`.
+1. 编辑 `pyproject.toml`，加入 `pydantic>=2.0` runtime dependency，并按项目习惯运行 `uv sync --dev` 或让 `uv run` 更新锁文件。
+2. 为新工具建立 Pydantic 输入模型到 `ToolDescriptor.input_schema` 的生成约定；可以直接在各工具模块内使用 `InputModel.model_json_schema()`，不必先抽象公共 helper。
+3. 如需要，更新 `services/tools/executor.py`，确保它不会误拒绝 Pydantic 生成 schema 中当前不理解的关键字。
+4. 更新 `services/tools/registry.py`，加入 `tool_prompt_sections()` 和测试。
+5. 新增 `tools/glob/__init__.py`、`tools/glob/prompt.py` 和 `tools/glob/tool.py`。
+6. 新增 `tools/grep/__init__.py`、`tools/grep/prompt.py` 和 `tools/grep/tool.py`。
+7. 新增 `tests/test_search_tools.py`。
+8. 更新 `architecture.md` 和 `docs/tech-debt/tech-debt-tracker.md`。
 
-Focused validation during implementation:
+实现过程中先运行 focused validation：
 
     uv run python -m pytest tests/test_tool_registry_and_executor.py tests/test_search_tools.py -q
 
-Compile check:
+运行 compile check：
 
     uv run python -m compileall core services infrastructure tools
 
-Full test suite:
+运行全量测试：
 
     uv run python -m pytest tests -q
 
-Manual smoke scenario after implementation:
-
-    uv run python -m pytest tests/test_search_tools.py -q
-
-Then, in a small Python snippet or future CLI/runtime assembly, register `read_file`, `edit_file`, `glob`, and `grep` descriptors in one `ToolRegistry`, create a `RegistryToolExecutor` with a workspace guard, and execute:
+实现后可以用一个小 Python 场景做手动 smoke test：注册 `read_file`、`edit_file`、`glob` 和 `grep` descriptors 到同一个 `ToolRegistry`，创建带 workspace guard 的 `RegistryToolExecutor`，执行：
 
     ToolCall(id="call-glob", name="glob", input={"pattern": "**/*.py", "path": "."})
     ToolCall(id="call-grep", name="grep", input={"pattern": "ToolDescriptor", "path": ".", "glob": "*.py", "output_mode": "files_with_matches"})
 
-The first call should return Python file paths. The second call should return files containing `ToolDescriptor`.
+第一个调用应返回 Python 文件路径；第二个调用应返回包含 `ToolDescriptor` 的文件。
 
 ## Validation and Acceptance
 
-Acceptance criterion one: `ToolRegistry.tool_schemas(RuntimeState())` includes `glob` and `grep` schemas when their descriptors are registered. Each schema has a snake_case function name, a short description, strict parameters, and no unexpected fields allowed.
+验收标准一：`ToolRegistry.tool_schemas(RuntimeState())` 在注册 `glob` 和 `grep` descriptors 后包含两个工具 schema。schema 使用 snake_case function name、短 description、由 Pydantic 生成的严格参数结构，并禁止额外字段。
 
-Acceptance criterion two: `ToolRegistry.tool_prompt_sections(RuntimeState())`, if added by this plan, returns prompt text for `glob` and `grep` in stable descriptor order and skips tools with empty prompts.
+验收标准二：如果本计划新增 `ToolRegistry.tool_prompt_sections(RuntimeState())`，它应按稳定 descriptor 顺序返回 `glob` 和 `grep` prompt，并跳过空 prompt。
 
-Acceptance criterion three: invalid tool inputs fail before handler execution. Examples include missing `pattern`, non-string `pattern`, unsupported `output_mode`, negative `head_limit`, negative `offset`, non-boolean `-i`, and unexpected fields.
+验收标准三：无效输入在 handler 执行前失败。例子包括缺失 `pattern`、非字符串 `pattern`、不支持的 `output_mode`、负数 `head_limit`、负数 `offset`、非布尔 `-i`、额外字段和空 pattern。复杂约束由 Pydantic validator 负责。
 
-Acceptance criterion four: `glob` classifies calls as read-only, non-mutating, concurrency-safe, with a directory/list target and a 100KB result budget. It returns matching files sorted by modification time, paginates results, and records truncation and filtering metadata.
+验收标准四：`glob` classification 标记为 read-only、不修改文件系统、concurrency-safe，target 是 `directory/list`，结果预算为 100KB。它返回按修改时间排序的匹配文件，支持分页，并记录 truncation 和 filtering metadata。
 
-Acceptance criterion five: `grep` classifies calls as read-only, non-mutating, concurrency-safe, with a filesystem read target and a 20KB result budget. It supports `files_with_matches`, `content`, and `count` output modes, `glob`, `type`, line context fields, case-insensitive search, multiline mode, `head_limit`, and `offset`.
+验收标准五：`grep` classification 标记为 read-only、不修改文件系统、concurrency-safe，target 是文件系统 read，结果预算为 20KB。它支持 `files_with_matches`、`content`、`count` 输出模式，支持 `glob`、`type`、上下文参数、case-insensitive、multiline、`head_limit` 和 `offset`。
 
-Acceptance criterion six: sandbox guard blocks unsafe root searches before handler execution. A denied or external `path` returns the existing structured guard error and does not enumerate files or execute ripgrep.
+验收标准六：sandbox guard 会在 handler 执行前阻止不安全搜索根。denied 或 external `path` 返回现有结构化 guard error，不枚举文件，也不执行 ripgrep。
 
-Acceptance criterion seven: broad allowed searches do not leak denied result paths. If a workspace contains `public.txt` and denied `secret.txt`, then `glob` and `grep` over `.` must not return `secret.txt`; metadata must show at least one filtered result when the denied file matched.
+验收标准七：允许的广泛搜索不会泄露 denied result path。如果 workspace 中有 `public.txt` 和被 deny 的 `secret.txt`，那么对 `.` 执行 `glob` 或 `grep` 不得返回 `secret.txt`；当 denied 文件本来匹配时，metadata 应显示至少一个 filtered result。
 
-Acceptance criterion eight: ripgrep failures are structured tool results. No matches are non-error results. Missing `rg` executable, invalid regex, timeout if implemented, or ripgrep return code 2 are tool errors with useful metadata and do not escape as Python exceptions.
+验收标准八：ripgrep 失败是结构化 tool result。没有匹配是非错误结果。缺失 `rg`、非法 regex、timeout 如有实现、或 ripgrep return code 2 都是带有 useful metadata 的 tool error，不逃逸为 Python exception。
 
-Acceptance criterion nine: result budget behavior works through the existing executor. A large `grep` result over 20KB becomes a non-error truncated preview with `result_truncated` metadata.
+验收标准九：结果预算通过现有 executor 生效。超过 20KB 的大 `grep` 结果会变成非错误的 truncated preview，并带 `result_truncated` metadata。
 
-Acceptance criterion ten: these commands pass:
+验收标准十：以下命令通过：
 
     uv run python -m compileall core services infrastructure tools
     uv run python -m pytest tests -q
 
 ## Idempotence and Recovery
 
-All tests must use temporary workspaces and may create files only under `tmp_path`. Do not read or write real project files except for source files intentionally edited by this plan. Do not delete user files.
+所有测试必须使用 `tmp_path` 临时 workspace，只能在临时目录下创建测试文件。除本计划明确编辑的源码文件外，不读写真实项目文件。不要删除用户文件。
 
-The new tools are read-only. They must never write to searched files, create indexes, modify metadata, or update runtime state except for returning result metadata. They may read file stats for sorting and filtering.
+新增工具都是只读工具。它们不得写入搜索文件、创建索引、修改文件 metadata，或更新 runtime state；唯一副作用是读取文件内容、读取 stat 用于排序，并返回结果 metadata。
 
-If ripgrep is unavailable, the `grep` tool should fail gracefully at runtime with a structured `ripgrep_not_found` error. Tests that require real ripgrep may be skipped, but unit tests for schema, classification, guard behavior, and output parsing must still pass.
+如果 ripgrep 不可用，`grep` runtime 应返回结构化 `ripgrep_not_found` 错误。需要真实 ripgrep 的测试可以 skip，但 schema、Pydantic validation、classification、guard behavior 和 output parsing 的单元测试必须仍然通过。
 
-Per-result guard filtering should be conservative. If a result path cannot be parsed, resolved, or classified, omit it from model-visible output and increment a filtered or skipped count in metadata. Do not return suspicious paths just because parsing failed.
+逐项 guard 过滤必须保守。如果某个结果路径无法解析、无法分类或解析格式可疑，应从模型可见输出中省略，并增加 filtered 或 skipped count。不要因为解析失败就返回可疑路径。
 
-The call-local guard cache should not persist across tool calls. Sandbox policy can change between calls, and persistent caches would risk stale permission decisions. A simple dictionary inside one handler invocation is enough.
+guard cache 只在单次 handler 调用内有效。sandbox policy 可能在调用之间变化，持久缓存会产生过期权限风险。一个 handler 内部的简单字典足够。
 
 ## Artifacts and Notes
 
-Example `glob` tool result content:
+`glob` 工具结果示例：
 
     Found 3 files
     core/loop.py
@@ -231,48 +249,56 @@ Example `glob` tool result content:
 
     [Showing results with pagination = limit: 3]
 
-Example `grep` `files_with_matches` result content:
+`grep` 的 `files_with_matches` 结果示例：
 
     Found 2 files
     services/tools/types.py
     tools/read_file/tool.py
 
-Example `grep` `content` result content:
+`grep` 的 `content` 结果示例：
 
     services/tools/types.py:82:class ToolDescriptor:
     tools/read_file/tool.py:27:def descriptor() -> ToolDescriptor:
 
-Example structured missing-ripgrep error content:
+缺失 ripgrep 的结构化错误示例：
 
     {"error":"ripgrep_not_found","message":"ripgrep executable 'rg' was not found on PATH."}
 
 ## Interfaces and Dependencies
 
-`tools/glob/tool.py` should expose:
+`tools/glob/tool.py` 应暴露：
 
+    class GlobInput(BaseModel): ...
     INPUT_SCHEMA: dict[str, Any]
     def descriptor() -> ToolDescriptor: ...
 
-The handler returns a `ToolExecutionResult` whose `content` is model-readable text and whose metadata contains structured counts.
+`INPUT_SCHEMA` 来自 `GlobInput.model_json_schema()`，handler 返回 `ToolExecutionResult`，其中 `content` 是模型可读文本，metadata 包含结构化计数。
 
-`tools/grep/tool.py` should expose:
+`tools/grep/tool.py` 应暴露：
 
+    class GrepInput(BaseModel): ...
     INPUT_SCHEMA: dict[str, Any]
     def descriptor() -> ToolDescriptor: ...
 
-It may also define a small internal runner interface for tests:
+它也可以定义一个方便测试的小 runner 接口：
 
     class RipgrepRunner(Protocol):
         def run(self, args: list[str], cwd: Path) -> RipgrepResult: ...
 
-or equivalent functions:
+或等价函数：
 
     def _run_ripgrep(args: list[str], cwd: Path) -> RipgrepResult: ...
 
-Choose the smallest design that allows tests to monkeypatch ripgrep output without invoking a real subprocess for every parser case.
+选择最小设计，只要测试可以 monkeypatch ripgrep output，而不必每个 parser case 都调用真实 subprocess。
 
-No JavaScript Zod dependency should be added. The OneCode tool schema contract remains JSON Schema-shaped dictionaries in `ToolDescriptor.input_schema`; the executor validates the supported subset. If a future TypeScript UI wants Zod schemas, it can generate or mirror them from the descriptor contract in a separate plan.
+应在 `pyproject.toml` 加入：
 
-The `pyproject.toml` dependency list does not need to change for ripgrep if the project uses the `rg` executable on PATH. If the team later wants vendored ripgrep distribution, that should be a separate environment/dependency plan because it affects installation and platform support.
+    pydantic>=2.0
 
-2026-06-04 / Codex: Initial ExecPlan created after user decisions on snake_case names, ripgrep, guarded result filtering with caching, full grep field support, and postponing `ask_user_question` until UI exists.
+不加入 JavaScript `zod` 依赖。OneCode 的工具 schema contract 仍是 `ToolDescriptor.input_schema` 中的 JSON Schema-shaped dict；只是这些 dict 由 Pydantic model 生成，运行时复杂校验也由 Pydantic 执行。如果未来 TypeScript UI 需要 Zod schema，可以在单独计划中从 descriptor contract 生成或镜像。
+
+ripgrep 可以先依赖 PATH 上的 `rg` 可执行文件，不必把 vendored ripgrep 作为 Python 依赖。如果团队未来需要打包分发 ripgrep，应另写环境/依赖计划，因为它涉及安装和平台支持。
+
+2026-06-04 / Codex: 初始 ExecPlan 创建，纳入用户关于 snake_case name、ripgrep、带缓存的 guard result filtering、完整 grep 字段支持，以及暂缓。
+
+2026-06-04 / Codex: 根据用户要求把计划翻译为中文，并把校验方向改为 Pydantic v2；计划保留 provider 可见 JSON Schema，但由 Pydantic model 生成，并由 Pydantic 负责复杂输入校验。

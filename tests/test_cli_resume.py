@@ -106,6 +106,7 @@ def test_resume_command_replaces_runtime_and_restores_messages(
     output = capsys.readouterr().out
     assert result.runtime is not None
     assert result.runtime.state.session_id == "session-old"
+    snapshot = result.runtime.loop.context_engine.build_for_model(result.runtime.state)
     assert result.runtime.message_store.current_messages() == (
         {"role": "user", "content": "restore this"},
         {"content": "restored answer", "role": "assistant"},
@@ -118,6 +119,8 @@ def test_resume_command_replaces_runtime_and_restores_messages(
             "metadata": {},
         },
     )
+    assert "# Behavior Rules\n" in snapshot.system_prompt
+    assert "# Tool: read_file\n" in snapshot.system_prompt
     assert "Restored session session-old" in output
 
 
