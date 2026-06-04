@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from core.runtime_state import RuntimeState
+from services.guard import SandboxBoundary, SandboxGuard
+from services.tools.executor import RegistryToolExecutor
+from services.tools.registry import ToolRegistry
+from services.tools.types import ToolCall, ToolExecutionResult
+from tools.edit_file import descriptor as edit_file_descriptor
+from tools.read_file import descriptor as read_file_descriptor
+
+
+def make_executor(
+    workspace: Path,
+    *,
+    denied_patterns: tuple[str, ...] = (),
+) -> tuple[RegistryToolExecutor, RuntimeState]:
+    guard = SandboxGuard(
+        SandboxBoundary(cwd=workspace, denied_patterns=denied_patterns)
+    )
+    registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
+    return RegistryToolExecutor(registry, guard=guard), RuntimeState()
+
+
+def execute_one(
+    executor: RegistryToolExecutor,
+    state: RuntimeState,
+    tool_name: str,
+    tool_input: dict[str, object],
+    *,
+    call_id: str = "call-1",
+) -> ToolExecutionResult:
+    return executor.execute(
+        (ToolCall(id=call_id, name=tool_name, input=tool_input),),
+        state,
+    )[0]
+
+
+def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": "a.txt", "offset": 2, "limit": 2},
+    )
+
+    assert result.is_error is False
+    assert result.tool_call_id == "call-1"
+    assert result.tool_name == "read_file"
+    assert result.content == "2\ttwo\n3\tthree"
+    assert str(target.resolve()) in state.metadata["files_read"]
+
+
+def test_read_file_rejects_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "subdir").mkdir()
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": "subdir"},
+    )
+
+    assert result.is_error is True
+    assert result.metadata["error"] == "path_is_directory"
+
+
+def test_read_file_denied_path_returns_error_without_reading(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "secret.txt"
+    target.write_text("classified", encoding="utf-8")
+    executor, state = make_executor(workspace, denied_patterns=("secret.txt",))
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": "secret.txt"},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "path_guard_denied"
+    assert str(target.resolve()) not in state.metadata.get("files_read", set())
+
+
+def test_read_file_external_path_returns_ask_required_error(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": str(outside)},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "path_guard_ask_required"
+    assert payload["decision"] == "external_directory"
+
+
+def test_edit_file_requires_prior_read_for_existing_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": "a.txt", "old_string": "old", "new_string": "new"},
+    )
+
+    assert result.is_error is True
+    assert result.metadata["error"] == "file_not_read"
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_edit_file_replaces_single_exact_match_after_read(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("alpha beta gamma", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": "a.txt", "old_string": "beta", "new_string": "BETA"},
+    )
+
+    assert result.is_error is False
+    assert result.metadata["replacement_count"] == 1
+    assert target.read_text(encoding="utf-8") == "alpha BETA gamma"
+
+
+def test_edit_file_rejects_multiple_matches_without_replace_all(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("x x x", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": "a.txt", "old_string": "x", "new_string": "y"},
+    )
+
+    assert result.is_error is True
+    assert result.metadata["error"] == "multiple_matches"
+    assert target.read_text(encoding="utf-8") == "x x x"
+
+
+def test_edit_file_replace_all_replaces_every_exact_match(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("x x x", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {
+            "file_path": "a.txt",
+            "old_string": "x",
+            "new_string": "y",
+            "replace_all": True,
+        },
+    )
+
+    assert result.is_error is False
+    assert result.metadata["replacement_count"] == 3
+    assert target.read_text(encoding="utf-8") == "y y y"
+
+
+def test_edit_file_creates_new_file_when_old_string_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "nested" / "new.txt"
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": "nested/new.txt", "old_string": "", "new_string": "created"},
+    )
+
+    assert result.is_error is False
+    assert target.read_text(encoding="utf-8") == "created"
+    assert str(target.resolve()) in state.metadata["files_read"]
+
+
+def test_edit_file_denied_write_does_not_modify_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "secret.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace, denied_patterns=("secret.txt",))
+    state.metadata["files_read"] = {str(target.resolve())}
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": "secret.txt", "old_string": "old", "new_string": "new"},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "path_guard_denied"
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_edit_file_external_write_returns_ask_without_writing(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    state.metadata["files_read"] = {str(outside.resolve())}
+
+    result = execute_one(
+        executor,
+        state,
+        "edit_file",
+        {"file_path": str(outside), "old_string": "old", "new_string": "new"},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "path_guard_ask_required"
+    assert outside.read_text(encoding="utf-8") == "old"

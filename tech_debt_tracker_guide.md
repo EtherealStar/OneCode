@@ -13,23 +13,23 @@ Harness Engineering 将技术债务视为一种**"高息贷款"**——它不可
 
 ## 2. Tech Debt Tracker 文档结构
 
-### 2.1 面向 AI Agent 的必要字段
+### 2.1 必要字段
 
-每条技术债务条目应包含以下字段（聚焦 AI 理解代码决策所需的上下文）：
+每条技术债务条目应包含以下字段：
 
 | 字段 | 说明 | 示例 |
 |:---|:---|:---|
 | **Debt ID** | 唯一标识符 | `TD-001` |
-| **标题 (Title)** | 简明描述 | "用户服务中硬编码的数据库连接串" |
-| **描述 (Description)** | 详细说明所采取的捷径或存在的问题 | "在 config 中写死了 DB 连接字符串，未使用 secret manager" |
-| **区域/模块 (Area)** | 受影响的系统模块或文件路径 | `core/db/connection.py` / Infrastructure |
-| **类型 (Type)** | 债务类别 | Security / Performance / Architectural / Test Debt |
-| **引入原因 (Context)** | 为什么会产生这笔债务 | "原型阶段快速验证，未设计抽象层" |
-| **影响 (Impact)** | 对系统质量或可维护性的影响 | "新增数据库实例时需手动修改多处配置" |
-| **优先级 (Priority)** | 基于技术风险 | High / Medium / Low |
-| **状态 (Status)** | 当前状态 | Identified / In Progress / Resolved |
-| **修复方向 (Remediation Direction)** | AI 或开发者应遵循的修复思路 | "迁移到 env-based config + secret manager 模式" |
-| **关联代码 (Related Code)** | 受影响的文件、模块或标记 | `core/db/connection.py:L45`, `# TODO(TD-001)` |
+| **标题 ** | 简明描述 | "用户服务中硬编码的数据库连接串" |
+| **描述 ** | 详细说明所采取的捷径或存在的问题 | "在 config 中写死了 DB 连接字符串，未使用 secret manager" |
+| **区域/模块 ** | 受影响的系统模块或文件路径 | `core/db/connection.py` / Infrastructure |
+| **类型 ** | 债务类别 | Security / Performance / Architectural / Test Debt |
+| **引入原因 ** | 为什么会产生这笔债务 | "原型阶段快速验证，未设计抽象层" |
+| **影响 ** | 对系统质量或可维护性的影响 | "新增数据库实例时需手动修改多处配置" |
+| **优先级 ** | 基于技术风险 | High / Medium / Low |
+| **状态 ** | 当前状态 | Identified / In Progress / Resolved |
+| **修复方向 ** | AI 或开发者应遵循的修复思路 | "迁移到 env-based config + secret manager 模式" |
+| **关联代码 ** | 受影响的文件、模块或标记 | `core/db/connection.py:L45`, `# TODO(TD-001)` |
 
 ### 2.2 分类策略
 
@@ -44,7 +44,6 @@ Harness Engineering 将技术债务视为一种**"高息贷款"**——它不可
 - **代码级债务 (Code-Level Debt)**：局部代码重构，通常可通过单文件或单模块改动修复
 - **测试债务 (Test Debt)**：缺失的测试覆盖，导致 AI Agent 无法通过测试验证修改的正确性
 - **安全债务 (Security Debt)**：已知但未修复的安全隐患
-- **Flag 债务 (Flag Debt)**：遗留的、不再使用的 Feature Flag（Harness 特有关注点）
 
 ---
 

@@ -19,7 +19,7 @@ from infrastructure.providers.model_catalog import ModelCatalogClient
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.types import ProviderError
-from services.tools.types import ToolCall
+from services.tools.types import ToolCall, ToolExecutionResult
 
 
 @dataclass
@@ -61,14 +61,14 @@ class FakeToolExecutor:
         self,
         tool_calls: tuple[ToolCall, ...],
         state: RuntimeState,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ToolExecutionResult]:
         self.calls.append(tool_calls)
         return [
-            {
-                "type": "tool_result",
-                "tool_use_id": tool_call.id,
-                "content": f"result for {tool_call.name}",
-            }
+            ToolExecutionResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=f"result for {tool_call.name}",
+            )
             for tool_call in tool_calls
         ]
 
@@ -246,6 +246,45 @@ def test_chat_completions_payload_includes_messages_and_tools() -> None:
         {"role": "user", "content": "hello"},
     ]
     assert payload["tools"] == list(snapshot.tool_schemas)
+
+
+def test_chat_completions_projects_internal_tool_results() -> None:
+    transport = FakeTransport(
+        post_response={"choices": [{"message": {"content": "ok"}}]},
+    )
+    client = OpenAICompatibleChatCompletionsClient(
+        resolved_config(),
+        transport=transport,
+    )
+    assistant_tool_call = {
+        "id": "call_x",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path":"a.txt"}'},
+    }
+    snapshot = ContextSnapshot(
+        system_prompt="",
+        messages=(
+            {"role": "user", "content": "inspect"},
+            {"role": "assistant", "content": "", "tool_calls": [assistant_tool_call]},
+            {
+                "role": "tool_result",
+                "tool_call_id": "call_x",
+                "tool_name": "read_file",
+                "content": "1\tcontents",
+                "is_error": False,
+                "metadata": {},
+            },
+        ),
+    )
+
+    client.send(snapshot)
+
+    payload = transport.post_calls[0][2]
+    assert payload["messages"] == [
+        {"role": "user", "content": "inspect"},
+        {"role": "assistant", "content": "", "tool_calls": [assistant_tool_call]},
+        {"role": "tool", "tool_call_id": "call_x", "content": "1\tcontents"},
+    ]
 
 
 def test_chat_completions_omits_empty_tools() -> None:
@@ -503,4 +542,22 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
     assert len(sequenced_transport.post_calls) == 2
     assert tool_executor.calls == [
         (ToolCall(id="call_x", name="read_file", input={"path": "a.txt"}),)
+    ]
+    assert sequenced_transport.post_calls[1][2]["messages"] == [
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_x",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"a.txt"}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_x", "content": "result for read_file"},
     ]
