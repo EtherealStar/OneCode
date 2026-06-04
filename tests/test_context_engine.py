@@ -6,6 +6,7 @@ from core.context_engine import ContextEngine
 from core.runtime_state import RuntimeState
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
+from services.tools.types import ToolExecutionResult
 
 
 class FakePromptAssembler:
@@ -39,7 +40,13 @@ def test_context_engine_rebuilds_snapshot_from_current_messages() -> None:
     message_store = MessageStore()
     message_store.append_user("question")
     message_store.append_tool_results(
-        [{"type": "tool_result", "tool_use_id": "call-1", "content": "answer"}]
+        [
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="fake_tool",
+                content="answer",
+            )
+        ]
     )
     state = RuntimeState(session_id="session-1")
     state.set_transition(TransitionReason.TOOL_USE)
@@ -67,7 +74,13 @@ def test_context_preparer_can_replace_projected_messages() -> None:
     message_store = MessageStore()
     message_store.append_user("original")
     message_store.append_tool_results(
-        [{"type": "tool_result", "tool_use_id": "call-1", "content": "large"}]
+        [
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="fake_tool",
+                content="large",
+            )
+        ]
     )
     engine = ContextEngine(
         message_store,

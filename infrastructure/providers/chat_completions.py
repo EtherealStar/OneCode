@@ -38,7 +38,7 @@ class OpenAICompatibleChatCompletionsClient:
         messages: list[dict[str, Any]] = []
         if snapshot.system_prompt:
             messages.append({"role": "system", "content": snapshot.system_prompt})
-        messages.extend(snapshot.messages)
+        messages.extend(_project_messages(snapshot.messages))
 
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -166,6 +166,22 @@ def _assistant_message(
     if raw_tool_calls:
         assistant_message["tool_calls"] = raw_tool_calls
     return assistant_message
+
+
+def _project_messages(messages: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    projected: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "tool_result":
+            projected.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": message.get("tool_call_id", ""),
+                    "content": message.get("content", ""),
+                }
+            )
+        else:
+            projected.append(dict(message))
+    return projected
 
 
 def _content_to_text(content: Any) -> str:

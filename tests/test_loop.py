@@ -10,7 +10,7 @@ from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.types import LLMResponse, ModelUsage
-from services.tools.types import ToolCall
+from services.tools.types import ToolCall, ToolExecutionResult
 
 
 @dataclass
@@ -33,14 +33,14 @@ class FakeToolExecutor:
         self,
         tool_calls: tuple[ToolCall, ...],
         state: RuntimeState,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ToolExecutionResult]:
         self.calls.append((tool_calls, state))
         return [
-            {
-                "type": "tool_result",
-                "tool_use_id": tool_call.id,
-                "content": f"result for {tool_call.name}",
-            }
+            ToolExecutionResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=f"result for {tool_call.name}",
+            )
             for tool_call in tool_calls
         ]
 
@@ -119,14 +119,12 @@ def test_loop_continues_when_tool_calls_present() -> None:
 
     messages = message_store.current_messages()
     assert messages[2] == {
-        "role": "user",
-        "content": [
-            {
-                "type": "tool_result",
-                "tool_use_id": "call-1",
-                "content": "result for read_file",
-            }
-        ],
+        "role": "tool_result",
+        "tool_call_id": "call-1",
+        "tool_name": "read_file",
+        "content": "result for read_file",
+        "is_error": False,
+        "metadata": {},
     }
     assert model_client.snapshots[1].messages == messages[:3]
 
