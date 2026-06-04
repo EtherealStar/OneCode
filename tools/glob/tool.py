@@ -17,6 +17,7 @@ from services.tools.types import (
     ToolRuntime,
     ToolTarget,
     ValidationResult,
+    is_guard_policy_allowed,
 )
 from tools.glob.prompt import PROMPT
 
@@ -122,7 +123,7 @@ def _handle(
         operation="list",
         kind="directory",
     )
-    if root_policy.action != "allow":
+    if not is_guard_policy_allowed(root_policy, runtime):
         return _guard_error(root_policy)
 
     root = root_policy.normalized_path
@@ -212,9 +213,9 @@ def _path_allowed(
     if runtime.guard is None:
         return False
     try:
-        allowed = (
-            runtime.guard.check_path(key, operation="read", kind="file").action
-            == "allow"
+        allowed = is_guard_policy_allowed(
+            runtime.guard.check_path(key, operation="read", kind="file"),
+            runtime,
         )
     except Exception:
         allowed = False

@@ -15,6 +15,7 @@ from services.tools.types import (
     ToolExecutionResult,
     ToolRuntime,
 )
+from tools.bash import descriptor as bash_descriptor
 
 
 def make_descriptor(name: str, *, prompt: str = "") -> ToolDescriptor:
@@ -145,3 +146,15 @@ def test_context_engine_default_prompt_is_dynamic(tmp_path: Path) -> None:
     assert "# Identity\n" in snapshot.system_prompt
     assert "# Behavior Rules\n" in snapshot.system_prompt
     assert snapshot.system_prompt.strip()
+
+
+def test_bash_descriptor_projects_schema_and_prompt() -> None:
+    state = RuntimeState()
+    registry = ToolRegistry([bash_descriptor()])
+
+    schemas = registry.tool_schemas(state)
+    prompts = registry.tool_prompt_sections(state)
+
+    assert schemas[0]["function"]["name"] == "bash"
+    assert "command" in schemas[0]["function"]["parameters"]["properties"]
+    assert "Git Bash" in prompts[0]

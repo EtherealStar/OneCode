@@ -13,6 +13,7 @@ from services.tools.types import (
     ToolRuntime,
     ToolTarget,
     ValidationResult,
+    is_guard_policy_allowed,
 )
 from tools.edit_file.prompt import PROMPT
 
@@ -81,7 +82,7 @@ def _handle(
     if runtime.guard is None:
         raise RuntimeError("edit_file requires a sandbox guard.")
     policy = runtime.guard.check_write_target(tool_input["file_path"])
-    if policy.action != "allow":
+    if not is_guard_policy_allowed(policy, runtime):
         payload = policy.to_tool_error()
         if policy.action == "ask":
             payload["error"] = "path_guard_ask_required"

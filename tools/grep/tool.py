@@ -27,6 +27,7 @@ from services.tools.types import (
     ToolRuntime,
     ToolTarget,
     ValidationResult,
+    is_guard_policy_allowed,
 )
 from tools.grep.prompt import PROMPT
 
@@ -186,7 +187,7 @@ def _handle_with_runner(
         operation="read",
         kind="directory",
     )
-    if path_policy.action != "allow":
+    if not is_guard_policy_allowed(path_policy, runtime):
         return _guard_error(path_policy)
 
     target = path_policy.normalized_path
@@ -438,9 +439,9 @@ def _path_allowed(
     if runtime.guard is None:
         return False
     try:
-        allowed = (
-            runtime.guard.check_path(key, operation="read", kind="file").action
-            == "allow"
+        allowed = is_guard_policy_allowed(
+            runtime.guard.check_path(key, operation="read", kind="file"),
+            runtime,
         )
     except Exception:
         allowed = False

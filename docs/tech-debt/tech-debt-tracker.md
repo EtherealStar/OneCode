@@ -11,8 +11,9 @@
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
 | TD-005 | 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 部分缓解 |
 | TD-006 | 工具 metadata 已驱动结果预算，但只读策略和并发执行策略仍未落地 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py` | 低 | 部分缓解 |
-| TD-007 | CLI 主界面已落地，但缺少结构化运行事件、streaming 和权限交互 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 已识别 |
-| TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/` | 中 | 已识别 |
+| TD-007 | CLI 主界面已落地，但缺少结构化运行事件和 streaming | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
+| TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
+| TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 
 ---
 
@@ -100,26 +101,26 @@ Context 和 compaction 应保持为由 `core/context_engine.py` 编排的 servic
 
 ---
 
-### TD-007: CLI 主界面已落地，但缺少结构化运行事件、streaming 和权限交互
+### TD-007: CLI 主界面已落地，但缺少结构化运行事件和 streaming
 
 - **类型：** UI / 架构
 - **区域：** `ui/cli/`, `services/observability/`, `core/loop.py`
 - **优先级：** 中
-- **状态：** 已识别
-- **影响：** 第一版 CLI 能启动真实 runtime、执行普通 prompt、展示工具/状态/历史、恢复 JSONL transcript 并清空会话，但运行中只能显示同步的 `Running...` 和最终文本。工具调用进度、transition、provider recovery、权限 ask 和 future compact 状态还不能以结构化方式呈现给用户。
+- **状态：** 部分缓解
+- **影响：** 第一版 CLI 能启动真实 runtime、执行普通 prompt、展示工具/状态/历史、恢复 JSONL transcript 并清空会话；现在也能在工具 ask 时显示同步权限面板并做 session 级临时授权。运行中仍缺少结构化事件、streaming、provider recovery UI 和 future compact 状态展示。
 
 **描述：**
-`ui/cli/app.py` 当前通过 `AgentLoop.run(prompt)` 同步等待最终结果；`core/loop.py` 没有 streaming 或 observability 订阅接口，`services/observability/` 仍是目标模块。`SandboxGuard` 的 ask 结果会作为工具错误回到模型或最终文本中，CLI 不提供人工确认 flow。provider 错误也只由 CLI 捕获并显示简短错误，不进入 runtime recovery UI。
+`ui/cli/app.py` 当前通过 `AgentLoop.run(prompt)` 同步等待最终结果；`core/loop.py` 没有 streaming 或 observability 订阅接口，`services/observability/` 仍是目标模块。CLI 已通过 `ui/cli/permissions.py` 接入同步权限确认 flow，但工具调用进度、provider 错误和恢复状态仍只由同步文本或异常处理呈现，不进入 runtime recovery UI。
 
 **引入原因：**
-CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面、固定工具装配、slash commands 和 JSONL 恢复；streaming、权限交互和结构化事件依赖后续 runtime 服务。
+CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面、固定工具装配、slash commands 和 JSONL 恢复；streaming 和结构化事件依赖后续 runtime 服务。
 
 **修复方向：**
-落地 `services/observability/` 事件流和 loop 事件发布后，让 CLI 渲染 model call、tool call、transition、usage、compact 和 provider recovery 事件。权限 ask 应接入明确的用户确认协议，并保证 deny 仍优先。未来 streaming model client 可让 CLI 渲染增量 assistant 文本。
+落地 `services/observability/` 事件流和 loop 事件发布后，让 CLI 渲染 model call、tool call、transition、usage、compact 和 provider recovery 事件。未来 streaming model client 可让 CLI 渲染增量 assistant 文本。权限 UI 后续仍可增加更丰富的 diff、审计 trace 和图形界面。
 
 **关联代码：**
 - `ui/cli/app.py:L55` - 主循环只显示 `Running...` 并同步等待 `AgentLoop.run()` 返回。
-- `ui/cli/renderer.py:L1` - renderer 只格式化静态文本和历史摘要，没有消费结构化 trace event。
+- `ui/cli/permissions.py:L1` - CLI 已有同步权限面板，但尚未接入结构化 trace event。
 - `core/loop.py:L41` - loop 调用模型和工具时尚未发布可订阅事件。
 - `services/guard/policy.py:L36` - ask policy 已存在，但 CLI 尚无用户确认 UI。
 
@@ -131,28 +132,58 @@ CLI 不应直接实现 runtime recovery、权限策略或 provider-specific 分�
 ### TD-008: 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy
 
 - **类型：** 架构 / 安全
-- **区域：** `prompts/`, `services/tools/registry.py`, `services/guard/`
+- **区域：** `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/`
 - **优先级：** 中
-- **状态：** 已识别
-- **影响：** 第一版 `ToolRegistry.visible_descriptors(state)` 已让 tool schema 和 tool prompt section 使用同一个可见工具视图，但它只支持 registry 构造期的 disabled/denied 工具名和 `RuntimeState.metadata` 中的简单工具名集合。真实项目权限、用户规则、组织策略或 guard policy 还不能在模型调用前完整裁剪工具能力。
+- **状态：** 部分缓解
+- **影响：** 第一版 `ToolRegistry.visible_descriptors(state)` 已让 tool schema 和 tool prompt section 使用同一个可见工具视图，并已接入 `PermissionPolicy` 的工具级 deny/disabled。真实项目权限、用户规则、组织策略、多来源规则合并和路径级 guard policy 仍不能在模型调用前完整裁剪工具能力。
 
 **描述：**
-`DynamicPromptAssembler` 会从 `ToolRegistry.visible_descriptors(state)` 读取工具 prompt，`tool_schemas(state)` 也基于同一视图生成 provider-visible schema。当前可见性接口用于保持 prompt/schema 一致，并为后续 deny-first policy 接入提供边界；它还没有把路径级 guard、项目配置、会话 allow/deny 或未来 permission policy 合并成完整工具可见性判断。执行入口仍依赖 `RegistryToolExecutor` 对具体 `ToolTarget` 重复执行 guard 检查。
+`DynamicPromptAssembler` 会从 `ToolRegistry.visible_descriptors(state)` 读取工具 prompt，`tool_schemas(state)` 也基于同一视图生成 provider-visible schema。当前可见性接口用于保持 prompt/schema 一致，并会消费注入的 `PermissionPolicy` 来裁剪工具级 deny/disabled。它还没有把路径级 guard、项目配置、用户配置、组织策略或持久规则合并成完整工具可见性判断。执行入口仍依赖 `RegistryToolExecutor` 对具体 `ToolTarget` 重复执行 guard 和 permission policy 检查。
 
 **引入原因：**
-动态 prompt 架构需要先有统一可见工具视图，才能避免 schema 和 prompt 看到不同工具集合。完整 permission policy 需要独立设计规则来源、优先级、审计和用户确认 flow，因此未塞进第一版 prompt assembler。
+动态 prompt 架构需要先有统一可见工具视图，才能避免 schema 和 prompt 看到不同工具集合。第一版 permission policy 已接入工具级裁剪和 session 临时授权，但完整规则来源、优先级、持久化、审计和路径级预裁剪仍需要后续设计。
 
 **修复方向：**
-设计并实现 provider-neutral permission policy service，让 registry 可见性查询消费该 service 的 blanket deny/disabled 结果。保持 deny-first 顺序：任意有效 deny 都应同时裁剪 schema、prompt 和执行入口。路径参数级判断仍应在工具执行前基于实际输入重复校验，不应由 prompt 组装阶段猜测。
+继续扩展 provider-neutral permission policy service，加入用户、项目、本地、组织、CLI flag 和持久 session 规则来源。保持 deny-first 顺序：任意有效 deny 都应同时裁剪 schema、prompt 和执行入口。路径参数级判断仍应在工具执行前基于实际输入重复校验，不应由 prompt 组装阶段猜测。
 
 **关联代码：**
-- `services/tools/registry.py:L31` - `visible_descriptors(state)` 是 prompt/schema 统一视图入口。
+- `services/tools/registry.py:L31` - `visible_descriptors(state)` 是 prompt/schema 统一视图入口，并已接入工具级 permission policy。
 - `prompts/assembler.py:L33` - assembler 从 registry 读取当前可见工具。
 - `services/tools/executor.py:L96` - executor 仍在执行入口检查具体工具调用。
+- `services/permissions/policy.py:L1` - 第一版 permission policy 已落地，但只覆盖内存 session 和固定规则。
 - `services/guard/policy.py:L19` - guard policy 已能对具体路径返回 allow/ask/deny。
 
 **架构约束：**
 Prompt 裁剪只能减少模型看到不可用能力的机会，不能替代执行入口的确定性权限检查。Hook、会话 allow 和用户确认都不能覆盖 deny。
+
+---
+
+### TD-009: BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集
+
+- **类型：** 架构 / 安全 / 测试
+- **区域：** `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py`
+- **优先级：** 中
+- **状态：** 已识别
+- **影响：** BashTool 已能基于 Tree-sitter AST 做 fail-closed 分类、派生文件系统 target 并接入权限确认，但第一版只能运行 Git Bash，不能覆盖 PowerShell、cmd、WSL、后台任务、持久命令授权、完整 Bash 语言或通用 result store。
+
+**描述：**
+`tools/bash/` 当前只支持 Git Bash runner，并只自动理解 simple command、顶层 `&&` / `||` / `;` / `|`、静态 argv 和常见 redirect。复杂结构、runtime expansion、subshell、heredoc、command substitution、loop/function/condition 等都会进入非只读 permission ask 或 fail-closed 路径。权限层已让非只读 `command/execute` target 触发 ask，但没有持久 Bash prefix allow rule，也没有 background task lifecycle 或 shell profile 管理。
+
+**引入原因：**
+BashTool 第一版优先交付可解释、安全保守的 Git Bash 命令执行能力，避免在没有完整 shell 语言模型、跨 shell runner 和可观测性服务前扩大执行面。
+
+**修复方向：**
+后续按独立 ExecPlan 扩展 runner 和权限能力：增加 PowerShell/cmd/WSL 适配时保持 provider-neutral descriptor；引入持久 Bash prefix allow 前先设计审计和撤销；在 result store/compaction 落地后把大 stdout/stderr 外置；如需支持更多 Bash 结构，继续基于 Tree-sitter AST allowlist 扩展，不退回正则安全判断。
+
+**关联代码：**
+- `tools/bash/parser.py:L1` - Tree-sitter AST allowlist 和 fail-closed parser。
+- `tools/bash/semantics.py:L1` - argv 语义检查、wrapper stripping 和退出码解释。
+- `tools/bash/runner.py:L1` - Git Bash-only runner。
+- `services/permissions/policy.py:L1` - 非只读 `command/execute` target 触发 ask。
+- `ui/cli/permissions.py:L1` - 第一版 Bash 权限面板。
+
+**架构约束：**
+BashTool 扩展必须继续通过 descriptor、ToolRegistry、guard 和 PermissionPolicy 接入；不得在 `core/loop.py` 中添加 shell 特例。安全边界应保持 deny-first，用户确认不能覆盖 guard deny。
 
 ---
 

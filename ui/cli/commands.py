@@ -110,6 +110,8 @@ def _clear(runtime: CliRuntime) -> str:
     runtime.message_store.flush_transcript()
     new_session_id = runtime.state.start_new_session()
     runtime.message_store.clear_for_new_session(new_session_id)
+    if runtime.permission_store is not None:
+        runtime.permission_store.clear()
     return renderer.render_clear(old_session_id, new_session_id)
 
 
