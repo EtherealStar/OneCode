@@ -37,6 +37,8 @@ class HookRegistry:
             try:
                 result = callback(payload)
             except Exception as exc:
+                # hook 异常会被记录，但不会打断运行时 hook 链；
+                # 只有显式 blocking_error 才能阻止工具执行。
                 metadata.setdefault("hook_errors", []).append(str(exc))
                 continue
             if result is None:
@@ -46,6 +48,8 @@ class HookRegistry:
                 base_input = payload.get("tool_input", {})
                 merged_input = dict(base_input if isinstance(base_input, dict) else {})
                 merged_input.update(result.updated_input)
+                # 后续 hook 会看到合并后的 tool_input；executor 会在执行
+                # handler 前重新校验最终输入。
                 payload["tool_input"] = merged_input
             if result.blocking_error is not None:
                 return HookResult(

@@ -116,6 +116,39 @@ def test_pre_tool_use_updated_input_is_rechecked_by_guard(
     assert "path_guard_ask_required" in result.content
 
 
+def test_pre_tool_use_updated_input_is_reclassified(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("one", encoding="utf-8")
+    (workspace / "b.txt").write_text("two", encoding="utf-8")
+    hooks = HookRegistry()
+    observed_subjects: list[str] = []
+    hooks.register(
+        HookEvent.PRE_TOOL_USE,
+        lambda payload: HookResult(updated_input={"file_path": "b.txt"}),
+    )
+
+    def observe(payload):
+        observed_subjects.append(payload["classification"].permission_subject)
+        return None
+
+    hooks.register(HookEvent.POST_TOOL_USE, observe)
+    executor, state = make_executor(workspace, hooks)
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": "a.txt"},
+    )
+
+    assert result.is_error is False
+    assert result.content == "1\ttwo"
+    assert observed_subjects == ["read_file:b.txt"]
+
+
 def test_post_tool_use_hook_observes_successful_result(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -9,8 +9,9 @@
 | 债务 ID | 标题 | 类型 | 区域 | 优先级 | 状态 |
 |:---|:---|:---|:---|:---|:---|
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
-| TD-005 | 上下文治理仍是内存 no-op，缺少 compaction、transcript 和 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 已识别 |
+| TD-005 | 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 部分缓解 |
 | TD-006 | 工具 metadata 尚未驱动结果预算、只读策略和并发执行策略 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py` | 低 | 已识别 |
+| TD-007 | CLI 主界面已落地，但缺少结构化运行事件、streaming 和权限交互 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 已识别 |
 
 ---
 
@@ -42,25 +43,26 @@
 
 ---
 
-### TD-005: 上下文治理仍是内存 no-op，缺少 compaction、transcript 和 result store
+### TD-005: 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store
 
 - **类型：** 架构 / 测试
 - **区域：** `services/context/`, `core/context_engine.py`
 - **优先级：** 中
-- **状态：** 已识别
-- **影响：** 长会话和大型工具输出没有 durable transcript、large-result storage、compact boundary 或 structured projector。这会让后续改动难以围绕 context limit 和恢复行为进行验证。
+- **状态：** 部分缓解
+- **影响：** 长会话已经有基础 JSONL transcript 可恢复，但模型可见上下文仍没有 compact boundary、structured projector、summary memory 或通用 result store。这会让后续改动仍难以围绕 context limit 和恢复行为进行完整验证。
 
 **描述：**
-`MessageStore` 是内存中的 append-only list。`ContextEngine` 默认使用 `NoOpContextPreparer`，`ContextSnapshot` 中的 `usage_hints` 和 `transcript_refs` 字段也没有由已实现服务填充。目标架构要求 message store、projector、compaction service、transcript 和 result store 分离，但当前只有最小消息列表。
+`MessageStore` 现在是内存优先且带 JSONL transcript 的 append-only store，`services/context/transcript.py` 会把消息定时写入 `.onecode/<session_id>/messages.jsonl`，并把超过 50KB 的工具结果外置到 `tool-results/` 后在恢复时读回。`ContextEngine` 默认仍使用 `NoOpContextPreparer`，`ContextSnapshot` 中的 `usage_hints` 和 `transcript_refs` 字段也没有由已实现服务填充。目标架构要求 projector、compaction service 和通用 result store 分离，这些治理能力仍未落地。
 
 **引入原因：**
-骨架阶段需要一个简单 session state，让 loop 和 provider 测试能在 compaction/transcript services 引入前运行。
+骨架阶段需要一个简单 session state，让 loop 和 provider 测试能先运行。基础 transcript 已作为第一步补齐，但 compaction/projector/result store 仍依赖后续设计。
 
 **修复方向：**
-实现 `services/context/projector.py`、`services/compaction/service.py`、`services/compaction/transcript.py` 和 `services/compaction/result_store.py`。让 `ContextEngine` 在每次模型调用前编排这些服务，并补充大型工具结果替换、transcript refs、compact summaries 和 reactive compact retry 的测试。
+实现 `services/context/projector.py`、`services/compaction/service.py` 和通用 result store。让 `ContextEngine` 在每次模型调用前编排这些服务，并补充模型可见大型工具结果替换、transcript refs、compact summaries 和 reactive compact retry 的测试。
 
 **关联代码：**
-- `services/context/message_store.py:L11` - 消息状态只保存在内存中。
+- `services/context/message_store.py:L16` - 消息状态仍以内存为模型上下文来源，持久化 transcript 尚未参与投影策略。
+- `services/context/transcript.py:L27` - 基础 JSONL transcript 已落地，但只覆盖主链恢复和工具结果外置。
 - `core/context_engine.py:L31` - 默认 context preparation 是 no-op。
 - `services/context/snapshot.py:L14` - usage hints 和 transcript refs 已存在，但未被填充。
 
@@ -93,6 +95,34 @@ Context 和 compaction 应保持为由 `core/context_engine.py` 编排的 servic
 
 **架构约束：**
 工具行为应由 registry metadata 驱动，避免在具体工具或主循环中散落 tool-name 分支。大结果治理应与 compaction/result store 边界协同。
+
+---
+
+### TD-007: CLI 主界面已落地，但缺少结构化运行事件、streaming 和权限交互
+
+- **类型：** UI / 架构
+- **区域：** `ui/cli/`, `services/observability/`, `core/loop.py`
+- **优先级：** 中
+- **状态：** 已识别
+- **影响：** 第一版 CLI 能启动真实 runtime、执行普通 prompt、展示工具/状态/历史、恢复 JSONL transcript 并清空会话，但运行中只能显示同步的 `Running...` 和最终文本。工具调用进度、transition、provider recovery、权限 ask 和 future compact 状态还不能以结构化方式呈现给用户。
+
+**描述：**
+`ui/cli/app.py` 当前通过 `AgentLoop.run(prompt)` 同步等待最终结果；`core/loop.py` 没有 streaming 或 observability 订阅接口，`services/observability/` 仍是目标模块。`SandboxGuard` 的 ask 结果会作为工具错误回到模型或最终文本中，CLI 不提供人工确认 flow。provider 错误也只由 CLI 捕获并显示简短错误，不进入 runtime recovery UI。
+
+**引入原因：**
+CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面、固定工具装配、slash commands 和 JSONL 恢复；streaming、权限交互和结构化事件依赖后续 runtime 服务。
+
+**修复方向：**
+落地 `services/observability/` 事件流和 loop 事件发布后，让 CLI 渲染 model call、tool call、transition、usage、compact 和 provider recovery 事件。权限 ask 应接入明确的用户确认协议，并保证 deny 仍优先。未来 streaming model client 可让 CLI 渲染增量 assistant 文本。
+
+**关联代码：**
+- `ui/cli/app.py:L55` - 主循环只显示 `Running...` 并同步等待 `AgentLoop.run()` 返回。
+- `ui/cli/renderer.py:L1` - renderer 只格式化静态文本和历史摘要，没有消费结构化 trace event。
+- `core/loop.py:L41` - loop 调用模型和工具时尚未发布可订阅事件。
+- `services/guard/policy.py:L36` - ask policy 已存在，但 CLI 尚无用户确认 UI。
+
+**架构约束：**
+CLI 不应直接实现 runtime recovery、权限策略或 provider-specific 分支；应消费 core/services 发布的 provider-neutral 状态和事件。
 
 ---
 

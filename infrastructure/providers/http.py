@@ -111,6 +111,8 @@ def provider_error_from_http_status(
     provider_id: str | None = None,
 ) -> ProviderError:
     error_type = _error_type_for_status(status_code)
+    # retryable 保持 provider-neutral，后续主循环可以映射到 transition，
+    # 无需理解 HTTP 状态细节。
     retryable = status_code == 429 or status_code >= 500
     message = _extract_error_message(raw_body) or f"Provider HTTP error {status_code}."
     return ProviderError(

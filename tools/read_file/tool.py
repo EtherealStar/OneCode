@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from services.tools.types import (
+    ToolCallClassification,
     ToolDescriptor,
     ToolExecutionResult,
+    ToolResultPolicy,
     ToolRuntime,
+    ToolTarget,
     ValidationResult,
 )
 from tools.read_file.prompt import PROMPT
@@ -35,14 +39,29 @@ def descriptor() -> ToolDescriptor:
         description="Read a text file from the local filesystem.",
         input_schema=INPUT_SCHEMA,
         handler=_handle,
+        prompt=PROMPT,
+        search_hint="read local text files",
+        validate_input=_validate,
+        classify_input=_classify_input,
+    )
+
+
+def _classify_input(
+    tool_input: dict[str, Any],
+    runtime: ToolRuntime,
+) -> ToolCallClassification:
+    file_path = str(tool_input["file_path"])
+    return ToolCallClassification(
         read_only=True,
         modifies_filesystem=False,
-        requires_guard=True,
         concurrency_safe=True,
-        max_result_size_chars=None,
-        prompt=PROMPT,
-        validate_input=_validate,
-        get_path=lambda tool_input: tool_input.get("file_path"),
+        targets=(ToolTarget(kind="file", operation="read", value=file_path),),
+        result_policy=ToolResultPolicy(
+            max_result_size_chars=math.inf,
+            persist_when_exceeded=False,
+            preview_chars=4_000,
+        ),
+        permission_subject=f"read_file:{file_path}",
     )
 
 
@@ -107,6 +126,7 @@ def _handle(
         for line_number, line in enumerate(selected, start=offset)
     )
 
+    # edit_file 会读取这个会话内记录，用来强制已存在文件先读后改。
     files_read = runtime.state.metadata.setdefault("files_read", set())
     if not isinstance(files_read, set):
         files_read = set(files_read)

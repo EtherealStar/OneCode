@@ -6,9 +6,12 @@ import json
 from typing import Any
 
 from services.tools.types import (
+    ToolCallClassification,
     ToolDescriptor,
     ToolExecutionResult,
+    ToolResultPolicy,
     ToolRuntime,
+    ToolTarget,
     ValidationResult,
 )
 from tools.edit_file.prompt import PROMPT
@@ -33,14 +36,29 @@ def descriptor() -> ToolDescriptor:
         description="Perform exact string replacements in a local text file.",
         input_schema=INPUT_SCHEMA,
         handler=_handle,
+        prompt=PROMPT,
+        search_hint="edit local text files",
+        validate_input=_validate,
+        classify_input=_classify_input,
+    )
+
+
+def _classify_input(
+    tool_input: dict[str, Any],
+    runtime: ToolRuntime,
+) -> ToolCallClassification:
+    file_path = str(tool_input["file_path"])
+    return ToolCallClassification(
         read_only=False,
         modifies_filesystem=True,
-        requires_guard=True,
         concurrency_safe=False,
-        max_result_size_chars=None,
-        prompt=PROMPT,
-        validate_input=_validate,
-        get_path=lambda tool_input: tool_input.get("file_path"),
+        targets=(ToolTarget(kind="file", operation="write", value=file_path),),
+        result_policy=ToolResultPolicy(
+            max_result_size_chars=50_000,
+            persist_when_exceeded=True,
+            preview_chars=4_000,
+        ),
+        permission_subject=f"edit_file:{file_path}",
     )
 
 
@@ -107,6 +125,8 @@ def _handle(
             metadata={"path": str(path), "replacement_count": 1},
         )
 
+    # 已存在文件必须先读后改，确保编辑基于已观察内容，
+    # 而不是猜测的路径或过期模型假设。
     if not _was_read(runtime, path):
         return ToolExecutionResult(
             tool_call_id="",

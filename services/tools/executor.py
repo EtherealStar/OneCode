@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
+import math
 from typing import TYPE_CHECKING, Any, Protocol
 
 from services.guard import GuardPolicy, SandboxGuard
@@ -10,14 +12,22 @@ from services.hooks import HookEvent, HookRegistry
 from services.tools.registry import ToolRegistry
 from services.tools.types import (
     ToolCall,
+    ToolCallClassification,
     ToolDescriptor,
     ToolExecutionResult,
+    ToolResultPolicy,
     ToolRuntime,
     ValidationResult,
 )
 
 if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
+
+
+@dataclass(frozen=True)
+class _PreparedInputError:
+    result: ToolExecutionResult
+    guard_policy: GuardPolicy | None = None
 
 
 class ToolExecutor(Protocol):
@@ -68,32 +78,18 @@ class RegistryToolExecutor:
 
         runtime = ToolRuntime(state=state, guard=self._guard)
         tool_input = dict(tool_call.input)
-        validation_result = self._validate_input(descriptor, tool_input, runtime)
-        if validation_result is not None:
+        # hook 之前先校验、分类并执行 guard，确保 deny/ask 基于模型原始请求，
+        # 不能被 hook 改写绕过。
+        prepared = self._prepare_input(tool_call, descriptor, tool_input, runtime)
+        if isinstance(prepared, _PreparedInputError):
             return self._tool_error(
                 tool_call,
                 descriptor,
                 state,
-                validation_result,
+                prepared.result,
+                guard_policy=prepared.guard_policy,
             )
-
-        try:
-            guard_policy = self._check_guard(descriptor, tool_input)
-        except Exception as exc:
-            return self._tool_error(
-                tool_call,
-                descriptor,
-                state,
-                _error_result(tool_call, "tool_guard_error", str(exc)),
-            )
-        if guard_policy is not None and guard_policy.action != "allow":
-            return self._tool_error(
-                tool_call,
-                descriptor,
-                state,
-                _guard_error_result(tool_call, guard_policy),
-                guard_policy=guard_policy,
-            )
+        classification = prepared
 
         hook_result = self._hooks.run(
             HookEvent.PRE_TOOL_USE,
@@ -101,6 +97,7 @@ class RegistryToolExecutor:
                 "tool_call": tool_call,
                 "descriptor": descriptor,
                 "tool_input": dict(tool_input),
+                "classification": classification,
                 "state": state,
             },
         )
@@ -117,31 +114,18 @@ class RegistryToolExecutor:
             )
         if hook_result.updated_input is not None:
             tool_input = dict(hook_result.updated_input)
-            validation_result = self._validate_input(descriptor, tool_input, runtime)
-            if validation_result is not None:
+            # hook 修改后的输入视为一次新请求，必须重新通过 schema、工具校验、
+            # 分类和 guard 检查。
+            prepared = self._prepare_input(tool_call, descriptor, tool_input, runtime)
+            if isinstance(prepared, _PreparedInputError):
                 return self._tool_error(
                     tool_call,
                     descriptor,
                     state,
-                    validation_result,
+                    prepared.result,
+                    guard_policy=prepared.guard_policy,
                 )
-            try:
-                guard_policy = self._check_guard(descriptor, tool_input)
-            except Exception as exc:
-                return self._tool_error(
-                    tool_call,
-                    descriptor,
-                    state,
-                    _error_result(tool_call, "tool_guard_error", str(exc)),
-                )
-            if guard_policy is not None and guard_policy.action != "allow":
-                return self._tool_error(
-                    tool_call,
-                    descriptor,
-                    state,
-                    _guard_error_result(tool_call, guard_policy),
-                    guard_policy=guard_policy,
-                )
+            classification = prepared
 
         try:
             result = descriptor.handler(tool_input, runtime)
@@ -152,6 +136,11 @@ class RegistryToolExecutor:
                 is_error=result.is_error,
                 metadata=result.metadata,
             )
+            if not final_result.is_error:
+                final_result = self._apply_result_policy(
+                    final_result,
+                    classification.result_policy,
+                )
             if final_result.is_error:
                 return self._tool_error(
                     tool_call,
@@ -165,6 +154,7 @@ class RegistryToolExecutor:
                     "tool_call": tool_call,
                     "descriptor": descriptor,
                     "tool_input": dict(tool_input),
+                    "classification": classification,
                     "state": state,
                     "result": final_result,
                 },
@@ -177,6 +167,37 @@ class RegistryToolExecutor:
                 state,
                 _error_result(tool_call, "tool_execution_error", str(exc)),
             )
+
+    def _prepare_input(
+        self,
+        tool_call: ToolCall,
+        descriptor: ToolDescriptor,
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification | _PreparedInputError:
+        validation_result = self._validate_input(descriptor, tool_input, runtime)
+        if validation_result is not None:
+            return _PreparedInputError(validation_result)
+
+        try:
+            classification = descriptor.classify_input(tool_input, runtime)
+        except Exception as exc:
+            return _PreparedInputError(
+                _error_result(tool_call, "tool_classification_error", str(exc))
+            )
+
+        try:
+            guard_policy = self._check_guard(classification)
+        except Exception as exc:
+            return _PreparedInputError(
+                _error_result(tool_call, "tool_guard_error", str(exc))
+            )
+        if guard_policy is not None and guard_policy.action != "allow":
+            return _PreparedInputError(
+                _guard_error_result(tool_call, guard_policy),
+                guard_policy=guard_policy,
+            )
+        return classification
 
     def _validate_input(
         self,
@@ -211,19 +232,60 @@ class RegistryToolExecutor:
 
     def _check_guard(
         self,
-        descriptor: ToolDescriptor,
-        tool_input: dict[str, Any],
+        classification: ToolCallClassification,
     ) -> GuardPolicy | None:
-        if not descriptor.requires_guard or descriptor.get_path is None:
-            return None
-        if self._guard is None:
-            raise RuntimeError(f"Tool requires guard but no guard is configured: {descriptor.name}")
-        target = descriptor.get_path(tool_input)
-        if target is None:
-            return None
-        if descriptor.modifies_filesystem:
-            return self._guard.check_write_target(target)
-        return self._guard.check_path(target, operation="read")
+        for target in classification.targets:
+            if target.kind not in {"file", "directory"}:
+                continue
+            if self._guard is None:
+                raise RuntimeError("Filesystem tool target requires a sandbox guard.")
+            if target.operation not in {"read", "write", "list", "delete"}:
+                raise RuntimeError(
+                    f"Unsupported filesystem guard operation: {target.operation}"
+                )
+            # guard 消费抽象 target，而不是工具名；这样文件系统策略不会散落到
+            # 主循环或具体工具里。
+            policy = self._guard.check_path(
+                target.value,
+                operation=target.operation,
+                kind=target.kind,
+            )
+            if policy.action != "allow":
+                return policy
+        return None
+
+    def _apply_result_policy(
+        self,
+        result: ToolExecutionResult,
+        policy: ToolResultPolicy,
+    ) -> ToolExecutionResult:
+        max_chars = policy.max_result_size_chars
+        if max_chars is None or math.isinf(max_chars) or len(result.content) <= max_chars:
+            return result
+
+        # durable result store 尚未实现；当前先返回结构化预览，并保留截断
+        # metadata，供后续 compaction/result-store 接入。
+        preview = result.content[: policy.preview_chars]
+        payload = {
+            "result_truncated": True,
+            "original_size_chars": len(result.content),
+            "max_result_size_chars": max_chars,
+            "preview": preview,
+        }
+        metadata = {
+            **result.metadata,
+            "result_truncated": True,
+            "original_size_chars": len(result.content),
+            "max_result_size_chars": max_chars,
+        }
+        return ToolExecutionResult(
+            tool_call_id=result.tool_call_id,
+            tool_name=result.tool_name,
+            content=json.dumps(payload, ensure_ascii=False),
+            is_error=result.is_error,
+            metadata=metadata,
+        )
+
 
     def _tool_error(
         self,
@@ -259,6 +321,8 @@ def _validate_input_schema(
     tool_input: dict[str, Any],
     schema: dict[str, Any],
 ) -> ValidationResult:
+    # 这里故意只实现很小的 JSON Schema 子集；共享校验只管形状，语义规则交给
+    # 具体工具的 validator。
     if schema.get("type") != "object":
         return ValidationResult.success()
     if not isinstance(tool_input, dict):

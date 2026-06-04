@@ -56,12 +56,18 @@ def make_loop(
     workspace: Path,
     transport: SequencedTransport,
 ) -> tuple[AgentLoop, ToolRegistry]:
-    message_store = MessageStore()
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=workspace / ".onecode",
+        session_id=state.session_id,
+        cwd=workspace,
+        flush_interval_seconds=60,
+    )
     registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
     context_engine = ContextEngine(message_store, tool_schema_provider=registry)
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
     loop = AgentLoop(
-        state=RuntimeState(),
+        state=state,
         message_store=message_store,
         context_engine=context_engine,
         model_client=OpenAICompatibleChatCompletionsClient(
