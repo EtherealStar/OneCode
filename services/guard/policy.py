@@ -64,6 +64,8 @@ class SandboxGuard:
             kind=kind,
         )
         original_path = str(target)
+        # GuardPolicy 同时保留模型给出的原始路径和规范化路径，
+        # 让工具错误既可读又不丢审计细节。
         if decision.kind == "denied":
             return GuardPolicy(
                 action="deny",
@@ -103,4 +105,3 @@ class SandboxGuard:
         kind: TargetKind = "file",
     ) -> GuardPolicy:
         return self.check_path(target, operation="write", kind=kind)
-

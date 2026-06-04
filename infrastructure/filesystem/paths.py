@@ -102,6 +102,8 @@ def resolve_write_target(
     except FileNotFoundError:
         pass
 
+    # 先向上找到真实存在的父目录，再把缺失后缀接回 realpath；
+    # 这样既保留符号链接解析，又不要求最终文件或目录已存在。
     missing_parts: list[str] = []
     current = candidate
     while not current.exists():
@@ -151,6 +153,8 @@ def contains_path(parent: str | Path, child: str | Path) -> bool:
     parent_path = resolve_path(parent)
     child_path = resolve_path(child)
     try:
+        # Path.relative_to 提供边界感知的包含判断；字符串前缀无法安全处理
+        # 兄弟目录、盘符根目录或分隔符差异。
         child_path.relative_to(parent_path)
     except ValueError:
         return False
@@ -161,4 +165,3 @@ def overlaps_path(a: str | Path, b: str | Path) -> bool:
     """Return True when either path boundary contains the other."""
 
     return contains_path(a, b) or contains_path(b, a)
-

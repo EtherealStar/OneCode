@@ -10,8 +10,10 @@ from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import (
     ToolCall,
+    ToolCallClassification,
     ToolDescriptor,
     ToolExecutionResult,
+    ToolResultPolicy,
     ToolRuntime,
     ValidationResult,
 )
@@ -33,6 +35,18 @@ def make_descriptor(
             content=f"ok:{name}",
         )
 
+    def classify_input(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification:
+        return ToolCallClassification(
+            read_only=True,
+            modifies_filesystem=False,
+            concurrency_safe=True,
+            targets=(),
+            permission_subject=f"{name}:{tool_input['call_id']}",
+        )
+
     return ToolDescriptor(
         name=name,
         description=f"{name} description",
@@ -47,6 +61,7 @@ def make_descriptor(
         },
         handler=handler or default_handler,
         validate_input=validate_input,
+        classify_input=classify_input,
     )
 
 
@@ -151,6 +166,88 @@ def test_executor_validates_integer_minimum_and_custom_validator() -> None:
     assert "greater than or equal to 1" in json.loads(bad_type.content)["message"]
     assert custom_failure.is_error is True
     assert json.loads(custom_failure.content)["message"] == "custom failure"
+
+
+def test_executor_converts_classification_exceptions_to_tool_errors() -> None:
+    def classify_input(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification:
+        raise RuntimeError("cannot classify")
+
+    descriptor = make_descriptor("tool")
+    descriptor = ToolDescriptor(
+        name=descriptor.name,
+        description=descriptor.description,
+        input_schema=descriptor.input_schema,
+        handler=descriptor.handler,
+        prompt=descriptor.prompt,
+        search_hint=descriptor.search_hint,
+        validate_input=descriptor.validate_input,
+        classify_input=classify_input,
+    )
+    executor = RegistryToolExecutor(ToolRegistry([descriptor]))
+
+    result = executor.execute(
+        (ToolCall(id="call-1", name="tool", input={"call_id": "call-1"}),),
+        RuntimeState(),
+    )[0]
+
+    assert result.is_error is True
+    assert json.loads(result.content) == {
+        "error": "tool_classification_error",
+        "message": "cannot classify",
+    }
+
+
+def test_executor_applies_result_policy_from_classification() -> None:
+    def handler(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            tool_call_id="",
+            tool_name="tool",
+            content="abcdef",
+        )
+
+    def classify_input(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification:
+        return ToolCallClassification(
+            read_only=True,
+            modifies_filesystem=False,
+            concurrency_safe=True,
+            targets=(),
+            result_policy=ToolResultPolicy(
+                max_result_size_chars=3,
+                persist_when_exceeded=False,
+                preview_chars=2,
+            ),
+        )
+
+    descriptor = make_descriptor("tool", handler=handler)
+    descriptor = ToolDescriptor(
+        name=descriptor.name,
+        description=descriptor.description,
+        input_schema=descriptor.input_schema,
+        handler=descriptor.handler,
+        validate_input=descriptor.validate_input,
+        classify_input=classify_input,
+    )
+    executor = RegistryToolExecutor(ToolRegistry([descriptor]))
+
+    result = executor.execute(
+        (ToolCall(id="call-1", name="tool", input={"call_id": "call-1"}),),
+        RuntimeState(),
+    )[0]
+
+    payload = json.loads(result.content)
+    assert result.is_error is False
+    assert payload["result_truncated"] is True
+    assert payload["preview"] == "ab"
+    assert result.metadata["original_size_chars"] == 6
 
 
 def test_executor_runs_tools_serially_in_provider_order() -> None:

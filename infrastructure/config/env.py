@@ -30,6 +30,8 @@ class ResolvedProviderConfig:
 
 
 def load_provider_config(env_path: str | Path = ".env") -> ResolvedProviderConfig:
+    # provider 配置只从项目 .env 读取；关闭插值可以让 API key 和
+    # JSON 参数保持字面值。
     values = dotenv_values(Path(env_path), interpolate=False)
     if not values:
         raise ProviderError(

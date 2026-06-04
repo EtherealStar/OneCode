@@ -29,6 +29,8 @@ class ToolRegistry:
         return self._descriptors.get(name)
 
     def descriptors(self) -> tuple[ToolDescriptor, ...]:
+        # 固定排序让 provider payload 和测试结果稳定，即使工具来自多个
+        # 装配入口。
         return tuple(
             self._descriptors[name] for name in sorted(self._descriptors.keys())
         )

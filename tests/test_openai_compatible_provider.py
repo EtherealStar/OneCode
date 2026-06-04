@@ -471,9 +471,14 @@ def test_real_provider_client_can_be_injected_into_loop_for_final_text(
         write_env(tmp_path),
         transport=transport,
     )
-    message_store = MessageStore()
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
     loop = AgentLoop(
-        state=RuntimeState(),
+        state=state,
         message_store=message_store,
         context_engine=ContextEngine(message_store),
         model_client=model_client,
@@ -526,10 +531,15 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
         write_env(tmp_path),
         transport=sequenced_transport,
     )
-    message_store = MessageStore()
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
     tool_executor = FakeToolExecutor()
     loop = AgentLoop(
-        state=RuntimeState(),
+        state=state,
         message_store=message_store,
         context_engine=ContextEngine(message_store),
         model_client=model_client,

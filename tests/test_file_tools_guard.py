@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
 from services.guard import SandboxBoundary, SandboxGuard
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
-from services.tools.types import ToolCall, ToolExecutionResult
+from services.tools.types import ToolCall, ToolExecutionResult, ToolRuntime
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 
@@ -36,6 +37,38 @@ def execute_one(
         (ToolCall(id=call_id, name=tool_name, input=tool_input),),
         state,
     )[0]
+
+
+def test_read_file_descriptor_classifies_input() -> None:
+    classification = read_file_descriptor().classify_input(
+        {"file_path": "a.txt"},
+        ToolRuntime(state=RuntimeState()),
+    )
+
+    assert classification.read_only is True
+    assert classification.modifies_filesystem is False
+    assert classification.concurrency_safe is True
+    assert classification.targets[0].kind == "file"
+    assert classification.targets[0].operation == "read"
+    assert classification.targets[0].value == "a.txt"
+    assert math.isinf(classification.result_policy.max_result_size_chars)
+    assert classification.permission_subject == "read_file:a.txt"
+
+
+def test_edit_file_descriptor_classifies_input() -> None:
+    classification = edit_file_descriptor().classify_input(
+        {"file_path": "a.txt", "old_string": "old", "new_string": "new"},
+        ToolRuntime(state=RuntimeState()),
+    )
+
+    assert classification.read_only is False
+    assert classification.modifies_filesystem is True
+    assert classification.concurrency_safe is False
+    assert classification.targets[0].kind == "file"
+    assert classification.targets[0].operation == "write"
+    assert classification.targets[0].value == "a.txt"
+    assert classification.result_policy.max_result_size_chars == 50_000
+    assert classification.permission_subject == "edit_file:a.txt"
 
 
 def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> None:

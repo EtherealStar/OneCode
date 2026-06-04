@@ -91,11 +91,14 @@ def classify_path(
 ) -> SandboxDecision:
     """Classify a path against the sandbox boundary."""
 
+    # write/delete 目标可能尚不存在，因此通过最近的已存在父目录解析，
+    # 而不是要求最终路径已经存在。
     if operation in {"write", "delete"}:
         target = resolve_write_target(input_path, base_dir=boundary.cwd).target
     else:
         target = resolve_path(input_path, base_dir=boundary.cwd)
 
+    # deny pattern 优先于 workspace、worktree 和 extra allowed 判断。
     denied = _match_denied(boundary.denied_patterns, target, base_dir=boundary.cwd)
     if denied is not None:
         return Denied(
@@ -130,6 +133,8 @@ def classify_path(
 
 
 def _is_unsafe_root_worktree(path: Path) -> bool:
+    # git worktree 查询失败时可能退化成文件系统根目录；若信任该结果，
+    # 会意外允许整个盘符。
     return Path(path) == Path(path).anchor
 
 
@@ -144,6 +149,8 @@ def _match_denied(
         pattern = normalize_path_pattern(pattern_input)
         if pattern.endswith(("*", "\\*")):
             root = pattern[:-2]
+            # 使用路径包含语义而不是字符串前缀，避免混淆 /repo-a 与 /repo
+            # 这类兄弟路径。
             if contains_path(root, path):
                 return raw_pattern
         else:

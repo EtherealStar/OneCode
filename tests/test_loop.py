@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from core.context_engine import ContextEngine
@@ -48,10 +49,15 @@ class FakeToolExecutor:
 def make_loop(
     responses: list[LLMResponse],
     *,
+    transcript_root: Path,
     max_turns: int = 20,
 ) -> tuple[AgentLoop, MessageStore, FakeModelClient, FakeToolExecutor]:
     state = RuntimeState(max_turns=max_turns)
-    message_store = MessageStore()
+    message_store = MessageStore(
+        transcript_root=transcript_root,
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
     context_engine = ContextEngine(message_store)
     model_client = FakeModelClient(responses)
     tool_executor = FakeToolExecutor()
@@ -69,7 +75,7 @@ def assistant_message(text: str) -> dict[str, Any]:
     return {"role": "assistant", "content": [{"type": "text", "text": text}]}
 
 
-def test_loop_stops_without_tool_calls() -> None:
+def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
     loop, message_store, model_client, tool_executor = make_loop(
         [
             LLMResponse(
@@ -77,7 +83,8 @@ def test_loop_stops_without_tool_calls() -> None:
                 final_text="done",
                 usage=ModelUsage(input_tokens=3, output_tokens=5),
             )
-        ]
+        ],
+        transcript_root=tmp_path / ".onecode",
     )
 
     result = loop.run("hello")
@@ -92,7 +99,7 @@ def test_loop_stops_without_tool_calls() -> None:
     assert message_store.current_messages()[-1] == assistant_message("done")
 
 
-def test_loop_continues_when_tool_calls_present() -> None:
+def test_loop_continues_when_tool_calls_present(tmp_path: Path) -> None:
     tool_call = ToolCall(id="call-1", name="read_file", input={"path": "a.txt"})
     loop, message_store, model_client, tool_executor = make_loop(
         [
@@ -105,7 +112,8 @@ def test_loop_continues_when_tool_calls_present() -> None:
                 assistant_message=assistant_message("final"),
                 final_text="final",
             ),
-        ]
+        ],
+        transcript_root=tmp_path / ".onecode",
     )
 
     result = loop.run("inspect")
@@ -129,7 +137,7 @@ def test_loop_continues_when_tool_calls_present() -> None:
     assert model_client.snapshots[1].messages == messages[:3]
 
 
-def test_loop_uses_tool_calls_not_stop_reason() -> None:
+def test_loop_uses_tool_calls_not_stop_reason(tmp_path: Path) -> None:
     tool_call = ToolCall(id="call-1", name="search", input={"query": "x"})
     loop, _message_store, model_client, tool_executor = make_loop(
         [
@@ -144,7 +152,8 @@ def test_loop_uses_tool_calls_not_stop_reason() -> None:
                 final_text="stopped despite stop_reason",
                 stop_reason="tool_use",
             ),
-        ]
+        ],
+        transcript_root=tmp_path / ".onecode",
     )
 
     result = loop.run("go")
@@ -155,7 +164,7 @@ def test_loop_uses_tool_calls_not_stop_reason() -> None:
     assert loop.state.last_transition == TransitionReason.COMPLETED
 
 
-def test_loop_max_turns() -> None:
+def test_loop_max_turns(tmp_path: Path) -> None:
     tool_call = ToolCall(id="call-1", name="loop", input={})
     loop, _message_store, model_client, tool_executor = make_loop(
         [
@@ -165,6 +174,7 @@ def test_loop_max_turns() -> None:
                 tool_calls=(tool_call,),
             )
         ],
+        transcript_root=tmp_path / ".onecode",
         max_turns=1,
     )
 

@@ -1,6 +1,6 @@
-# OneCode 目标架构
+# OneCode 架构
 
-本文描述 OneCode 的目标实现结构。它只定义未来架构边界、模块职责和依赖方向，不描述临时 demo 或历史实现。
+本文描述 OneCode 的目标架构，并在已经实现的部分按当前代码校准。未实现的模块仍保留原有目标形态，作为后续实现边界；本文不描述临时 demo 或历史实现。
 
 ## 架构目标
 
@@ -17,7 +17,11 @@ OneCode 是一个 code agent runtime。它的核心不是 CLI wrapper，而是�
 - CLI 是 UI 的一种实现，放在 `ui/cli/`。
 - 模型 provider、配置加载、文件系统适配等基础设施放在 `infrastructure/`。
 
+当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` 两个文件工具，以及第一版标准库 `ui/cli/` 交互主界面。`prompts/`、`services/compaction/` 和 `services/observability/` 仍是目标模块。
+
 ## 目标目录结构
+
+以下目录树同时展示当前已落地的模块和仍保留的目标模块。标注为“目标，尚未实现”的目录或文件不应被理解为当前代码已经存在。
 
 ```text
 OneCode/
@@ -36,15 +40,15 @@ OneCode/
     hooks/
       registry.py
       events.py
-      builtin.py
-    compaction/
+      builtin.py                 # 目标，尚未实现
+    compaction/                  # 目标，尚未实现
       service.py
-      transcript.py
       result_store.py
     context/
       snapshot.py
       message_store.py
-      projector.py
+      transcript.py
+      projector.py               # 目标，尚未实现
     guard/
       resolver.py
       boundary.py
@@ -52,45 +56,55 @@ OneCode/
     model/
       client.py
       types.py
-    observability/
+    observability/               # 目标，尚未实现
       events.py
       trace.py
 
-  prompts/
+  prompts/                       # 目标，尚未实现
     assembler.py
     sections.py
     runtime_context.py
 
   tools/
     read_file/
-      tool.py
-      prompt.py
-    write_file/
+      __init__.py
       tool.py
       prompt.py
     edit_file/
+      __init__.py
       tool.py
       prompt.py
-    bash/
+    write_file/                  # 目标，尚未实现
       tool.py
       prompt.py
-    glob/
+    bash/                        # 目标，尚未实现
+      tool.py
+      prompt.py
+    glob/                        # 目标，尚未实现
       tool.py
       prompt.py
 
   infrastructure/
     providers/
       chat_completions.py
+      http.py
+      catalog.py
+      model_catalog.py
+      factory.py
+      connection.py
     config/
       env.py
     filesystem/
       paths.py
 
   ui/
+    __init__.py
     cli/
+      __init__.py
       app.py
       commands.py
       renderer.py
+      types.py
 ```
 
 ## 模块职责
@@ -99,13 +113,15 @@ OneCode/
 
 `core/` 放 agent runtime 最关键的编排代码。
 
-`core/loop.py` 是主循环。它接收用户输入，触发 hook，调用上下文重建引擎，调用模型，分发工具调用，处理停止条件和 transition。它不直接实现具体工具、具体 provider、路径判断、压缩细节或 prompt 文本。
+`core/loop.py` 是主循环。当前实现接收用户输入，将用户消息写入 `MessageStore`，循环构建 `ContextSnapshot`，调用模型客户端，累计 usage，写入 assistant message，按实际 `tool_calls` 而不是 `stop_reason` 判断是否执行工具，并在没有工具调用时返回最终文本。它已经处理 `tool_use`、`completed` 和 `max_turns` transition。它不直接实现具体工具、具体 provider、路径判断、压缩细节或 prompt 文本。
 
-`core/context_engine.py` 是上下文重建引擎。它负责把当前运行状态转换为一次模型调用所需的完整快照，包括模型可见消息、系统 prompt、工具 schema、压缩结果和 trace 信息。它可以编排 `services/context`、`services/compaction`、`services/tools` 和 `prompts`，但不持有具体策略细节。
+当前 `core/loop.py` 还没有直接触发 `UserPromptSubmit` 或 `Stop` hook，也没有捕获 provider error、context limit、max output interruption 等恢复路径。这些 transition 名称已在 `core/transitions.py` 中定义，恢复行为仍是目标能力。
 
-`core/runtime_state.py` 保存会话运行状态，例如消息索引、turn count、usage、当前 transition、压缩状态、工具结果引用和 session metadata。
+`core/context_engine.py` 是上下文重建边界。当前实现从 `MessageStore` 读取当前消息，调用可注入的 `ContextPreparer`、`PromptAssembler` 和 `ToolSchemaProvider`，返回 `ContextSnapshot`。默认 preparer 是 no-op，默认 prompt assembler 是静态空 prompt，默认 tool schema provider 返回空 schema。它已经支持由 `ToolRegistry` 动态提供模型可见工具 schema，但尚未落地完整 `prompts/`、context projector 或 compaction service。
 
-`core/transitions.py` 定义 runtime transition，例如 `tool_use`、`completed`、`rate_limit_retry`、`reactive_compact_retry`、`max_output_recovery`、`stop_hook_continue`、`max_turns`。transition 是可观测事件和测试断言的基础。
+`core/runtime_state.py` 保存会话运行状态。当前字段包括 usage、turn count、max turns、reactive compact 标记、max-output recovery 计数、last transition、session id 和 metadata。文件工具通过 metadata 记录本轮已读文件，供 `edit_file` 执行前校验。
+
+`core/transitions.py` 定义 runtime transition，例如 `tool_use`、`completed`、`rate_limit_retry`、`reactive_compact_retry`、`max_output_tokens_escalate`、`max_output_tokens_recovery`、`stop_hook_continue`、`max_turns`。当前 loop 已消费 `tool_use`、`completed` 和 `max_turns`；其余恢复类 transition 仍是后续实现目标。
 
 ### services/
 
@@ -115,13 +131,17 @@ OneCode/
 
 工具服务负责工具注册、schema 生成、工具执行和结果归一化。
 
-`registry.py` 管理当前启用的工具集合。模型可见工具必须从 registry 动态生成，不能在主循环中硬编码。
+`types.py` 当前定义 provider-neutral 的 `ToolCall`、`ToolExecutionResult`、`ToolRuntime`、`ToolDescriptor`、`ValidationResult`、`ToolTarget`、`ToolResultPolicy` 和 `ToolCallClassification`。工具 descriptor 已包含 `output_schema`、工具 prompt、search hint、工具级 validator、input-aware classifier 和 handler。
 
-`executor.py` 执行模型请求的 tool calls。执行流程包括查找工具、校验输入、触发 `PreToolUse` hook、调用具体工具、处理异常、触发 `PostToolUse` hook，并把结果转换成模型可消费的 tool result。
+当前工具分类以单次调用输入为准。`ToolCallClassification` 描述本次调用是否只读、是否修改文件系统、是否可并发、触达哪些 `ToolTarget`、结果预算策略和权限审计 subject。分类失败默认 fail closed。
 
-`schema.py` 负责把内部工具描述转换为模型 provider 所需的 tool schema。
+`registry.py` 管理当前启用的工具集合。模型可见工具从 registry 动态生成，不能在主循环中硬编码。当前 registry 会按工具名排序输出 descriptor，并通过 `tool_schemas(state)` 生成 OpenAI-compatible function schema。
 
-`types.py` 定义 `ToolDescriptor`、`ToolCall`、`ToolResult`、`ToolRuntime` 等公共结构。
+`schema.py` 负责把内部工具描述转换为 provider 所需的 tool schema。当前实现是 OpenAI Chat Completions compatible 的 function schema 投影。
+
+`executor.py` 当前实现 `RegistryToolExecutor`。执行流程包括查找工具、JSON Schema 形状校验、工具级 `validate_input`、`classify_input`、基于 `ToolTarget` 的 guard 检查、`PreToolUse` hook、hook 更新输入后的重新校验/重新分类/重新 guard、调用 handler、应用 `ToolResultPolicy`、触发 `PostToolUse` 或 `ToolError` hook，并把结果转换为统一 `ToolExecutionResult`。
+
+当前 executor 串行执行 provider 返回的工具调用，并保持 provider 顺序。`concurrency_safe` 已作为分类 metadata 暴露，但尚未驱动并发分批。结果预算已能把超出 `max_result_size_chars` 的内容替换为 JSON 预览和截断 metadata，但还没有接入 durable result store；`persist_when_exceeded` 当前不执行持久化。
 
 具体工具不放在这里。`services/tools/` 是工具运行时，顶层 `tools/` 是工具实现。
 
@@ -129,21 +149,17 @@ OneCode/
 
 hook 服务负责 runtime 生命周期事件扩展。
 
-`events.py` 定义稳定事件，例如 `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`ToolError`、`PreCompact`、`PostCompact`、`Stop`。
+`events.py` 当前已实现稳定事件 `PreToolUse`、`PostToolUse` 和 `ToolError`。
 
-`registry.py` 管理 hook 注册、顺序执行、阻断结果和输入更新。
+`registry.py` 管理 hook 注册和顺序执行。hook callback 可以返回 blocking error、updated input 和 metadata。callback 异常会被记录到 hook metadata，不会中断 hook 链。`PreToolUse` 更新输入后，executor 会重新执行 schema validation、tool validation、classification 和 guard，因此 hook 不能借输入改写绕过 guard。
 
-`builtin.py` 放默认 hook，例如工具日志、压缩日志、基础危险操作提醒等。
-
-hook 是扩展点，不是安全边界的唯一来源。涉及路径边界和项目访问规则时，必须交给 `services/guard/` 做确定性判断。
+`UserPromptSubmit`、`PreCompact`、`PostCompact`、`Stop` 和 `builtin.py` 仍是目标能力。hook 是扩展点，不是安全边界的唯一来源。涉及路径边界和项目访问规则时，必须交给 `services/guard/` 做确定性判断。
 
 #### services/compaction/
 
-compaction 是具体服务，负责治理 agent 工作内存。
+compaction 是目标服务，负责治理 agent 工作内存。当前目录尚未实现，`ContextEngine` 默认使用 `NoOpContextPreparer`。
 
-`service.py` 提供压缩入口，包括工具结果预算、旧工具结果清理、滑动窗口、主动 full compact 和 reactive compact。
-
-`transcript.py` 负责会话 transcript 写入和 compact 前快照保存。
+目标上，`service.py` 提供压缩入口，包括工具结果预算、旧工具结果清理、滑动窗口、主动 full compact 和 reactive compact。
 
 `result_store.py` 负责大工具结果持久化、预览生成和引用恢复。
 
@@ -151,43 +167,45 @@ compaction 不直接决定主循环是否继续。它向 `core/context_engine.py
 
 #### services/context/
 
-context 服务负责消息存储、模型可见上下文投影和快照结构。
+context 服务负责消息存储、基础会话 transcript、模型可见上下文投影和快照结构。
 
-`message_store.py` 管理会话消息、compact boundary、工具结果引用和历史恢复入口。
+`message_store.py` 当前实现内存优先的 append-only session message store。它支持追加 user message、assistant message 和内部 `tool_result` message，并在读取时返回 deepcopy，避免外部调用方直接修改内部状态。每次追加消息都会进入 JSONL transcript store 的缓冲区，由定时 flush 和正常退出 flush 写入磁盘。
 
-`projector.py` 把内部消息状态投影为模型调用所需的 message list。它可以隐藏、替换或引用过大的历史内容。
+`transcript.py` 当前实现 `.onecode/<session_id>/messages.jsonl` 的基础会话持久化。每条 record 包含 `uuid`、`parent_uuid`、`session_id`、`timestamp`、`cwd` 和内部 `message`。超过 50KB 的 `tool_result.content` 会写入 `.onecode/<session_id>/tool-results/<tool_call_id>.txt`，JSONL 只保留预览和引用 metadata；从 JSONL 恢复时会读取外置文件并补回内存消息。
 
-`snapshot.py` 定义 `ContextSnapshot`，包含 system prompt、messages、tool schemas、usage hints、transcript refs 和当前 transition。
+`snapshot.py` 当前定义 `ContextSnapshot`，包含 system prompt、messages、tool schemas、usage hints、transcript refs 和当前 transition。
 
-`core/context_engine.py` 调用这些服务完成重建，但重建算法的生命周期位置属于 core。
+`projector.py` 仍是目标模块。目标上，它负责把内部消息状态投影为模型调用所需的 message list，可以隐藏、替换或引用过大的历史内容。
+
+当前 provider adapter 已在 `infrastructure/providers/chat_completions.py` 中把内部 `role="tool_result"` 消息投影为 Chat Completions wire format 的 `role="tool"` 消息。长期目标仍是让通用投影和上下文治理进入 `services/context/` 与 `services/compaction/` 边界。
 
 #### services/guard/
 
 guard 负责项目访问边界和安全策略。
 
-`resolver.py` 负责把用户输入路径、工具参数路径和配置路径解析为规范化路径。
+`resolver.py` 当前作为路径解析 facade，导出 `resolve_path`、`resolve_write_target`、`normalize_path_pattern`、`windows_path` 和相关类型。底层跨平台路径处理位于 `infrastructure/filesystem/paths.py`。
 
-`boundary.py` 判断路径是否位于允许的项目边界内，处理符号链接、相对路径、跨平台路径表示和不存在目标的父目录判断。
+`boundary.py` 当前定义 `SandboxBoundary` 和路径分类。边界支持 cwd、worktree、extra allowed dirs 和 denied patterns。分类结果包括 `inside_workspace`、`inside_worktree`、`inside_extra_allowed`、`external_directory` 和 `denied`。实现会处理 Windows 等价路径形式、符号链接 realpath、缺失写入目标的父目录解析、根目录 worktree 保护，以及基于 `relative_to` 语义的包含判断。
 
-`policy.py` 负责 allow、deny、ask 等策略决策。deny 必须优先于 allow 和 hook。
+`policy.py` 当前定义 `SandboxGuard` 和 `GuardPolicy`。guard 将路径分类映射为 `allow`、`ask` 或 `deny`：denied pattern 命中时返回 deny，外部目录返回 ask，workspace/worktree/extra allowed 返回 allow。blocked policy 可以转换为结构化 tool error payload。
 
-guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命周期扩展和额外拦截。hook 不能覆盖 guard 的 deny 结果。
+guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命周期扩展和额外拦截。hook 不能覆盖 guard 的 deny 结果。当前 executor 在 `PreToolUse` hook 前先执行 guard；如果原始输入已经被 deny，hook 没有机会把它改成 allowed 路径。
 
 #### services/model/
 
 模型服务定义 OneCode 内部的模型边界。
 
-`client.py` 定义模型客户端协议，例如 `send()`、`summarize()` 和未来的 streaming 接口。
+`client.py` 当前定义模型客户端协议 `send(snapshot) -> LLMResponse`。未来 streaming、summarize 和 fallback 能力应继续放在该边界之后。
 
-`types.py` 定义归一化响应结构，例如 `LLMResponse`、`ModelUsage`、`ProviderError`、`ToolCallBlock`。
+`types.py` 当前定义归一化响应结构，包括 `LLMResponse`、`ModelUsage` 和 `ProviderError`。`LLMResponse` 包含 assistant message、final text、tool calls、stop reason、usage 和 `output_interrupted` 标记。`ProviderError` 携带 provider id、status code、error type 和 retryable metadata。
 
 `services/model/` 不放具体 provider 实现。具体 Chat Completions、Responses API 或其他 provider 适配放在 `infrastructure/providers/`。
 
 #### services/observability/
 
-可观测性服务负责结构化记录 runtime 决策。
+可观测性服务是目标模块，当前目录尚未实现。
 
-`events.py` 定义 trace event，例如 `model_call_start`、`model_call_end`、`tool_use_start`、`tool_use_end`、`compact_start`、`compact_end`、`transition`。
+目标上，`events.py` 定义 trace event，例如 `model_call_start`、`model_call_end`、`tool_use_start`、`tool_use_end`、`compact_start`、`compact_end`、`transition`。
 
 `trace.py` 负责写入 JSONL trace 或提供给 UI 渲染。
 
@@ -195,9 +213,11 @@ guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命�
 
 ### prompts/
 
-`prompts/` 负责动态 prompt 组装。
+`prompts/` 负责动态 prompt 组装。当前目录尚未实现。
 
-`runtime_context.py` 定义 prompt 组装所需的输入，例如当前工作状态、工具 registry、guard 策略、compaction 状态、用户偏好和 UI 模式。
+当前 `core/context_engine.py` 只定义了可注入的 `PromptAssembler` protocol 和 `StaticPromptAssembler` 默认实现。工具 descriptor 已携带 `prompt` 字段，`tools/<tool_name>/prompt.py` 已存在于当前文件工具中，但还没有统一的 prompt assembler 从 registry 汇总工具 prompt。
+
+目标上，`runtime_context.py` 定义 prompt 组装所需的输入，例如当前工作状态、工具 registry、guard 策略、compaction 状态、用户偏好和 UI 模式。
 
 `sections.py` 放可组合 section，例如 identity、行为规则、工具策略、guard 策略、compaction 说明、上下文恢复说明。
 
@@ -209,7 +229,14 @@ guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命�
 
 `tools/` 放具体工具实现。每个工具一个子目录，包含工具逻辑和工具专属 prompt。
 
-`tool.py` 定义工具描述、输入 schema、元数据和 handler。
+当前已实现：
+
+- `tools/read_file/`：读取 sandbox 内 UTF-8 文本文件，返回带行号内容。输入包括 `file_path`、`offset` 和 `limit`。分类为只读、可并发、文件 read target，结果策略为无限制且不持久化。执行成功后会把规范化路径记录到 `RuntimeState.metadata["files_read"]`。
+- `tools/edit_file/`：对 sandbox 内文本文件执行 exact string replacement。输入包括 `file_path`、`old_string`、`new_string` 和 `replace_all`。分类为文件 write target、不可并发。编辑已有文件前要求该文件已在本 session 中被读取；当目标文件不存在且 `old_string` 为空时可以创建新文件；多重匹配默认要求更精确上下文或 `replace_all=true`。
+
+目标工具仍包括 `write_file`、`bash` 和 `glob`。
+
+`tool.py` 定义工具描述、输入 schema、输出 schema、metadata、validator、classifier 和 handler。
 
 `prompt.py` 定义模型理解该工具所需的描述、使用约束和可选 few-shot 片段。
 
@@ -229,25 +256,35 @@ tools/read_file/
 
 `infrastructure/` 放基础设施适配。
 
-`infrastructure/providers/chat_completions.py` 实现 Chat Completions 兼容 provider，把外部协议转换为 `services/model/types.py` 中的内部结构。
+`infrastructure/providers/chat_completions.py` 当前实现 OpenAI Chat Completions 兼容 provider，把外部协议转换为 `services/model/types.py` 中的内部结构。它负责构造 system/user/assistant/tool messages、附加工具 schema、解析 text response、解析 provider tool calls、生成 fallback tool call id、解析 usage，并把内部 `tool_result` 消息投影为 provider wire format。
 
-`infrastructure/config/env.py` 读取项目根目录 `.env` 文件。
+`infrastructure/providers/http.py` 当前实现小型 JSON HTTP transport，支持 `post_json` 和 `get_json`，并把 HTTP、URL、timeout 和 invalid JSON 错误转换为 `ProviderError`。429 和 5xx 被标记为 retryable，但主循环恢复流程尚未消费这些 retryable metadata。
 
-`infrastructure/config/env.py` 从项目根目录 `.env` 读取运行时配置，例如默认模型 provider、模型名、网关地址、API key 和请求参数。模型 provider 配置只从 `.env` 读取，不从系统环境变量或项目 JSON/TOML 配置读取。
+`infrastructure/providers/catalog.py` 当前定义内置 OpenAI-compatible provider catalog，包括 `openai`、`deepseek`、`glm`、`minimax`、`siliconflow`、`gemini`、`claude-openai-compatible` 和 `custom`。
+
+`infrastructure/providers/model_catalog.py` 当前通过 provider 的 `/models` 端点发现模型，并解析为 `ProviderModel`。
+
+`infrastructure/providers/factory.py` 当前提供从 `.env` 创建模型客户端和模型 catalog 客户端的入口。
+
+`infrastructure/providers/connection.py` 当前提供 provider connection option 列表，作为未来 CLI `/connect` flow 的基础。
+
+`infrastructure/config/env.py` 从项目根目录 `.env` 读取运行时配置，例如默认模型 provider、模型名、网关地址、API key、请求超时、额外 headers 和默认请求参数。模型 provider 配置只从 `.env` 读取，不从系统环境变量或项目 JSON/TOML 配置读取；dotenv interpolation 已禁用。
 
 `infrastructure/filesystem/paths.py` 放跨平台路径处理的底层工具函数。更高层的边界判断仍属于 `services/guard/`。
 
-基础设施可以被 services 调用，但不反向依赖 core。
+基础设施不反向依赖 core。provider adapter 可以依赖 `services/model`、`services/context` 和 `services/tools` 中的 provider-neutral 类型来完成协议转换；`services/guard` 可以调用 `infrastructure/filesystem` 的底层路径工具。当前 provider factory 会被应用装配层调用来创建 `ModelClient`，core 只依赖 `services/model/client.py` 的协议。
 
 ### ui/
 
-`ui/` 放用户界面。CLI 是 UI 的一种具体实现。
+`ui/` 放用户界面。CLI 是 UI 的一种具体实现。当前 `ui/cli/` 已落地第一版标准库交互界面，可通过 `uv run python -m ui.cli.app` 启动。
 
-`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入交互循环。
+`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` 工具 registry、`SandboxGuard` 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
 
-`ui/cli/commands.py` 处理 `/tools`、`/compact`、`/clear`、`/exit` 等命令。
+`ui/cli/commands.py` 处理 `/help`、`/tools`、`/status`、`/history`、`/resume`、`/clear`、`/exit` 和 `/quit`。`/resume` 可以从 `.onecode/<session_id>/messages.jsonl` 或显式 JSONL 路径恢复当前会话。
 
-`ui/cli/renderer.py` 负责把模型输出、工具调用、trace event 和错误恢复状态渲染为终端文本。
+`ui/cli/renderer.py` 负责把启动信息、状态、工具列表、历史摘要、assistant 文本和错误渲染为终端文本。`ui/cli/types.py` 放共享 `CliRuntime` 和 `CommandResult`，避免应用入口和命令处理形成循环导入。
+
+当前 CLI 仍是轻量第一版：不支持 streaming token、结构化 observability 订阅、权限交互、`/compact`、provider connect/model selection flow 或完整错误恢复 UI。这些能力应在相应 runtime 服务落地后再接入 CLI。
 
 UI 不直接实现 agent 逻辑。UI 调用 core，并订阅 services/observability 的事件来展示状态。
 
@@ -256,72 +293,90 @@ UI 不直接实现 agent 逻辑。UI 调用 core，并订阅 services/observabil
 ```mermaid
 flowchart TD
   UI["ui/cli"] --> Loop["core/loop.py"]
-  Loop --> Hooks["services/hooks"]
   Loop --> Engine["core/context_engine.py"]
   Engine --> Context["services/context"]
-  Engine --> Compaction["services/compaction"]
-  Engine --> Prompts["prompts/assembler.py"]
+  Engine --> Prompts["PromptAssembler protocol / prompts target"]
   Engine --> ToolRegistry["services/tools/registry.py"]
   Loop --> ModelClient["services/model/client.py"]
   ModelClient --> Provider["infrastructure/providers"]
   Loop --> ToolExecutor["services/tools/executor.py"]
   ToolExecutor --> Guard["services/guard"]
+  ToolExecutor --> Hooks["services/hooks"]
   ToolExecutor --> Tools["tools/*/tool.py"]
-  Loop --> Trace["services/observability"]
+  Loop --> Trace["services/observability (目标，尚未实现)"]
 ```
 
-每轮任务的执行顺序：
+当前每轮任务的执行顺序：
 
-1. UI 接收用户输入。
-2. `core/loop.py` 触发 `UserPromptSubmit` hook。
-3. 用户输入进入 runtime state 和 message store。
+1. 调用方把用户输入传给 `AgentLoop.run(prompt)`。
+2. `core/loop.py` 把用户消息追加到 `MessageStore`。
+3. loop 递增 turn count，并在超过 `max_turns` 时设置 `max_turns` transition 后停止。
 4. `core/context_engine.py` 重建本轮 `ContextSnapshot`。
-5. context engine 调用 compaction、context projector、prompt assembler 和 tool registry。
-6. loop 使用 `services/model/client.py` 调用模型。
+5. context engine 调用 context preparer、prompt assembler 和 tool schema provider。
+6. loop 使用 `services/model/client.py` 协议调用模型。
 7. provider 返回被归一化的 `LLMResponse`。
-8. 如果响应包含 tool calls，loop 交给 `services/tools/executor.py`。
-9. executor 触发 hook，调用 guard，执行具体工具，并返回 tool results。
-10. tool results 写回 message store，loop 进入下一轮。
-11. 如果响应不包含 tool calls，loop 触发 `Stop` hook。
-12. Stop hook 不要求继续时，UI 渲染最终结果。
+8. loop 记录 usage，并把 assistant message 写回 message store。
+9. 如果响应包含 tool calls，loop 交给 `services/tools/executor.py`。
+10. executor 校验输入、分类工具调用、检查 guard、运行 hook、执行具体工具，并返回 tool results。
+11. tool results 写回 message store，loop 设置 `tool_use` transition 并进入下一轮。
+12. 如果响应不包含 tool calls，loop 设置 `completed` transition 并返回最终结果。
+
+目标运行流程还包括 `UserPromptSubmit` hook、`Stop` hook、compaction、transcript/result store、structured observability，以及 provider/context/max-output 的恢复 transition。
 
 ## 依赖方向
 
-依赖方向应保持单向：
+依赖方向应保持核心与具体实现解耦：
 
 ```text
-ui -> core -> services -> infrastructure
-             services -> tools
-             core -> prompts
+ui / application composition -> core
+core -> services contracts
+core -> prompts protocol / prompts target
+tools -> services.tools types / ToolRuntime
+infrastructure.providers -> services.model/context/tools types
+services.guard -> infrastructure.filesystem
 ```
+
+当前已实现代码中，`core/loop.py` 只依赖 context engine、runtime state、transition、message store、model client protocol 和 tool executor protocol，不 import 具体工具或具体 provider。具体工具由应用装配层创建 descriptor 后注入 `ToolRegistry`；`services/tools/` 只通过 descriptor 调用 handler，不静态 import `tools/read_file` 或 `tools/edit_file`。具体 provider 通过 `infrastructure/providers/factory.py` 或测试装配注入。
 
 约束：
 
-- `tools/` 不能依赖 `core/`。
+- `tools/` 可以依赖 `services.tools` 公共类型和 `ToolRuntime`，但不能依赖 `core/loop.py`。
 - `infrastructure/` 不能依赖 `core/`。
 - `core/loop.py` 不能 import 具体工具目录。
 - `core/loop.py` 不能 import 具体 provider。
+- `services/tools/` 不能 import 具体工具目录。
 - `prompts/` 可以读取工具 prompt 描述，但不能执行工具。
 - `services/guard/` 的 deny 结果不能被 hook 覆盖。
 
 ## 主循环边界
 
-主循环只做编排：
+主循环只做编排。当前实现等价于：
 
 ```text
 receive prompt
-emit UserPromptSubmit
 append user message
 while running:
+  increment turn count
+  stop if max_turns exceeded
   build ContextSnapshot
   call model
   append assistant message
   if tool calls:
     execute tools
     append tool results
+    set tool_use transition
     continue
-  emit Stop
+  set completed transition
   return final answer
+```
+
+目标流程还会增加：
+
+```text
+emit UserPromptSubmit
+emit Stop
+support stop_hook_continue
+support provider/context/max-output recovery transitions
 ```
 
 以下逻辑不进入主循环：
@@ -353,6 +408,8 @@ hook 是生命周期扩展：
 - 在 compact 前后提取信息。
 - 在 Stop 阶段决定是否继续。
 
+当前已实现的 hook 事件只覆盖工具执行阶段：`PreToolUse`、`PostToolUse` 和 `ToolError`。executor 在 hook 前执行 guard；如果原始输入被 deny 或 ask 阻断，handler 不会执行。hook 更新输入后必须重新 schema validation、tool validation、classification 和 guard。
+
 当二者冲突时，guard 优先。尤其是 deny 结果不能被 hook、session allow 或模型请求覆盖。
 
 ## 工具组织
@@ -361,6 +418,7 @@ hook 是生命周期扩展：
 
 ```text
 tools/<tool_name>/
+  __init__.py
   tool.py
   prompt.py
 ```
@@ -370,21 +428,41 @@ tools/<tool_name>/
 - 名称。
 - 描述。
 - 输入 schema。
-- 元数据，例如 read-only、是否修改文件系统、是否可并发、是否需要 guard。
+- 输出 schema。
+- 工具 prompt。
+- search hint。
+- 工具级输入校验。
+- input-aware classifier。
+- metadata，例如 read-only、是否修改文件系统、是否可并发、是否需要 guard、结果预算。
 - handler。
-- prompt section 或 prompt descriptor。
 
-工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 和 prompt 工具说明都从 registry 动态生成。
+工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 从 registry 动态生成。目标上，prompt 工具说明也应从 registry 动态生成；当前 prompt 字段和工具 prompt 文件已存在，但统一 prompt assembler 尚未实现。
+
+当前工具执行入口遵循：
+
+```text
+lookup descriptor
+validate input_schema
+validate_input
+classify_input
+check guard targets
+run PreToolUse hooks
+if hooks update input, repeat validation/classification/guard
+execute handler
+apply result_policy
+run PostToolUse or ToolError hooks
+return normalized ToolExecutionResult
+```
 
 ## 上下文与压缩
 
 context 和 compaction 都是服务，但职责不同。
 
-context 负责当前会话的消息结构和模型可见投影。
+context 负责当前会话的消息结构、基础 JSONL transcript 和模型可见投影。当前已实现的是内存优先且会定时持久化的 `MessageStore`、`JsonlTranscriptStore` 和 `ContextSnapshot`。
 
-compaction 负责降低上下文体积，持久化大结果，生成 compact summary，并维护 transcript 引用。
+compaction 负责降低上下文体积，生成 compact summary，并维护 transcript/result 引用。当前 compaction 目录尚未实现；基础 transcript 已在 `services/context/transcript.py` 落地，但 projector、compact summary、reactive compact 和通用 result store 仍是目标能力。
 
-`core/context_engine.py` 负责决定每轮模型调用前如何组合这些服务：
+`core/context_engine.py` 当前负责决定每轮模型调用前如何组合已注入的 context preparer、prompt assembler 和 tool schema provider。目标完整流程为：
 
 1. 从 message store 读取当前会话消息。
 2. 让 compaction service 处理大结果、旧结果和 compact boundary。
@@ -392,6 +470,8 @@ compaction 负责降低上下文体积，持久化大结果，生成 compact sum
 4. 让 prompt assembler 生成 system prompt。
 5. 从 tool registry 获取当前工具 schema。
 6. 返回 `ContextSnapshot`。
+
+当前实现已经完成第 1、4、5、6 步的可注入边界，但第 2、3 步仍是目标能力；默认第 4 步只是静态 prompt。
 
 ## 模型边界
 
@@ -403,14 +483,14 @@ core 和 services 只理解内部结构：
 - `ToolCall`
 - `ModelUsage`
 - `ProviderError`
-- `OutputInterrupted`
-- `ContextLimitExceeded`
+- `output_interrupted`
+- `ContextLimitExceeded`（目标）
 
-provider-specific 字段只能在 `infrastructure/providers/` 内解析。未来切换 provider、支持 streaming 或增加 fallback model，不应修改主循环。
+provider-specific 字段只能在 `infrastructure/providers/` 内解析。当前 Chat Completions adapter 已把 provider tool calls、assistant message、usage、HTTP error 和内部 tool result 投影封装在 infrastructure 内。未来切换 provider、支持 streaming 或增加 fallback model，不应修改主循环。
 
 ## UI 边界
 
-CLI 是 UI，不是 runtime。
+CLI 是 UI，不是 runtime。当前 `ui/cli/` 已有第一版单行交互界面。
 
 CLI 可以提供：
 
@@ -420,5 +500,6 @@ CLI 可以提供：
 - 手动 compact。
 - 会话清理。
 - trace 和 transition 展示。
+- provider connect/model selection flow。
 
 CLI 不应该直接执行工具、拼 prompt、判断路径权限或处理 provider 协议。

@@ -65,6 +65,8 @@ class OpenAICompatibleChatCompletionsClient:
 
         raw_tool_calls = message.get("tool_calls")
         tool_calls = self._parse_tool_calls(raw_tool_calls)
+        # assistant message 保留接近 provider 的形状，下一次
+        # Chat Completions 请求才能原样携带 tool call id。
         assistant_message = _assistant_message(message, raw_tool_calls)
 
         return LLMResponse(
@@ -172,6 +174,8 @@ def _project_messages(messages: tuple[dict[str, Any], ...]) -> list[dict[str, An
     projected: list[dict[str, Any]] = []
     for message in messages:
         if message.get("role") == "tool_result":
+            # OneCode 内部存 provider-neutral 的 tool_result；
+            # Chat Completions wire format 需要 role="tool"。
             projected.append(
                 {
                     "role": "tool",

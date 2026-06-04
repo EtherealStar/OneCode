@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from core.context_engine import ContextEngine
@@ -36,8 +37,15 @@ class ReplacingPreparer:
         return [messages[0], {"role": "user", "content": "prepared"}]
 
 
-def test_context_engine_rebuilds_snapshot_from_current_messages() -> None:
-    message_store = MessageStore()
+def test_context_engine_rebuilds_snapshot_from_current_messages(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState(session_id="session-1")
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
     message_store.append_user("question")
     message_store.append_tool_results(
         [
@@ -48,7 +56,6 @@ def test_context_engine_rebuilds_snapshot_from_current_messages() -> None:
             )
         ]
     )
-    state = RuntimeState(session_id="session-1")
     state.set_transition(TransitionReason.TOOL_USE)
     prompt_assembler = FakePromptAssembler()
     tool_schema_provider = FakeToolSchemaProvider()
@@ -70,8 +77,13 @@ def test_context_engine_rebuilds_snapshot_from_current_messages() -> None:
     assert tool_schema_provider.states == [state]
 
 
-def test_context_preparer_can_replace_projected_messages() -> None:
-    message_store = MessageStore()
+def test_context_preparer_can_replace_projected_messages(tmp_path: Path) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
     message_store.append_user("original")
     message_store.append_tool_results(
         [
@@ -87,7 +99,7 @@ def test_context_preparer_can_replace_projected_messages() -> None:
         context_preparer=ReplacingPreparer(),
     )
 
-    snapshot = engine.build_for_model(RuntimeState())
+    snapshot = engine.build_for_model(state)
 
     assert snapshot.messages == (
         {"role": "user", "content": "original"},

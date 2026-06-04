@@ -65,6 +65,8 @@ class ContextEngine:
 
     def build_for_model(self, state: RuntimeState) -> ContextSnapshot:
         current_messages = self._message_store.current_messages()
+        # preparer 是未来 compaction/projector 的边界；当前通常只是透传，
+        # 但调用方仍应统一经过这个入口。
         prepared_messages = tuple(
             self._context_preparer.prepare(current_messages, state)
         )
