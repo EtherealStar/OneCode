@@ -11,6 +11,11 @@ from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
+from services.permissions import (
+    PermissionPolicy,
+    PermissionPrompter,
+    SessionPermissionStore,
+)
 from services.tools.executor import ToolExecutor
 from services.tools.registry import ToolRegistry
 
@@ -26,6 +31,9 @@ class CliRuntime:
     model: str
     model_client: Any
     tool_executor: ToolExecutor
+    permission_store: SessionPermissionStore | None = None
+    permission_policy: PermissionPolicy | None = None
+    permission_prompter: PermissionPrompter | None = None
 
     def with_session(
         self,
@@ -48,6 +56,8 @@ class CliRuntime:
             model_client=self.model_client,
             tool_executor=self.tool_executor,
         )
+        if self.permission_store is not None:
+            self.permission_store.clear()
         return replace(
             self,
             state=state,

@@ -13,14 +13,17 @@ from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.model.types import ProviderError
+from services.permissions import PermissionPolicy, SessionPermissionStore
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
+from tools.bash import descriptor as bash_descriptor
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from ui.cli import renderer
 from ui.cli.commands import handle_command
+from ui.cli.permissions import CliPermissionPrompter
 from ui.cli.types import CliRuntime
 
 
@@ -32,13 +35,17 @@ def build_runtime(workspace: Path) -> CliRuntime:
         session_id=state.session_id,
         cwd=workspace,
     )
+    permission_store = SessionPermissionStore()
+    permission_policy = PermissionPolicy(permission_store)
     registry = ToolRegistry(
         [
             read_file_descriptor(),
             edit_file_descriptor(),
             glob_descriptor(),
             grep_descriptor(),
-        ]
+            bash_descriptor(),
+        ],
+        permission_policy=permission_policy,
     )
     prompt_assembler = DynamicPromptAssembler(workspace, tool_registry=registry)
     context_engine = ContextEngine(
@@ -47,7 +54,13 @@ def build_runtime(workspace: Path) -> CliRuntime:
         tool_schema_provider=registry,
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
-    tool_executor = RegistryToolExecutor(registry, guard=guard)
+    permission_prompter = CliPermissionPrompter()
+    tool_executor = RegistryToolExecutor(
+        registry,
+        guard=guard,
+        permission_policy=permission_policy,
+        permission_prompter=permission_prompter,
+    )
     model_client = create_model_client(workspace / ".env")
     loop = AgentLoop(
         state=state,
@@ -67,6 +80,9 @@ def build_runtime(workspace: Path) -> CliRuntime:
         model=config.model,
         model_client=model_client,
         tool_executor=tool_executor,
+        permission_store=permission_store,
+        permission_policy=permission_policy,
+        permission_prompter=permission_prompter,
     )
 
 

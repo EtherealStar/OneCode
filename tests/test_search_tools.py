@@ -160,8 +160,8 @@ def test_search_root_guard_blocks_before_handler(tmp_path: Path) -> None:
         {"pattern": "x", "path": str(outside)},
     )
 
-    assert json.loads(glob_result.content)["error"] == "path_guard_ask_required"
-    assert json.loads(grep_result.content)["error"] == "path_guard_ask_required"
+    assert json.loads(glob_result.content)["error"] == "permission_ask_required"
+    assert json.loads(grep_result.content)["error"] == "permission_ask_required"
 
 
 def test_grep_files_with_matches_filters_denied_paths(tmp_path: Path) -> None:

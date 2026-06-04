@@ -17,7 +17,7 @@ OneCode 是一个 code agent runtime。它的核心不是 CLI wrapper，而是�
 - CLI 是 UI 的一种实现，放在 `ui/cli/`。
 - 模型 provider、配置加载、文件系统适配等基础设施放在 `infrastructure/`。
 
-当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` / `glob` / `grep` 文件工具、第一版动态 system prompt 组装，以及第一版标准库 `ui/cli/` 交互主界面。`services/compaction/` 和 `services/observability/` 仍是目标模块。
+当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` / `glob` / `grep` 文件工具、基于 Tree-sitter AST 分类的 Git Bash `bash` 工具、第一版动态 system prompt 组装，以及第一版标准库 `ui/cli/` 交互主界面。`services/compaction/` 和 `services/observability/` 仍是目标模块。
 
 ## 目标目录结构
 
@@ -37,6 +37,11 @@ OneCode/
       executor.py
       schema.py
       types.py
+    permissions/
+      types.py
+      policy.py
+      session.py
+      prompter.py
     hooks/
       registry.py
       events.py
@@ -78,9 +83,16 @@ OneCode/
     write_file/                  # 目标，尚未实现
       tool.py
       prompt.py
-    bash/                        # 目标，尚未实现
-      tool.py
+    bash/
+      __init__.py
+      ast_model.py
+      parser.py
+      paths.py
       prompt.py
+      readonly.py
+      runner.py
+      semantics.py
+      tool.py
     glob/
       __init__.py
       tool.py
@@ -141,11 +153,11 @@ OneCode/
 
 当前工具分类以单次调用输入为准。`ToolCallClassification` 描述本次调用是否只读、是否修改文件系统、是否可并发、触达哪些 `ToolTarget`、结果预算策略和权限审计 subject。分类失败默认 fail closed。
 
-`registry.py` 管理当前启用的工具集合。模型可见工具从 registry 动态生成，不能在主循环中硬编码。当前 registry 会按工具名排序输出 descriptor，并通过 `visible_descriptors(state)` 生成统一的模型可见工具视图；`tool_schemas(state)` 和 `tool_prompt_sections(state)` 都基于该视图。第一版可见性支持 registry 构造期的 disabled/denied 工具名和 `RuntimeState.metadata` 中的 `disabled_tools`、`denied_tools` 或 `hidden_tools`，真实 permission policy 深度接入仍是后续工作。
+`registry.py` 管理当前启用的工具集合。模型可见工具从 registry 动态生成，不能在主循环中硬编码。当前 registry 会按工具名排序输出 descriptor，并通过 `visible_descriptors(state)` 生成统一的模型可见工具视图；`tool_schemas(state)` 和 `tool_prompt_sections(state)` 都基于该视图。可见性支持 registry 构造期的 disabled/denied 工具名、`RuntimeState.metadata` 中的 `disabled_tools`、`denied_tools` 或 `hidden_tools`，以及注入的 `PermissionPolicy` 中的工具级 deny/disabled。路径参数级权限仍在执行入口根据实际输入判断。
 
 `schema.py` 负责把内部工具描述转换为 provider 所需的 tool schema。当前实现是 OpenAI Chat Completions compatible 的 function schema 投影。
 
-`executor.py` 当前实现 `RegistryToolExecutor`。执行流程包括查找工具、JSON Schema 形状校验、工具级 `validate_input`、`classify_input`、基于 `ToolTarget` 的 guard 检查、`PreToolUse` hook、hook 更新输入后的重新校验/重新分类/重新 guard、调用 handler、应用 `ToolResultPolicy`、触发 `PostToolUse` 或 `ToolError` hook，并把结果转换为统一 `ToolExecutionResult`。
+`executor.py` 当前实现 `RegistryToolExecutor`。执行流程包括查找工具、JSON Schema 形状校验、工具级 `validate_input`、`classify_input`、基于 `ToolTarget` 收集 guard policy、交给 permission policy 做 deny/ask/allow 决策、必要时调用注入的 permission prompter、`PreToolUse` hook、hook 更新输入后的重新校验/重新分类/重新 guard/重新 permission、调用 handler、应用 `ToolResultPolicy`、触发 `PostToolUse` 或 `ToolError` hook，并把结果转换为统一 `ToolExecutionResult`。
 
 当前 executor 串行执行 provider 返回的工具调用，并保持 provider 顺序。`concurrency_safe` 已作为分类 metadata 暴露，但尚未驱动并发分批。结果预算已能把超出 `max_result_size_chars` 的内容替换为 JSON 预览和截断 metadata，但还没有接入 durable result store；`persist_when_exceeded` 当前不执行持久化。
 
@@ -160,6 +172,18 @@ hook 服务负责 runtime 生命周期事件扩展。
 `registry.py` 管理 hook 注册和顺序执行。hook callback 可以返回 blocking error、updated input 和 metadata。callback 异常会被记录到 hook metadata，不会中断 hook 链。`PreToolUse` 更新输入后，executor 会重新执行 schema validation、tool validation、classification 和 guard，因此 hook 不能借输入改写绕过 guard。
 
 `UserPromptSubmit`、`PreCompact`、`PostCompact`、`Stop` 和 `builtin.py` 仍是目标能力。hook 是扩展点，不是安全边界的唯一来源。涉及路径边界和项目访问规则时，必须交给 `services/guard/` 做确定性判断。
+
+#### services/permissions/
+
+权限服务负责把工具级 deny/disabled、guard 结果、危险目录规则、可疑路径规则、session 临时授权和 UI 用户确认合并成一次工具调用的最终决策。
+
+`types.py` 当前定义 provider-neutral 的 `PermissionDecision`、`PermissionRequest`、`PermissionResponse` 和 `PermissionOption`。这些结构不绑定 CLI；CLI、测试或未来 UI 都可以实现自己的 prompter。
+
+`session.py` 当前实现内存中的 `SessionPermissionStore`，支持本 session 内按工具名、operation 和目录授权，也支持 session 级工具 deny/disabled。它不写磁盘，`/clear` 和 `/resume` 会清理临时授权。
+
+`policy.py` 当前实现第一版 `PermissionPolicy`。执行顺序是 deny-first：工具级 deny/disabled 先拒绝，guard deny 先拒绝；随后对 `.git`、`.vscode`、`.idea`、`.onecode` 等项目危险目录、可疑 Windows 路径形式和 guard ask 返回 `ask`；session allow 只能覆盖 ask，不能覆盖任何 deny。被 policy 工具级拒绝的工具会从 registry 的可见工具视图中消失。
+
+`prompter.py` 定义 `PermissionPrompter` protocol。当前 CLI 提供同步阻塞实现；非交互 executor 未注入 prompter 时会把 ask 转换成结构化 `permission_ask_required` 工具结果，保持 fail closed。
 
 #### services/compaction/
 
@@ -195,7 +219,9 @@ guard 负责项目访问边界和安全策略。
 
 `policy.py` 当前定义 `SandboxGuard` 和 `GuardPolicy`。guard 将路径分类映射为 `allow`、`ask` 或 `deny`：denied pattern 命中时返回 deny，外部目录返回 ask，workspace/worktree/extra allowed 返回 allow。blocked policy 可以转换为结构化 tool error payload。
 
-guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命周期扩展和额外拦截。hook 不能覆盖 guard 的 deny 结果。当前 executor 在 `PreToolUse` hook 前先执行 guard；如果原始输入已经被 deny，hook 没有机会把它改成 allowed 路径。
+guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命周期扩展和额外拦截。hook 不能覆盖 guard 的 deny 结果。当前 executor 在 `PreToolUse` hook 前先执行 guard 和 permission policy；如果原始输入已经被 deny，hook 没有机会把它改成 allowed 路径。hook 更新输入后会重新执行 schema validation、工具 validation、classification、guard 和 permission policy。
+
+permission policy 位于 guard 和 handler 之间。guard 只分类路径边界并给出 allow/ask/deny；permission policy 决定 ask 是否需要暂停询问用户，以及 session allow 是否能覆盖这次 ask。具体工具 handler 仍会重复 guard 作为兜底，并通过 executor 注入的已批准 guard policy 识别本次已获用户允许的 ask。deny 结果不能被 permission prompter、session allow 或 hook 覆盖。
 
 #### services/model/
 
@@ -241,8 +267,9 @@ guard 与 hooks 的关系是：guard 做确定性安全判断，hook 做生命�
 - `tools/edit_file/`：对 sandbox 内文本文件执行 exact string replacement。输入包括 `file_path`、`old_string`、`new_string` 和 `replace_all`。分类为文件 write target、不可并发。编辑已有文件前要求该文件已在本 session 中被读取；当目标文件不存在且 `old_string` 为空时可以创建新文件；多重匹配默认要求更精确上下文或 `replace_all=true`。
 - `tools/glob/`：按路径通配模式发现 sandbox 内文件。输入包括 `pattern`、`path`、`head_limit` 和 `offset`。分类为只读、可并发、directory list target，handler 会对搜索根和每个候选结果执行 guard 检查，结果按修改时间降序分页返回。
 - `tools/grep/`：通过 `rg` ripgrep 搜索 sandbox 内文件内容。输入包括 `pattern`、`path`、`glob`、`output_mode`、上下文参数、大小写和分页参数。分类为只读、可并发、文件系统 read target，handler 会对搜索根和每个 ripgrep 结果执行 guard 过滤，并把 ripgrep 失败转换为结构化工具错误。
+- `tools/bash/`：通过 Git Bash 执行 shell 命令。输入包括 `command`、`timeout_ms` 和 `description`。分类先使用 `tree-sitter` / `tree-sitter-bash` 解析 Bash AST，再从 simple command、argv 和 redirect 派生文件系统 target；`check_semantics()` 拒绝无法静态理解的 wrapper、eval-like builtin 和动态代码执行形态。只读 allowlist 命令可自动执行但仍受 guard 约束；写入、删除、未知副作用或 parse/semantic failure 会生成 `command/execute` target，并由 `PermissionPolicy` 触发 CLI 权限确认。runner 使用 Git Bash 的 `bash --noprofile --norc -lc`，找不到 Git Bash 时返回结构化 `git_bash_not_found` 错误。
 
-目标工具仍包括 `write_file` 和 `bash`。
+目标工具仍包括 `write_file`。
 
 `tool.py` 定义工具描述、输入 schema、输出 schema、metadata、validator、classifier 和 handler。
 
@@ -286,13 +313,13 @@ tools/read_file/
 
 `ui/` 放用户界面。CLI 是 UI 的一种具体实现。当前 `ui/cli/` 已落地第一版标准库交互界面，可通过 `uv run python -m ui.cli.app` 启动。
 
-`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` / `glob` / `grep` 工具 registry、`SandboxGuard` 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
+`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` / `glob` / `grep` 工具 registry、`SandboxGuard`、`SessionPermissionStore`、`PermissionPolicy`、CLI permission prompter 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
 
 `ui/cli/commands.py` 处理 `/help`、`/tools`、`/status`、`/history`、`/resume`、`/clear`、`/exit` 和 `/quit`。`/resume` 可以从 `.onecode/<session_id>/messages.jsonl` 或显式 JSONL 路径恢复当前会话。
 
 `ui/cli/renderer.py` 负责把启动信息、状态、工具列表、历史摘要、assistant 文本和错误渲染为终端文本。`ui/cli/types.py` 放共享 `CliRuntime` 和 `CommandResult`，避免应用入口和命令处理形成循环导入。
 
-当前 CLI 仍是轻量第一版：不支持 streaming token、结构化 observability 订阅、权限交互、`/compact`、provider connect/model selection flow 或完整错误恢复 UI。这些能力应在相应 runtime 服务落地后再接入 CLI。
+当前 CLI 仍是轻量第一版：已支持同步权限交互面板，但不支持 streaming token、结构化 observability 订阅、`/compact`、provider connect/model selection flow 或完整错误恢复 UI。这些能力应在相应 runtime 服务落地后再接入 CLI。
 
 UI 不直接实现 agent 逻辑。UI 调用 core，并订阅 services/observability 的事件来展示状态。
 
@@ -309,6 +336,7 @@ flowchart TD
   ModelClient --> Provider["infrastructure/providers"]
   Loop --> ToolExecutor["services/tools/executor.py"]
   ToolExecutor --> Guard["services/guard"]
+  ToolExecutor --> Permission["services/permissions"]
   ToolExecutor --> Hooks["services/hooks"]
   ToolExecutor --> Tools["tools/*/tool.py"]
   Loop --> Trace["services/observability (目标，尚未实现)"]
@@ -325,7 +353,7 @@ flowchart TD
 7. provider 返回被归一化的 `LLMResponse`。
 8. loop 记录 usage，并把 assistant message 写回 message store。
 9. 如果响应包含 tool calls，loop 交给 `services/tools/executor.py`。
-10. executor 校验输入、分类工具调用、检查 guard、运行 hook、执行具体工具，并返回 tool results。
+10. executor 校验输入、分类工具调用、检查 guard、运行 permission policy、必要时询问 UI prompter、运行 hook、执行具体工具，并返回 tool results。
 11. tool results 写回 message store，loop 设置 `tool_use` transition 并进入下一轮。
 12. 如果响应不包含 tool calls，loop 设置 `completed` transition 并返回最终结果。
 
@@ -444,7 +472,7 @@ tools/<tool_name>/
 - metadata，例如 read-only、是否修改文件系统、是否可并发、是否需要 guard、结果预算。
 - handler。
 
-工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 和工具 prompt 说明都从 registry 的可见工具视图动态生成。当前 `DynamicPromptAssembler` 会读取可见 descriptor 中的工具 prompt；执行入口仍会重复做 schema validation、工具级 validation、classification 和 guard 检查。
+工具注册时，`services/tools/registry.py` 读取这些描述。模型可见 schema 和工具 prompt 说明都从 registry 的可见工具视图动态生成。当前 `DynamicPromptAssembler` 会读取可见 descriptor 中的工具 prompt；执行入口仍会重复做 schema validation、工具级 validation、classification、guard 和 permission policy 检查。
 
 当前工具执行入口遵循：
 
@@ -453,9 +481,10 @@ lookup descriptor
 validate input_schema
 validate_input
 classify_input
-check guard targets
+collect guard policies
+evaluate permission policy and ask user if needed
 run PreToolUse hooks
-if hooks update input, repeat validation/classification/guard
+if hooks update input, repeat validation/classification/guard/permission
 execute handler
 apply result_policy
 run PostToolUse or ToolError hooks

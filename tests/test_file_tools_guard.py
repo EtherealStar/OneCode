@@ -147,8 +147,9 @@ def test_read_file_external_path_returns_ask_required_error(
 
     assert result.is_error is True
     payload = json.loads(result.content)
-    assert payload["error"] == "path_guard_ask_required"
-    assert payload["decision"] == "external_directory"
+    assert payload["error"] == "permission_ask_required"
+    assert payload["decision"] == "ask"
+    assert payload["guard_policies"][0]["decision"] == "external_directory"
 
 
 def test_edit_file_requires_prior_read_for_existing_file(tmp_path: Path) -> None:
@@ -297,5 +298,5 @@ def test_edit_file_external_write_returns_ask_without_writing(
 
     assert result.is_error is True
     payload = json.loads(result.content)
-    assert payload["error"] == "path_guard_ask_required"
+    assert payload["error"] == "permission_ask_required"
     assert outside.read_text(encoding="utf-8") == "old"

@@ -10,6 +10,7 @@ from services.tools.types import ToolDescriptor
 
 if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
+    from services.permissions import PermissionPolicy
 
 
 class ToolRegistry:
@@ -19,10 +20,12 @@ class ToolRegistry:
         *,
         disabled_tools: Iterable[str] = (),
         denied_tools: Iterable[str] = (),
+        permission_policy: PermissionPolicy | None = None,
     ) -> None:
         self._descriptors: dict[str, ToolDescriptor] = {}
         self._disabled_tools = {name for name in disabled_tools if name}
         self._denied_tools = {name for name in denied_tools if name}
+        self._permission_policy = permission_policy
         for descriptor in descriptors:
             self.register(descriptor)
 
@@ -49,6 +52,10 @@ class ToolRegistry:
             descriptor
             for descriptor in self.descriptors()
             if descriptor.name not in hidden_tools
+            and (
+                self._permission_policy is None
+                or self._permission_policy.is_tool_visible(descriptor, state)
+            )
         )
 
     def tool_schemas(self, state: RuntimeState) -> tuple[dict[str, Any], ...]:

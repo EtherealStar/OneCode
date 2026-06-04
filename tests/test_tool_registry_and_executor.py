@@ -6,6 +6,13 @@ from typing import Any
 import pytest
 
 from core.runtime_state import RuntimeState
+from services.guard import SandboxBoundary, SandboxGuard
+from services.permissions import (
+    PermissionPolicy,
+    PermissionRequest,
+    PermissionResponse,
+    SessionPermissionStore,
+)
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import (
@@ -17,6 +24,17 @@ from services.tools.types import (
     ToolRuntime,
     ValidationResult,
 )
+from tools.read_file import descriptor as read_file_descriptor
+
+
+class FakePrompter:
+    def __init__(self, response: PermissionResponse) -> None:
+        self.response = response
+        self.requests: list[PermissionRequest] = []
+
+    def request_permission(self, request: PermissionRequest) -> PermissionResponse:
+        self.requests.append(request)
+        return self.response
 
 
 def make_descriptor(
@@ -300,3 +318,159 @@ def test_executor_converts_handler_exceptions_to_tool_errors() -> None:
     assert result.is_error is True
     payload = json.loads(result.content)
     assert payload == {"error": "tool_execution_error", "message": "boom"}
+
+
+def test_executor_prompts_and_runs_external_read_when_allowed(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    store = SessionPermissionStore()
+    policy = PermissionPolicy(store)
+    prompter = FakePrompter(PermissionResponse(action="allow", scope="once"))
+    registry = ToolRegistry([read_file_descriptor()], permission_policy=policy)
+    executor = RegistryToolExecutor(
+        registry,
+        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
+        permission_policy=policy,
+        permission_prompter=prompter,
+    )
+    state = RuntimeState()
+
+    result = executor.execute(
+        (
+            ToolCall(
+                id="call-1",
+                name="read_file",
+                input={"file_path": str(outside)},
+            ),
+        ),
+        state,
+    )[0]
+
+    assert result.is_error is False
+    assert result.content == "1\toutside"
+    assert len(prompter.requests) == 1
+    assert prompter.requests[0].decision.action == "ask"
+    assert str(outside.resolve()) in state.metadata["files_read"]
+
+
+def test_executor_returns_permission_denied_when_user_denies(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    policy = PermissionPolicy(SessionPermissionStore())
+    prompter = FakePrompter(PermissionResponse(action="deny"))
+    registry = ToolRegistry([read_file_descriptor()], permission_policy=policy)
+    executor = RegistryToolExecutor(
+        registry,
+        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
+        permission_policy=policy,
+        permission_prompter=prompter,
+    )
+    state = RuntimeState()
+
+    result = executor.execute(
+        (
+            ToolCall(
+                id="call-1",
+                name="read_file",
+                input={"file_path": str(outside)},
+            ),
+        ),
+        state,
+    )[0]
+
+    payload = json.loads(result.content)
+    assert result.is_error is True
+    assert payload["error"] == "permission_denied"
+    assert state.metadata.get("files_read") is None
+
+
+def test_session_allow_skips_later_prompt_for_same_directory(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    first = outside / "first.txt"
+    second = outside / "second.txt"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+    store = SessionPermissionStore()
+    policy = PermissionPolicy(store)
+    prompter = FakePrompter(PermissionResponse(action="allow", scope="session"))
+    registry = ToolRegistry([read_file_descriptor()], permission_policy=policy)
+    executor = RegistryToolExecutor(
+        registry,
+        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
+        permission_policy=policy,
+        permission_prompter=prompter,
+    )
+    state = RuntimeState()
+
+    first_result = executor.execute(
+        (
+            ToolCall(
+                id="call-1",
+                name="read_file",
+                input={"file_path": str(first)},
+            ),
+        ),
+        state,
+    )[0]
+    second_result = executor.execute(
+        (
+            ToolCall(
+                id="call-2",
+                name="read_file",
+                input={"file_path": str(second)},
+            ),
+        ),
+        state,
+    )[0]
+
+    assert first_result.is_error is False
+    assert second_result.is_error is False
+    assert len(prompter.requests) == 1
+
+
+def test_permission_policy_hides_schema_prompt_and_denies_old_tool_call() -> None:
+    state = RuntimeState()
+    store = SessionPermissionStore()
+    store.deny_tool("tool")
+    policy = PermissionPolicy(store)
+    descriptor = ToolDescriptor(
+        name="tool",
+        description="tool description",
+        input_schema={
+            "type": "object",
+            "properties": {"call_id": {"type": "string"}},
+            "required": ["call_id"],
+            "additionalProperties": False,
+        },
+        handler=lambda tool_input, runtime: ToolExecutionResult(
+            tool_call_id="",
+            tool_name="tool",
+            content="should not run",
+        ),
+        prompt="# Tool: tool\nblocked",
+        classify_input=lambda tool_input, runtime: ToolCallClassification(
+            read_only=True,
+            modifies_filesystem=False,
+            concurrency_safe=True,
+        ),
+    )
+    registry = ToolRegistry([descriptor], permission_policy=policy)
+    executor = RegistryToolExecutor(registry, permission_policy=policy)
+
+    result = executor.execute(
+        (ToolCall(id="call-1", name="tool", input={"call_id": "call-1"}),),
+        state,
+    )[0]
+
+    assert registry.tool_schemas(state) == ()
+    assert registry.tool_prompt_sections(state) == ()
+    assert json.loads(result.content)["error"] == "permission_denied"

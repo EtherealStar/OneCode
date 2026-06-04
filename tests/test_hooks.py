@@ -113,7 +113,7 @@ def test_pre_tool_use_updated_input_is_rechecked_by_guard(
     )
 
     assert result.is_error is True
-    assert "path_guard_ask_required" in result.content
+    assert "permission_ask_required" in result.content
 
 
 def test_pre_tool_use_updated_input_is_reclassified(

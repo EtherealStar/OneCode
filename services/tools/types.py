@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
+    from services.guard import GuardPolicy
     from services.guard import SandboxGuard
 
 
@@ -44,6 +45,7 @@ class ValidationResult:
 class ToolRuntime:
     state: RuntimeState
     guard: SandboxGuard | None = None
+    approved_guard_policies: tuple[GuardPolicy, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,3 +116,49 @@ class ToolDescriptor:
     search_hint: str = ""
     validate_input: ToolValidator | None = None
     classify_input: ToolClassifier = fail_closed_classification
+
+
+def is_guard_policy_allowed(policy: GuardPolicy, runtime: ToolRuntime) -> bool:
+    """Return whether a handler may proceed after its own guard check.
+
+    Handlers keep their local guard checks as a final safety net. This helper
+    lets the executor's permission approval cover matching ``ask`` policies
+    without allowing a deny result to be bypassed.
+    """
+
+    if policy.action == "allow":
+        return True
+    if policy.action == "deny":
+        return False
+    for approved in runtime.approved_guard_policies:
+        if approved.action == "deny":
+            continue
+        if _same_guard_target(policy, approved) or _approved_directory_contains(
+            policy,
+            approved,
+        ):
+            return True
+    return False
+
+
+def _same_guard_target(policy: GuardPolicy, approved: GuardPolicy) -> bool:
+    return (
+        policy.operation == approved.operation
+        and policy.target_kind == approved.target_kind
+        and policy.normalized_path == approved.normalized_path
+    )
+
+
+def _approved_directory_contains(policy: GuardPolicy, approved: GuardPolicy) -> bool:
+    if approved.target_kind != "directory":
+        return False
+    if policy.operation not in {"read", "list"} or approved.operation not in {
+        "read",
+        "list",
+    }:
+        return False
+    try:
+        policy.normalized_path.relative_to(approved.normalized_path)
+    except ValueError:
+        return False
+    return True
