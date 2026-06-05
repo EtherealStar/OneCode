@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, Awaitable, Iterable, Protocol
 
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
@@ -16,7 +17,7 @@ class ContextPreparer(Protocol):
         self,
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
-    ) -> Iterable[dict[str, Any]]:
+    ) -> Iterable[dict[str, Any]] | Awaitable[Iterable[dict[str, Any]]]:
         ...
 
 
@@ -67,13 +68,14 @@ class ContextEngine:
         self._tool_schema_provider = tool_schema_provider or EmptyToolSchemaProvider()
         self._context_preparer = context_preparer or NoOpContextPreparer()
 
-    def build_for_model(self, state: RuntimeState) -> ContextSnapshot:
+    async def build_for_model(self, state: RuntimeState) -> ContextSnapshot:
         current_messages = self._message_store.current_messages()
         # preparer 是未来 compaction/projector 的边界；当前通常只是透传，
-        # 但调用方仍应统一经过这个入口。
-        prepared_messages = tuple(
-            self._context_preparer.prepare(current_messages, state)
-        )
+        # 但调用方仍应统一经过这个 awaitable 入口。
+        prepared = self._context_preparer.prepare(current_messages, state)
+        if inspect.isawaitable(prepared):
+            prepared = await prepared
+        prepared_messages = tuple(prepared)
         system_prompt = self._prompt_assembler.assemble(state)
         tool_schemas = tuple(self._tool_schema_provider.tool_schemas(state))
 

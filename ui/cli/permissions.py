@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Callable
 
@@ -21,13 +22,16 @@ class CliPermissionPrompter:
         self._input = input_func
         self._output = output_func
 
-    def request_permission(
+    async def request_permission(
         self,
         request: PermissionRequest,
     ) -> PermissionResponse:
         self._output(render_permission_panel(request))
         try:
-            choice = self._input("Allow? [y] once  [s] session directory  [n] deny: ")
+            choice = await asyncio.to_thread(
+                self._input,
+                "Allow? [y] once  [s] session directory  [n] deny: ",
+            )
         except (EOFError, KeyboardInterrupt):
             return PermissionResponse(
                 action="deny",

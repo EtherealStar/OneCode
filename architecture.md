@@ -17,7 +17,7 @@ OneCode 是一个 code agent runtime。它的核心不是 CLI wrapper，而是�
 - CLI 是 UI 的一种实现，放在 `ui/cli/`。
 - 模型 provider、配置加载、文件系统适配等基础设施放在 `infrastructure/`。
 
-当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` / `glob` / `grep` 文件工具、基于 Tree-sitter AST 分类的 Git Bash `bash` 工具、第一版动态 system prompt 组装，以及第一版标准库 `ui/cli/` 交互主界面。`services/compaction/` 和 `services/observability/` 仍是目标模块。
+当前已实现的骨架已经落地了 thin loop、context snapshot 边界、registry-backed 工具运行时、文件 sandbox guard、基础 hook、OpenAI Chat Completions 兼容 provider、provider catalog/model discovery、基础 JSONL 会话 transcript、`read_file` / `edit_file` / `glob` / `grep` 文件工具、基于 Tree-sitter AST 分类的 Git Bash `bash` 工具、内置 `agent` subagent 委派工具、第一版动态 system prompt 组装、结构化 JSONL trace，以及第一版标准库 `ui/cli/` 交互主界面。`services/compaction/` 仍是目标模块。
 
 ## 目标目录结构
 
@@ -61,7 +61,13 @@ OneCode/
     model/
       client.py
       types.py
-    observability/               # 目标，尚未实现
+    subagents/
+      context.py
+      definitions.py
+      forking.py
+      runner.py
+      types.py
+    observability/
       events.py
       trace.py
 
@@ -72,6 +78,10 @@ OneCode/
     runtime_context.py
 
   tools/
+    agent/
+      __init__.py
+      tool.py
+      prompt.py
     read_file/
       __init__.py
       tool.py
@@ -157,7 +167,7 @@ OneCode/
 
 `schema.py` 负责把内部工具描述转换为 provider 所需的 tool schema。当前实现是 OpenAI Chat Completions compatible 的 function schema 投影。
 
-`executor.py` 当前实现 `RegistryToolExecutor`。执行流程包括查找工具、JSON Schema 形状校验、工具级 `validate_input`、`classify_input`、基于 `ToolTarget` 收集 guard policy、交给 permission policy 做 deny/ask/allow 决策、必要时调用注入的 permission prompter、`PreToolUse` hook、hook 更新输入后的重新校验/重新分类/重新 guard/重新 permission、调用 handler、应用 `ToolResultPolicy`、触发 `PostToolUse` 或 `ToolError` hook，并把结果转换为统一 `ToolExecutionResult`。
+`executor.py` 当前实现 async-first 的 `RegistryToolExecutor`。执行流程包括查找工具、JSON Schema 形状校验、工具级 `validate_input`、`classify_input`、基于 `ToolTarget` 收集 guard policy、交给 permission policy 做 deny/ask/allow 决策、必要时 await 注入的 permission prompter、`PreToolUse` hook、hook 更新输入后的重新校验/重新分类/重新 guard/重新 permission、调用 handler、应用 `ToolResultPolicy`、触发 `PostToolUse` 或 `ToolError` hook，并通过 `ToolExecutionUpdate` async stream 输出统一 `ToolExecutionResult`。
 
 当前 executor 串行执行 provider 返回的工具调用，并保持 provider 顺序。`concurrency_safe` 已作为分类 metadata 暴露，但尚未驱动并发分批。结果预算已能把超出 `max_result_size_chars` 的内容替换为 JSON 预览和截断 metadata，但还没有接入 durable result store；`persist_when_exceeded` 当前不执行持久化。
 
@@ -183,7 +193,7 @@ hook 服务负责 runtime 生命周期事件扩展。
 
 `policy.py` 当前实现第一版 `PermissionPolicy`。执行顺序是 deny-first：工具级 deny/disabled 先拒绝，guard deny 先拒绝；随后对 `.git`、`.vscode`、`.idea`、`.onecode` 等项目危险目录、可疑 Windows 路径形式和 guard ask 返回 `ask`；session allow 只能覆盖 ask，不能覆盖任何 deny。被 policy 工具级拒绝的工具会从 registry 的可见工具视图中消失。
 
-`prompter.py` 定义 `PermissionPrompter` protocol。当前 CLI 提供同步阻塞实现；非交互 executor 未注入 prompter 时会把 ask 转换成结构化 `permission_ask_required` 工具结果，保持 fail closed。
+`prompter.py` 定义 async `PermissionPrompter` protocol。当前 CLI 通过 `asyncio.to_thread` 包装终端输入；非交互 executor 未注入 prompter 时会把 ask 转换成结构化 `permission_ask_required` 工具结果，保持 fail closed。
 
 #### services/compaction/
 
@@ -227,21 +237,27 @@ permission policy 位于 guard 和 handler 之间。guard 只分类路径边界�
 
 模型服务定义 OneCode 内部的模型边界。
 
-`client.py` 当前定义模型客户端协议 `send(snapshot) -> LLMResponse`。未来 streaming、summarize 和 fallback 能力应继续放在该边界之后。
+`client.py` 当前定义模型客户端协议 `stream(snapshot) -> AsyncIterator[ModelStreamEvent]`。Provider adapter 负责把外部 streaming 协议归一化为 content delta、tool call delta、completed tool call、message completed、usage 或 error 等 provider-neutral event。未来 summarize 和 fallback 能力应继续放在该边界之后。
 
 `types.py` 当前定义归一化响应结构，包括 `LLMResponse`、`ModelUsage` 和 `ProviderError`。`LLMResponse` 包含 assistant message、final text、tool calls、stop reason、usage 和 `output_interrupted` 标记。`ProviderError` 携带 provider id、status code、error type 和 retryable metadata。
 
 `services/model/` 不放具体 provider 实现。具体 Chat Completions、Responses API 或其他 provider 适配放在 `infrastructure/providers/`。
 
+#### services/subagents/
+
+subagent 服务负责内置子 agent 的定义、fork 上下文构造和 child loop 装配。当前第一版实现 `general-purpose`、`Explore`、`Plan` 和隐藏的 synthetic `fork`。显式 `subagent_type` 使用干净消息链；省略 `subagent_type` 时走 fork 路径，fork child 复制父消息链并继承父轮次已经渲染的 `ContextSnapshot.system_prompt` 字符串。
+
+`runner.py` 创建 child `RuntimeState`、`MessageStore`、`ToolRegistry`、`ContextEngine`、`RegistryToolExecutor` 和 `AgentLoop`，并 drain `AgentLoop.continue_stream()` 得到最终摘要。子 agent 的中间消息只写入 child transcript，不写回父消息链。所有 child 都隐藏 `agent` 工具，避免递归 subagent；`Explore` 和 `Plan` 还通过 `RuntimeState.metadata["read_only_agent"]` 触发 permission 层硬性只读限制。
+
+subagent 机制不进入 `core/loop.py` 的工具名分支。父 agent 只看到普通 `agent` 工具调用，具体 child 装配由 `tools/agent/` 的 handler 调用 `SubagentRunner` 完成。
+
 #### services/observability/
 
-可观测性服务是目标模块，当前目录尚未实现。
+可观测性服务负责结构化 runtime trace。当前已实现 `TraceRecorder`、JSONL sink、noop sink 和 metadata sanitizer，并由 loop、executor、hooks 和 subagent runner 写入安全摘要事件。
 
-目标上，`events.py` 定义 trace event，例如 `model_call_start`、`model_call_end`、`tool_use_start`、`tool_use_end`、`compact_start`、`compact_end`、`transition`。
+当前事件包括 interaction、context prepare、model call、tool batch、tool preflight、permission wait、tool execution、tool result、transition，以及 `subagent_start`、`subagent_completed` 和 `subagent_error`。trace 只记录摘要 metadata，不记录 prompt 全文、源码全文或工具输出全文。
 
-`trace.py` 负责写入 JSONL trace 或提供给 UI 渲染。
-
-可观测性不是 debug 文本。它应该成为 CLI、测试、回放和未来 UI 共享的事实来源。
+可观测性不是 debug 文本。它应该成为 CLI、测试、回放和未来 UI 共享的事实来源；实时订阅和更完整恢复 UI 仍是后续目标。
 
 ### prompts/
 
@@ -263,6 +279,7 @@ permission policy 位于 guard 和 handler 之间。guard 只分类路径边界�
 
 当前已实现：
 
+- `tools/agent/`：通过 `SubagentRunner` 启动内置 subagent。输入包括必填 `prompt` 和可选 `subagent_type`。省略 `subagent_type` 触发 fork；显式 `general-purpose`、`Explore` 或 `Plan` 使用对应内置定义。工具结果只返回 child 最终摘要和安全 metadata，不返回 child 完整消息链。
 - `tools/read_file/`：读取 sandbox 内 UTF-8 文本文件，返回带行号内容。输入包括 `file_path`、`offset` 和 `limit`。分类为只读、可并发、文件 read target，结果策略为无限制且不持久化。执行成功后会把规范化路径记录到 `RuntimeState.metadata["files_read"]`。
 - `tools/edit_file/`：对 sandbox 内文本文件执行 exact string replacement。输入包括 `file_path`、`old_string`、`new_string` 和 `replace_all`。分类为文件 write target、不可并发。编辑已有文件前要求该文件已在本 session 中被读取；当目标文件不存在且 `old_string` 为空时可以创建新文件；多重匹配默认要求更精确上下文或 `replace_all=true`。
 - `tools/glob/`：按路径通配模式发现 sandbox 内文件。输入包括 `pattern`、`path`、`head_limit` 和 `offset`。分类为只读、可并发、directory list target，handler 会对搜索根和每个候选结果执行 guard 检查，结果按修改时间降序分页返回。
@@ -313,13 +330,13 @@ tools/read_file/
 
 `ui/` 放用户界面。CLI 是 UI 的一种具体实现。当前 `ui/cli/` 已落地第一版标准库交互界面，可通过 `uv run python -m ui.cli.app` 启动。
 
-`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` / `glob` / `grep` 工具 registry、`SandboxGuard`、`SessionPermissionStore`、`PermissionPolicy`、CLI permission prompter 和 `RegistryToolExecutor`，再把普通 prompt 交给 `AgentLoop.run()`。
+`ui/cli/app.py` 负责启动 CLI 应用、创建 runtime、进入单行交互循环。它装配 `RuntimeState`、`MessageStore`、`ContextEngine`、provider model client、固定 `read_file` / `edit_file` / `glob` / `grep` 工具 registry、`SandboxGuard`、`SessionPermissionStore`、`PermissionPolicy`、CLI permission prompter 和 `RegistryToolExecutor`，再用 `async for` 消费 `AgentLoop.stream(prompt)`。
 
 `ui/cli/commands.py` 处理 `/help`、`/tools`、`/status`、`/history`、`/resume`、`/clear`、`/exit` 和 `/quit`。`/resume` 可以从 `.onecode/<session_id>/messages.jsonl` 或显式 JSONL 路径恢复当前会话。
 
 `ui/cli/renderer.py` 负责把启动信息、状态、工具列表、历史摘要、assistant 文本和错误渲染为终端文本。`ui/cli/types.py` 放共享 `CliRuntime` 和 `CommandResult`，避免应用入口和命令处理形成循环导入。
 
-当前 CLI 仍是轻量第一版：已支持同步权限交互面板，但不支持 streaming token、结构化 observability 订阅、`/compact`、provider connect/model selection flow 或完整错误恢复 UI。这些能力应在相应 runtime 服务落地后再接入 CLI。
+当前 CLI 仍是轻量第一版：已支持 async 权限交互面板和 streaming token 渲染，但不支持结构化 observability 订阅、`/compact`、provider connect/model selection flow 或完整错误恢复 UI。这些能力应在相应 runtime 服务落地后再接入 CLI。
 
 UI 不直接实现 agent 逻辑。UI 调用 core，并订阅 services/observability 的事件来展示状态。
 
@@ -335,16 +352,19 @@ flowchart TD
   Loop --> ModelClient["services/model/client.py"]
   ModelClient --> Provider["infrastructure/providers"]
   Loop --> ToolExecutor["services/tools/executor.py"]
+  ToolExecutor --> AgentTool["tools/agent"]
+  AgentTool --> Subagents["services/subagents"]
+  Subagents --> ChildLoop["child AgentLoop"]
   ToolExecutor --> Guard["services/guard"]
   ToolExecutor --> Permission["services/permissions"]
   ToolExecutor --> Hooks["services/hooks"]
   ToolExecutor --> Tools["tools/*/tool.py"]
-  Loop --> Trace["services/observability (目标，尚未实现)"]
+  Loop --> Trace["services/observability"]
 ```
 
 当前每轮任务的执行顺序：
 
-1. 调用方把用户输入传给 `AgentLoop.run(prompt)`。
+1. 调用方把用户输入传给 `AgentLoop.stream(prompt)` 并消费 async runtime events。
 2. `core/loop.py` 把用户消息追加到 `MessageStore`。
 3. loop 递增 turn count，并在超过 `max_turns` 时设置 `max_turns` transition 后停止。
 4. `core/context_engine.py` 重建本轮 `ContextSnapshot`。
@@ -354,6 +374,7 @@ flowchart TD
 8. loop 记录 usage，并把 assistant message 写回 message store。
 9. 如果响应包含 tool calls，loop 交给 `services/tools/executor.py`。
 10. executor 校验输入、分类工具调用、检查 guard、运行 permission policy、必要时询问 UI prompter、运行 hook、执行具体工具，并返回 tool results。
+    如果具体工具是 `agent`，它会在工具 handler 内创建 child runtime；child 的中间消息不会写入父 `MessageStore`。
 11. tool results 写回 message store，loop 设置 `tool_use` transition 并进入下一轮。
 12. 如果响应不包含 tool calls，loop 设置 `completed` transition 并返回最终结果。
 

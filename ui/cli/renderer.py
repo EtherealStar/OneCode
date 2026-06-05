@@ -17,7 +17,7 @@ def render_banner(runtime: CliRuntime) -> str:
             f"cwd: {runtime.workspace}",
             f"session: {runtime.state.session_id}",
             f"model: {runtime.provider_label} / {runtime.model}",
-            "commands: /help /tools /status /history /resume /clear /exit",
+            "commands: /help /tools /status /history /trace /resume /clear /exit",
         ]
     )
 
@@ -30,6 +30,7 @@ def render_help() -> str:
             "  /tools             List enabled tools.",
             "  /status            Show current runtime status.",
             "  /history [n]       Show recent message summaries.",
+            "  /trace [n]         Show recent trace event summaries.",
             "  /resume <target>   Restore .onecode session id or messages.jsonl path.",
             "  /clear             Start a fresh session without deleting old transcripts.",
             "  /exit, /quit       Flush transcript and exit.",
@@ -43,6 +44,17 @@ def render_running() -> str:
 
 def render_assistant(text: str) -> str:
     return text if text else "(assistant returned no text)"
+
+
+def render_assistant_delta(text: str) -> str:
+    return text
+
+
+def render_tool_result_summary(result: Any) -> str:
+    status = "error" if getattr(result, "is_error", False) else "ok"
+    tool_name = getattr(result, "tool_name", "unknown_tool")
+    call_id = getattr(result, "tool_call_id", "unknown_call")
+    return f"\n[{tool_name} {call_id} {status}]"
 
 
 def render_error(message: str) -> str:
@@ -64,6 +76,12 @@ def render_status(runtime: CliRuntime) -> str:
         else "none"
     )
     transcript_path = runtime.message_store.transcript_store.messages_path
+    trace_path = runtime.trace_recorder.trace_path
+    trace_display = (
+        _display_path(trace_path, runtime.workspace)
+        if trace_path is not None
+        else "disabled"
+    )
     return "\n".join(
         [
             "Status:",
@@ -80,6 +98,7 @@ def render_status(runtime: CliRuntime) -> str:
                 f"cache_write={usage.cache_creation_input_tokens}"
             ),
             f"  transcript: {_display_path(transcript_path, runtime.workspace)}",
+            f"  trace: {trace_display}",
         ]
     )
 
@@ -94,6 +113,35 @@ def render_history(messages: Iterable[dict[str, Any]], *, start_index: int = 1) 
         role = _message_role(message)
         detail = _message_detail(message)
         lines.append(f"[{index}] {role}: {detail}")
+    return "\n".join(lines)
+
+
+def render_trace(records: Iterable[dict[str, Any]]) -> str:
+    items = list(records)
+    if not items:
+        return "No trace records."
+
+    lines = ["Recent trace:"]
+    for record in items:
+        attributes = record.get("attributes")
+        if not isinstance(attributes, dict):
+            attributes = {}
+        lines.append(
+            " ".join(
+                part
+                for part in (
+                    _preview(record.get("timestamp")),
+                    _preview(record.get("record_type")),
+                    _preview(record.get("name")),
+                    _trace_attribute("duration_ms", attributes),
+                    _trace_attribute("tool_name", attributes),
+                    _trace_attribute("transition", attributes),
+                    _trace_attribute("error", attributes),
+                    _trace_attribute("error_type", attributes),
+                )
+                if part
+            )
+        )
     return "\n".join(lines)
 
 
@@ -159,6 +207,13 @@ def _preview_block(block: Any) -> str:
         if isinstance(text, str):
             return text
     return str(block)
+
+
+def _trace_attribute(name: str, attributes: dict[str, Any]) -> str:
+    value = attributes.get(name)
+    if value is None:
+        return ""
+    return f"{name}={_preview(value)}"
 
 
 def _display_path(path: Path, workspace: Path) -> str:

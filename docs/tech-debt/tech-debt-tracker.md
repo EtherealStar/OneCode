@@ -1,6 +1,6 @@
 # Tech Debt Tracker
 
-最近审阅日期：2026-06-04
+最近审阅日期：2026-06-05
 
 本台账记录当前已实现的 OneCode runtime 骨架中可由代码证据支持的技术债。条目依据 `architecture.md`、`docs/design-docs/core-beliefs.md`、`docs/exec-plans/active/` 和当前代码边界整理。
 
@@ -10,10 +10,11 @@
 |:---|:---|:---|:---|:---|:---|
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
 | TD-005 | 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 部分缓解 |
-| TD-006 | 工具 metadata 已驱动结果预算，但只读策略和并发执行策略仍未落地 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py` | 低 | 部分缓解 |
-| TD-007 | CLI 主界面已落地，但缺少结构化运行事件和 streaming | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
+| TD-006 | 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py` | 低 | 部分缓解 |
+| TD-007 | CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
+| TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
 
 ---
 
@@ -26,7 +27,7 @@
 - **影响：** 可重试 provider failure、context limit failure、max-output interruption 和工具执行错误目前可能直接逃出 loop，而不是变成可观测的 transition 并进入受控恢复流程。
 
 **描述：**
-`TransitionReason` 已包含恢复状态，`RuntimeState` 也包含 reactive compact 和 max-output recovery 计数器。`AgentLoop.run_loop()` 会递增 turn 并直接调用 `model_client.send(snapshot)`，但没有捕获 provider-neutral error、分类 retryability、调用 compaction，或把工具失败转换为结构化结果。
+`TransitionReason` 已包含恢复状态，`RuntimeState` 也包含 reactive compact 和 max-output recovery 计数器。`AgentLoop.stream()` 会递增 turn 并消费 `model_client.stream(snapshot)`，但没有捕获 provider-neutral error、分类 retryability、调用 compaction，或把模型 streaming error 映射为受控恢复 transition。
 
 **引入原因：**
 第一版 loop 实现聚焦 happy path：模型调用、工具调用、工具结果回填和最终停止。Transition enum 先于恢复行为被加入。
@@ -73,56 +74,59 @@ Context 和 compaction 应保持为由 `core/context_engine.py` 编排的 servic
 
 ---
 
-### TD-006: 工具 metadata 已驱动结果预算，但只读策略和并发执行策略仍未落地
+### TD-006: 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地
 
 - **类型：** 架构 / 测试
 - **区域：** `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py`
 - **优先级：** 低
 - **状态：** 部分缓解
-- **影响：** 工具 descriptor 已经能表达 `read_only`、`concurrency_safe` 和 `max_result_size_chars`，executor 已消费 `ToolResultPolicy.max_result_size_chars` 生成结构化截断预览，但 `read_only` 和 `concurrency_safe` 仍未驱动运行时策略。后续增加更多工具时，只读权限裁剪和并发调度仍可能退化为分散实现。
+- **影响：** 工具 descriptor 已经能表达 `read_only`、`concurrency_safe` 和 `max_result_size_chars`，executor 已消费 `ToolResultPolicy.max_result_size_chars` 生成结构化截断预览，并已基于 `concurrency_safe` 对连续安全工具做并发调度。但 `read_only` 尚未独立驱动权限裁剪或策略判断，超大结果也还没有接入 durable result store。
 
 **描述：**
-`ToolDescriptor` 已包含工具元数据，`RegistryToolExecutor` 也已经使用 `modifies_filesystem` 决定 guard read/write 检查，并通过 `_apply_result_policy()` 对超过 `max_result_size_chars` 的工具结果生成 JSON 预览和截断 metadata。`grep` 声明 20KB 结果预算并依赖该机制。但 `read_only` 目前没有参与策略判断，`concurrency_safe` 没有驱动并发分批，超大结果也还没有持久化或转交 compaction/result store。`read_file` 通过行数上限控制常见输出规模，但没有接入统一 result-size budget。
+`ToolDescriptor` 已包含工具元数据，`RegistryToolExecutor` 也已经使用 `modifies_filesystem` 决定 guard read/write 检查，并通过 `_apply_result_policy()` 对超过 `max_result_size_chars` 的工具结果生成 JSON 预览和截断 metadata。`RegistryToolExecutor` 现在会按 provider order 切分连续 `concurrency_safe=True` 候选批次，串行完成 permission preflight 后并发执行 handler，再按结果顺序 finalize。`read_file` 和 `edit_file` 的 `files_read` 更新也已迁移到 executor 的成功结果后处理，避免并发 handler 直接写共享 runtime state。剩余债务是 `read_only` 仍没有作为独立策略信号参与权限裁剪，且 `grep` 等大结果超过预算时仍只有预览，没有 durable result-store 引用。
 
 **引入原因：**
 当前文件工具集成优先完成 provider-compatible 工具循环、guard 强制执行和 hooks。完整工具调度与结果预算依赖后续 compaction/result store 能力。
 
 **修复方向：**
-让 executor 或工具运行时继续消费 descriptor metadata：基于 `read_only`/权限策略裁剪能力，基于 `concurrency_safe` 批量调度安全工具，基于 `max_result_size_chars` 在现有预览基础上接入 durable result-store 引用。补充覆盖并发调度、只读策略和 result-store 持久化的测试。
+让 executor 或工具运行时继续消费 descriptor metadata：基于 `read_only`/权限策略裁剪能力完善只读策略，基于 `max_result_size_chars` 在现有预览基础上接入 durable result-store 引用。补充覆盖只读策略和 result-store 持久化的测试；并发调度已有测试覆盖，后续扩展工具时应继续沿用 `concurrency_safe` 分类。
 
 **关联代码：**
-- `services/tools/types.py:L61` - `ToolDescriptor` 已定义 `read_only`、`concurrency_safe` 和 `max_result_size_chars`。
-- `services/tools/executor.py:L224` - executor 消费 guard target 和 result policy，但尚未用 `read_only` 或 `concurrency_safe` 调度。
-- `tools/read_file/tool.py:L42` - `read_file` 未设置统一 result-size budget。
-- `tools/grep/tool.py:L142` - `grep` 已设置 20KB result policy，但超过预算时仍只有预览，没有 durable result-store 引用。
+- `services/tools/types.py:L68` - `ToolCallClassification` 已定义 `read_only`、`concurrency_safe` 和 `result_policy`。
+- `services/tools/executor.py:L93` - executor 已基于 `concurrency_safe` 做连续批次调度。
+- `services/tools/executor.py:L564` - executor 已消费 result policy，但超过预算时仍只有结构化预览，没有 durable result-store 引用。
+- `tools/read_file/tool.py:L60` - `read_file` 设置无限 result budget，并通过行数参数自限流。
+- `tools/grep/tool.py:L160` - `grep` 已设置 20KB result policy，但超过预算时仍只有预览，没有 durable result-store 引用。
 
 **架构约束：**
 工具行为应由 registry metadata 驱动，避免在具体工具或主循环中散落 tool-name 分支。大结果治理应与 compaction/result store 边界协同。
 
 ---
 
-### TD-007: CLI 主界面已落地，但缺少结构化运行事件和 streaming
+### TD-007: CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅
 
 - **类型：** UI / 架构
 - **区域：** `ui/cli/`, `services/observability/`, `core/loop.py`
 - **优先级：** 中
 - **状态：** 部分缓解
-- **影响：** 第一版 CLI 能启动真实 runtime、执行普通 prompt、展示工具/状态/历史、恢复 JSONL transcript 并清空会话；现在也能在工具 ask 时显示同步权限面板并做 session 级临时授权。运行中仍缺少结构化事件、streaming、provider recovery UI 和 future compact 状态展示。
+- **影响：** 第一版 CLI 能启动真实 runtime、执行普通 prompt、增量渲染 assistant delta、展示工具/状态/历史/trace、恢复 JSONL transcript 并清空会话；现在也能在工具 ask 时显示 async 权限面板并做 session 级临时授权。运行中已有本地 JSONL trace 事实来源，但仍缺少 provider recovery UI、debug log、实时 trace 订阅和 future compact 状态展示。
 
 **描述：**
-`ui/cli/app.py` 当前通过 `AgentLoop.run(prompt)` 同步等待最终结果；`core/loop.py` 没有 streaming 或 observability 订阅接口，`services/observability/` 仍是目标模块。CLI 已通过 `ui/cli/permissions.py` 接入同步权限确认 flow，但工具调用进度、provider 错误和恢复状态仍只由同步文本或异常处理呈现，不进入 runtime recovery UI。
+`services/observability/` 已提供 `TraceRecorder`、JSONL sink、noop sink 和 metadata sanitizer；CLI 会写 `.onecode/<session_id>/trace.jsonl`，`/trace [n]` 能展示最近 trace 摘要，`/status` 能显示 trace 文件路径。`core/loop.py` 已记录 interaction、context prepare、model call 和 transition，并通过 `AgentLoop.stream(prompt)` 向 CLI 输出 assistant delta 和工具事件；`RegistryToolExecutor` 已记录 tool batch、preflight、permission wait、tool execution 和 tool result；`HookRegistry` 已记录 hook span。剩余问题是 provider recovery UI、debug log、实时 UI trace 订阅和 compact 状态展示尚未落地。
 
 **引入原因：**
-CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面、固定工具装配、slash commands 和 JSONL 恢复；streaming 和结构化事件依赖后续 runtime 服务。
+CLI 第一版刻意保持轻量标准库实现，优先完成可运行主界面、固定工具装配、slash commands、JSONL 恢复、本地 trace 和 streaming 渲染；恢复 UI 和实时订阅需要后续 transition recovery、compaction 和 UI 订阅能力继续演进。
 
 **修复方向：**
-落地 `services/observability/` 事件流和 loop 事件发布后，让 CLI 渲染 model call、tool call、transition、usage、compact 和 provider recovery 事件。未来 streaming model client 可让 CLI 渲染增量 assistant 文本。权限 UI 后续仍可增加更丰富的 diff、审计 trace 和图形界面。
+在现有 `TraceRecorder` 基础上继续扩展实时订阅或 UI sink，让 CLI 渲染 provider recovery、compact 和长期任务状态。后续如需 debug log，应与 trace 和 transcript 保持分离，并继续走 metadata 清洗和显式启用策略。
 
 **关联代码：**
-- `ui/cli/app.py:L55` - 主循环只显示 `Running...` 并同步等待 `AgentLoop.run()` 返回。
-- `ui/cli/permissions.py:L1` - CLI 已有同步权限面板，但尚未接入结构化 trace event。
-- `core/loop.py:L41` - loop 调用模型和工具时尚未发布可订阅事件。
-- `services/guard/policy.py:L36` - ask policy 已存在，但 CLI 尚无用户确认 UI。
+- `services/observability/trace.py:L1` - 第一版本地 trace recorder 和 span helper。
+- `services/observability/sinks.py:L1` - 本地 JSONL trace sink 写入 `.onecode/<session_id>/trace.jsonl`。
+- `core/loop.py:L13` - loop 已发布 interaction、context/model call 和 transition trace。
+- `services/tools/executor.py:L73` - executor 已发布工具批次、权限等待、执行和结果 trace。
+- `services/hooks/registry.py:L26` - hook registry 已发布 hook trace。
+- `ui/cli/commands.py:L34` - CLI 已提供 `/trace [n]` 查看最近 trace 摘要。
 
 **架构约束：**
 CLI 不应直接实现 runtime recovery、权限策略或 provider-specific 分支；应消费 core/services 发布的 provider-neutral 状态和事件。
@@ -184,6 +188,34 @@ BashTool 第一版优先交付可解释、安全保守的 Git Bash 命令执行�
 
 **架构约束：**
 BashTool 扩展必须继续通过 descriptor、ToolRegistry、guard 和 PermissionPolicy 接入；不得在 `core/loop.py` 中添加 shell 特例。安全边界应保持 deny-first，用户确认不能覆盖 guard deny。
+
+---
+
+### TD-010: Subagent 第一版缺少 background、worktree 和自定义 agent 加载
+
+- **类型：** 架构 / 测试
+- **区域：** `services/subagents/`, `tools/agent/`, `ui/cli/app.py`
+- **优先级：** 中
+- **状态：** 已识别
+- **影响：** 主 agent 已能通过 `agent` 工具同步运行四个内置 subagent，并支持 fork prompt 继承、递归隐藏、只读硬限制和权限 bubble；但还不能在后台运行子任务，不能为 child 创建隔离 worktree，也不能从用户、项目或插件目录加载自定义 agent 定义。
+
+**描述：**
+当前 subagent 机制只实现内置 `general-purpose`、`Explore`、`Plan` 和隐藏 `fork`。`SubagentRunner` 使用父 model client、父 permission policy/prompter、同一个 sandbox guard 和固定 base descriptors 创建 child runtime。省略 `subagent_type` 会 fork 父消息链并复用父轮次已渲染 system prompt 字符串；显式类型使用干净 child 消息链。第一版没有 `run_in_background` 输入字段，没有独立 worktree 策略，没有用户自定义 agent loader，也没有完整 prompt-cache identical fork 参数校验。
+
+**引入原因：**
+第一版刻意收窄范围，先验证 subagent 作为普通工具接入、child 上下文隔离、fork prompt 字节继承、只读权限硬限制和 CLI 权限 bubble。background、worktree 和自定义 agent 都需要额外生命周期、配置优先级、审计和恢复设计。
+
+**修复方向：**
+后续按独立 ExecPlan 设计 background task lifecycle、child worktree 创建/清理、agent definition loader 和权限规则来源。若要追求 provider prompt-cache 命中，还需要记录并比较 system prompt、tool schema、model、message prefix 和其他 provider 参数，而不只是复用父 system prompt 字符串。
+
+**关联代码：**
+- `services/subagents/definitions.py:L1` - 只定义四个内置 agent。
+- `services/subagents/runner.py:L1` - child runtime 同步 drain `AgentLoop.continue_stream()`，没有 background lifecycle 或 worktree 隔离。
+- `tools/agent/tool.py:L1` - 输入 schema 只有 `prompt` 和 `subagent_type`，没有 `run_in_background`。
+- `services/permissions/policy.py:L1` - read-only subagent 通过 permission deny-first 硬限制写入或未知副作用工具调用。
+
+**架构约束：**
+后续扩展仍应保持 subagent 通过 `agent` tool descriptor 和 `SubagentRunner` 接入，不应在 `core/loop.py` 中添加 subagent 工具名分支。任何 worktree 或自定义 agent 能力必须继续经过 guard、permission policy 和 registry 可见性裁剪。
 
 ---
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import httpx
 
 from services.model.types import ProviderError
 
@@ -26,6 +29,26 @@ class HttpTransport(Protocol):
         headers: dict[str, str],
         timeout_seconds: float,
     ) -> dict[str, Any]:
+        ...
+
+
+class AsyncHttpTransport(Protocol):
+    async def post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        ...
+
+    def stream_json_lines(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> AsyncIterator[dict[str, Any]]:
         ...
 
 
@@ -86,6 +109,93 @@ class UrllibHttpTransport:
         return parse_json_object(raw_body, provider_id=self.provider_id)
 
 
+class HttpxAsyncHttpTransport:
+    def __init__(self, *, provider_id: str | None = None) -> None:
+        self.provider_id = provider_id
+
+    async def post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.post(
+                    url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                "Provider request timed out.",
+                provider_id=self.provider_id,
+                error_type="network_error",
+                retryable=True,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "Provider network error.",
+                provider_id=self.provider_id,
+                error_type="network_error",
+                retryable=True,
+            ) from exc
+        if response.status_code >= 400:
+            raise provider_error_from_http_status(
+                response.status_code,
+                response.text,
+                provider_id=self.provider_id,
+            )
+        return parse_json_object(response.text, provider_id=self.provider_id)
+
+    async def stream_json_lines(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        raw_body = await response.aread()
+                        raise provider_error_from_http_status(
+                            response.status_code,
+                            raw_body.decode("utf-8", errors="replace"),
+                            provider_id=self.provider_id,
+                        )
+                    async for line in response.aiter_lines():
+                        value = parse_sse_json_line(
+                            line,
+                            provider_id=self.provider_id,
+                        )
+                        if value is not None:
+                            yield value
+        except ProviderError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                "Provider request timed out.",
+                provider_id=self.provider_id,
+                error_type="network_error",
+                retryable=True,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "Provider network error.",
+                provider_id=self.provider_id,
+                error_type="network_error",
+                retryable=True,
+            ) from exc
+
+
 def parse_json_object(raw_body: str, *, provider_id: str | None = None) -> dict[str, Any]:
     try:
         value = json.loads(raw_body)
@@ -102,6 +212,22 @@ def parse_json_object(raw_body: str, *, provider_id: str | None = None) -> dict[
             error_type="invalid_response",
         )
     return value
+
+
+def parse_sse_json_line(
+    line: str,
+    *,
+    provider_id: str | None = None,
+) -> dict[str, Any] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if not stripped.startswith("data:"):
+        return None
+    data = stripped.removeprefix("data:").strip()
+    if data == "[DONE]":
+        return None
+    return parse_json_object(data, provider_id=provider_id)
 
 
 def provider_error_from_http_status(

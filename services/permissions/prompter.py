@@ -8,7 +8,7 @@ from services.permissions.types import PermissionRequest, PermissionResponse
 
 
 class PermissionPrompter(Protocol):
-    def request_permission(
+    async def request_permission(
         self,
         request: PermissionRequest,
     ) -> PermissionResponse:

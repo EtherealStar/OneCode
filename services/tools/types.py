@@ -46,6 +46,7 @@ class ToolRuntime:
     state: RuntimeState
     guard: SandboxGuard | None = None
     approved_guard_policies: tuple[GuardPolicy, ...] = ()
+    tool_call_id: str = ""
 
 
 @dataclass(frozen=True)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
-from services.model.types import LLMResponse
+from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolExecutionResult
 from tools.edit_file import descriptor as edit_file_descriptor
@@ -15,18 +16,21 @@ from ui.cli.types import CliRuntime
 
 
 class FakeModelClient:
-    def send(self, snapshot: object) -> LLMResponse:
+    async def stream(self, snapshot: object):
         raise AssertionError("model should not be called by resume tests")
+        yield
 
 
 class FakeToolExecutor:
-    def execute(self, tool_calls: tuple, state: object) -> list:
-        return []
+    async def execute(self, tool_calls: tuple, state: object):
+        if False:
+            yield ToolExecutionUpdate(type="result")
 
 
 class FakeLoop:
-    def run(self, prompt: str) -> str:
+    async def stream(self, prompt: str):
         raise AssertionError("loop should not be called by resume tests")
+        yield
 
 
 def make_runtime(tmp_path: Path, session_id: str = "session-current") -> CliRuntime:
@@ -106,7 +110,9 @@ def test_resume_command_replaces_runtime_and_restores_messages(
     output = capsys.readouterr().out
     assert result.runtime is not None
     assert result.runtime.state.session_id == "session-old"
-    snapshot = result.runtime.loop.context_engine.build_for_model(result.runtime.state)
+    snapshot = asyncio.run(
+        result.runtime.loop.context_engine.build_for_model(result.runtime.state)
+    )
     assert result.runtime.message_store.current_messages() == (
         {"role": "user", "content": "restore this"},
         {"content": "restored answer", "role": "assistant"},

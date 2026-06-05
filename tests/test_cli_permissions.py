@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
@@ -117,7 +118,7 @@ def test_cli_permission_prompter_parses_allow_session_and_deny(
         output_func=outputs.append,
     )
 
-    response = prompter.request_permission(request)
+    response = asyncio.run(prompter.request_permission(request))
 
     assert response.action == "allow"
     assert response.scope == "session"
@@ -127,7 +128,7 @@ def test_cli_permission_prompter_parses_allow_session_and_deny(
         input_func=lambda prompt: "n",
         output_func=lambda output: None,
     )
-    denied = deny_prompter.request_permission(request)
+    denied = asyncio.run(deny_prompter.request_permission(request))
     assert denied.action == "deny"
 
 

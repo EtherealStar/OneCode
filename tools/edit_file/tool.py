@@ -118,7 +118,6 @@ def _handle(
             )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(new_string, encoding="utf-8")
-        _mark_read(runtime, path)
         return ToolExecutionResult(
             tool_call_id="",
             tool_name="edit_file",
@@ -170,7 +169,6 @@ def _handle(
         else text.replace(old_string, new_string, 1)
     )
     path.write_text(updated, encoding="utf-8")
-    _mark_read(runtime, path)
 
     return ToolExecutionResult(
         tool_call_id="",
@@ -183,11 +181,3 @@ def _handle(
 def _was_read(runtime: ToolRuntime, path) -> bool:
     files_read = runtime.state.metadata.get("files_read", set())
     return str(path) in files_read
-
-
-def _mark_read(runtime: ToolRuntime, path) -> None:
-    files_read = runtime.state.metadata.setdefault("files_read", set())
-    if not isinstance(files_read, set):
-        files_read = set(files_read)
-        runtime.state.metadata["files_read"] = files_read
-    files_read.add(str(path))

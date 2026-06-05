@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,7 +27,7 @@ class SequencedTransport:
         default_factory=list
     )
 
-    def post_json(
+    async def post_json(
         self,
         url: str,
         headers: dict[str, str],
@@ -36,6 +38,27 @@ class SequencedTransport:
         if not self.responses:
             raise AssertionError("Unexpected provider call")
         return self.responses.pop(0)
+
+    async def stream_json_lines(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        response = await self.post_json(url, headers, payload, timeout_seconds)
+        message = response["choices"][0]["message"]
+        finish_reason = response["choices"][0].get("finish_reason")
+        delta: dict[str, Any] = {}
+        if message.get("content") is not None:
+            delta["content"] = message.get("content")
+        if message.get("tool_calls") is not None:
+            delta["tool_calls"] = [
+                {"index": index, **tool_call}
+                for index, tool_call in enumerate(message["tool_calls"])
+            ]
+            finish_reason = finish_reason or "tool_calls"
+        yield {"choices": [{"delta": delta, "finish_reason": finish_reason}]}
 
 
 def make_config() -> ResolvedProviderConfig:
@@ -72,7 +95,7 @@ def make_loop(
         context_engine=context_engine,
         model_client=OpenAICompatibleChatCompletionsClient(
             make_config(),
-            transport=transport,
+            async_transport=transport,
         ),
         tool_executor=RegistryToolExecutor(registry, guard=guard),
     )
@@ -109,6 +132,17 @@ def final_response(content: str) -> dict[str, Any]:
     return {"choices": [{"message": {"content": content}}]}
 
 
+def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
+    async def run() -> str:
+        final_text = ""
+        async for event in loop.stream(prompt):
+            if event.type == "completed":
+                final_text = event.text
+        return final_text
+
+    return asyncio.run(run())
+
+
 def test_provider_loop_can_read_file_with_registry_executor(
     tmp_path: Path,
 ) -> None:
@@ -127,7 +161,7 @@ def test_provider_loop_can_read_file_with_registry_executor(
     )
     loop, registry = make_loop(workspace, transport)
 
-    result = loop.run("inspect a.txt")
+    result = run_to_final_text(loop, "inspect a.txt")
 
     assert result == "read complete"
     assert len(transport.post_calls) == 2
@@ -168,7 +202,7 @@ def test_provider_loop_can_read_then_edit_file(
     )
     loop, _registry = make_loop(workspace, transport)
 
-    result = loop.run("change a.txt")
+    result = run_to_final_text(loop, "change a.txt")
 
     assert result == "edit complete"
     assert target.read_text(encoding="utf-8") == "hello new world"
