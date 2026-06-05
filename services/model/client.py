@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 from services.context.snapshot import ContextSnapshot
-from services.model.types import LLMResponse
+from services.model.stream import ModelStreamEvent
 
 
 class ModelClient(Protocol):
-    def send(self, snapshot: ContextSnapshot) -> LLMResponse:
+    def stream(self, snapshot: ContextSnapshot) -> AsyncIterator[ModelStreamEvent]:
         ...

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
-from services.model.types import LLMResponse
+from services.tools.executor import ToolExecutionUpdate
+from services.observability import JsonlTraceSink, TraceRecorder
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolExecutionResult
 from tools.edit_file import descriptor as edit_file_descriptor
@@ -15,18 +17,21 @@ from ui.cli.types import CliRuntime
 
 
 class FakeModelClient:
-    def send(self, snapshot: object) -> LLMResponse:
+    async def stream(self, snapshot: object):
         raise AssertionError("model should not be called by command tests")
+        yield
 
 
 class FakeToolExecutor:
-    def execute(self, tool_calls: tuple, state: object) -> list:
+    async def execute(self, tool_calls: tuple, state: object):
         raise AssertionError("tools should not be called by command tests")
+        yield ToolExecutionUpdate(type="result")
 
 
 class FakeLoop:
-    def run(self, prompt: str) -> str:
+    async def stream(self, prompt: str):
         raise AssertionError("loop should not be called by command tests")
+        yield
 
 
 def make_runtime(tmp_path: Path) -> CliRuntime:
@@ -120,6 +125,33 @@ def test_history_command_renders_recent_message_summaries(
     assert "[1] assistant: <tool call: read_file>" in output
     assert "[2] tool_result: read_file call_read: 1 line" in output
     assert "inspect files" not in output
+
+
+def test_trace_command_renders_recent_trace_records(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    runtime = make_runtime(tmp_path)
+    sink = JsonlTraceSink(
+        tmp_path / ".onecode",
+        runtime.state.session_id,
+        flush_interval_seconds=60,
+    )
+    recorder = TraceRecorder(
+        session_id=runtime.state.session_id,
+        workspace=tmp_path,
+        sink=sink,
+    )
+    recorder.event("transition", {"transition": "completed"})
+    recorder.flush()
+    runtime = replace(runtime, trace_recorder=recorder)
+
+    handle_command(runtime, "/trace 1")
+
+    output = capsys.readouterr().out
+    assert "Recent trace:" in output
+    assert "transition" in output
+    assert "transition=completed" in output
 
 
 def test_clear_command_starts_new_session_without_deleting_old(

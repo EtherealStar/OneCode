@@ -6,7 +6,7 @@ from pathlib import Path
 
 from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
 from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
-from infrastructure.providers.http import HttpTransport
+from infrastructure.providers.http import AsyncHttpTransport, HttpTransport
 from infrastructure.providers.model_catalog import ModelCatalogClient
 
 
@@ -17,10 +17,13 @@ def resolve_config(env_path: str | Path = ".env") -> ResolvedProviderConfig:
 def create_model_client(
     env_path: str | Path = ".env",
     *,
-    transport: HttpTransport | None = None,
+    async_transport: AsyncHttpTransport | None = None,
 ) -> OpenAICompatibleChatCompletionsClient:
     resolved = load_provider_config(env_path)
-    return OpenAICompatibleChatCompletionsClient(resolved, transport=transport)
+    return OpenAICompatibleChatCompletionsClient(
+        resolved,
+        async_transport=async_transport,
+    )
 
 
 def create_model_catalog_client(

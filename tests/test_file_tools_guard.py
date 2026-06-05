@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 from pathlib import Path
@@ -33,10 +34,32 @@ def execute_one(
     *,
     call_id: str = "call-1",
 ) -> ToolExecutionResult:
-    return executor.execute(
-        (ToolCall(id=call_id, name=tool_name, input=tool_input),),
-        state,
-    )[0]
+    async def collect() -> list[ToolExecutionResult]:
+        results: list[ToolExecutionResult] = []
+        async for update in executor.execute(
+            (ToolCall(id=call_id, name=tool_name, input=tool_input),),
+            state,
+        ):
+            if update.result is not None:
+                results.append(update.result)
+        return results
+
+    return asyncio.run(collect())[0]
+
+
+def execute_results(
+    executor: RegistryToolExecutor,
+    state: RuntimeState,
+    tool_calls: tuple[ToolCall, ...],
+) -> list[ToolExecutionResult]:
+    async def collect() -> list[ToolExecutionResult]:
+        results: list[ToolExecutionResult] = []
+        async for update in executor.execute(tool_calls, state):
+            if update.result is not None:
+                results.append(update.result)
+        return results
+
+    return asyncio.run(collect())
 
 
 def test_read_file_descriptor_classifies_input() -> None:
@@ -90,6 +113,24 @@ def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> No
     assert result.tool_name == "read_file"
     assert result.content == "2\ttwo\n3\tthree"
     assert str(target.resolve()) in state.metadata["files_read"]
+
+
+def test_read_file_handler_does_not_record_files_read_directly(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("one", encoding="utf-8")
+    state = RuntimeState()
+    runtime = ToolRuntime(
+        state=state,
+        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
+    )
+
+    result = read_file_descriptor().handler({"file_path": "a.txt"}, runtime)
+
+    assert result.is_error is False
+    assert result.metadata["path"] == str(target.resolve())
+    assert state.metadata.get("files_read") is None
 
 
 def test_read_file_rejects_directory(tmp_path: Path) -> None:
@@ -189,6 +230,37 @@ def test_edit_file_replaces_single_exact_match_after_read(tmp_path: Path) -> Non
     assert result.is_error is False
     assert result.metadata["replacement_count"] == 1
     assert target.read_text(encoding="utf-8") == "alpha BETA gamma"
+
+
+def test_read_then_edit_same_response_uses_executor_recorded_files_read(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    results = execute_results(
+        executor,
+        state,
+        (
+            ToolCall(id="call-read", name="read_file", input={"file_path": "a.txt"}),
+            ToolCall(
+                id="call-edit",
+                name="edit_file",
+                input={
+                    "file_path": "a.txt",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+            ),
+        ),
+    )
+
+    assert [result.is_error for result in results] == [False, False]
+    assert target.read_text(encoding="utf-8") == "new"
+    assert str(target.resolve()) in state.metadata["files_read"]
 
 
 def test_edit_file_rejects_multiple_matches_without_replace_all(

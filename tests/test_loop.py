@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +12,10 @@ from core.runtime_state import RuntimeState
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
+from services.model.stream import ModelStreamEvent
 from services.model.types import LLMResponse, ModelUsage
+from services.observability import JsonlTraceSink, TraceRecorder
+from services.tools.executor import ToolExecutionUpdate
 from services.tools.types import ToolCall, ToolExecutionResult
 
 
@@ -19,31 +24,42 @@ class FakeModelClient:
     responses: list[LLMResponse]
     snapshots: list[ContextSnapshot] = field(default_factory=list)
 
-    def send(self, snapshot: ContextSnapshot) -> LLMResponse:
+    async def stream(self, snapshot: ContextSnapshot):
         self.snapshots.append(snapshot)
         if not self.responses:
             raise AssertionError("Fake model received an unexpected call")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        yield ModelStreamEvent.message_completed(
+            assistant_message=response.assistant_message,
+            final_text=response.final_text,
+            tool_calls=response.tool_calls,
+            stop_reason=response.stop_reason,
+            usage=response.usage,
+            output_interrupted=response.output_interrupted,
+        )
 
 
 @dataclass
 class FakeToolExecutor:
     calls: list[tuple[tuple[ToolCall, ...], RuntimeState]] = field(default_factory=list)
 
-    def execute(
+    async def execute(
         self,
         tool_calls: tuple[ToolCall, ...],
         state: RuntimeState,
-    ) -> list[ToolExecutionResult]:
+    ):
         self.calls.append((tool_calls, state))
-        return [
-            ToolExecutionResult(
+        for tool_call in tool_calls:
+            yield ToolExecutionUpdate(
+                type="result",
+                result=ToolExecutionResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
                 content=f"result for {tool_call.name}",
+                ),
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
             )
-            for tool_call in tool_calls
-        ]
 
 
 def make_loop(
@@ -75,6 +91,17 @@ def assistant_message(text: str) -> dict[str, Any]:
     return {"role": "assistant", "content": [{"type": "text", "text": text}]}
 
 
+def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
+    async def run() -> str:
+        final_text = ""
+        async for event in loop.stream(prompt):
+            if event.type == "completed":
+                final_text = event.text
+        return final_text
+
+    return asyncio.run(run())
+
+
 def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
     loop, message_store, model_client, tool_executor = make_loop(
         [
@@ -87,7 +114,7 @@ def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
         transcript_root=tmp_path / ".onecode",
     )
 
-    result = loop.run("hello")
+    result = run_to_final_text(loop, "hello")
 
     assert result == "done"
     assert loop.state.last_transition == TransitionReason.COMPLETED
@@ -116,7 +143,7 @@ def test_loop_continues_when_tool_calls_present(tmp_path: Path) -> None:
         transcript_root=tmp_path / ".onecode",
     )
 
-    result = loop.run("inspect")
+    result = run_to_final_text(loop, "inspect")
 
     assert result == "final"
     assert loop.state.last_transition == TransitionReason.COMPLETED
@@ -156,7 +183,7 @@ def test_loop_uses_tool_calls_not_stop_reason(tmp_path: Path) -> None:
         transcript_root=tmp_path / ".onecode",
     )
 
-    result = loop.run("go")
+    result = run_to_final_text(loop, "go")
 
     assert result == "stopped despite stop_reason"
     assert len(model_client.snapshots) == 2
@@ -178,10 +205,69 @@ def test_loop_max_turns(tmp_path: Path) -> None:
         max_turns=1,
     )
 
-    result = loop.run("keep going")
+    result = run_to_final_text(loop, "keep going")
 
     assert result == "Stopped: maximum turn count reached."
     assert loop.state.last_transition == TransitionReason.MAX_TURNS
     assert loop.state.turn_count == 2
     assert len(model_client.snapshots) == 1
     assert len(tool_executor.calls) == 1
+
+
+def test_loop_records_interaction_model_and_transition_trace(tmp_path: Path) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    context_engine = ContextEngine(message_store)
+    model_client = FakeModelClient(
+        [
+            LLMResponse(
+                assistant_message=assistant_message("done"),
+                final_text="done",
+                usage=ModelUsage(input_tokens=3, output_tokens=5),
+            )
+        ]
+    )
+    tool_executor = FakeToolExecutor()
+    sink = JsonlTraceSink(
+        tmp_path / ".onecode",
+        state.session_id,
+        flush_interval_seconds=60,
+    )
+    recorder = TraceRecorder(
+        session_id=state.session_id,
+        workspace=tmp_path,
+        sink=sink,
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=context_engine,
+        model_client=model_client,
+        tool_executor=tool_executor,
+        trace_recorder=recorder,
+    )
+
+    assert run_to_final_text(loop, "hello") == "done"
+    recorder.flush()
+
+    records = [
+        json.loads(line)
+        for line in sink.trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+    names = [record["name"] for record in records]
+    assert "interaction" in names
+    assert "context_prepare" in names
+    assert "model_call" in names
+    assert "transition" in names
+    model_end = next(
+        record
+        for record in records
+        if record["name"] == "model_call" and record["record_type"] == "span_end"
+    )
+    assert model_end["attributes"]["input_tokens"] == 3
+    assert model_end["attributes"]["output_tokens"] == 5
+    assert "hello" not in json.dumps(records, ensure_ascii=False)

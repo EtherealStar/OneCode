@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from services.guard import SandboxBoundary, SandboxGuard
 from services.permissions import PermissionPolicy, PermissionResponse
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
-from services.tools.types import ToolCall, ToolRuntime
+from services.tools.types import ToolCall, ToolExecutionResult, ToolRuntime
 from tools.bash.runner import BashRunResult
 from tools.bash.tool import _handle_with_runner, descriptor
 
@@ -38,9 +39,24 @@ class FakePrompter:
         self.action = action
         self.requests = []
 
-    def request_permission(self, request):
+    async def request_permission(self, request):
         self.requests.append(request)
         return PermissionResponse(action=self.action, scope="once")
+
+
+def execute_results(
+    executor: RegistryToolExecutor,
+    tool_calls: tuple[ToolCall, ...],
+    state: RuntimeState,
+) -> list[ToolExecutionResult]:
+    async def collect() -> list[ToolExecutionResult]:
+        results: list[ToolExecutionResult] = []
+        async for update in executor.execute(tool_calls, state):
+            if update.result is not None:
+                results.append(update.result)
+        return results
+
+    return asyncio.run(collect())
 
 
 def test_bash_descriptor_schema_and_prompt() -> None:
@@ -78,7 +94,8 @@ def test_unknown_command_prompts_permission_without_file_targets(tmp_path: Path)
         permission_prompter=prompter,
     )
 
-    result = executor.execute(
+    result = execute_results(
+        executor,
         (ToolCall(id="call-1", name="bash", input={"command": "npm install"}),),
         RuntimeState(),
     )[0]
@@ -99,7 +116,8 @@ def test_non_readonly_command_requires_ask_even_without_permission_policy(
         guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
     )
 
-    result = executor.execute(
+    result = execute_results(
+        executor,
         (ToolCall(id="call-1", name="bash", input={"command": "touch a.txt"}),),
         RuntimeState(),
     )[0]

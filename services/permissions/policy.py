@@ -58,6 +58,16 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
+        if state.metadata.get("read_only_agent") is True and (
+            not classification.read_only or classification.modifies_filesystem
+        ):
+            return PermissionDecision(
+                action="deny",
+                reason="Read-only subagent cannot execute state-changing tool calls.",
+                source="read_only_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
         if self.is_tool_denied(descriptor.name, state):
             return PermissionDecision(
                 action="deny",
@@ -217,7 +227,9 @@ class PermissionPolicy:
                 reasons.append(
                     f"Target is inside a protected project directory: {protected}"
                 )
-            if _is_suspicious_windows_path(policy.original_path, policy.normalized_path):
+            if policy.action != "allow" and _is_suspicious_windows_path(
+                policy.original_path, policy.normalized_path
+            ):
                 reasons.append("Target uses a suspicious Windows path form.")
             if policy.action == "ask":
                 reasons.append(policy.reason)
@@ -238,7 +250,12 @@ class PermissionPolicy:
                 self.protected_project_dirs,
             )
             is not None
-            or _is_suspicious_windows_path(policy.original_path, policy.normalized_path)
+            or (
+                policy.action != "allow"
+                and _is_suspicious_windows_path(
+                    policy.original_path, policy.normalized_path
+                )
+            )
         ]
         if not ask_policies:
             return False

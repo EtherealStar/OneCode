@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,9 @@ from infrastructure.providers.http import provider_error_from_http_status
 from infrastructure.providers.model_catalog import ModelCatalogClient
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
+from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
+from services.tools.executor import ToolExecutionUpdate
 from services.tools.types import ToolCall, ToolExecutionResult
 
 
@@ -31,7 +35,7 @@ class FakeTransport:
     )
     get_calls: list[tuple[str, dict[str, str], float]] = field(default_factory=list)
 
-    def post_json(
+    async def post_json(
         self,
         url: str,
         headers: dict[str, str],
@@ -41,6 +45,30 @@ class FakeTransport:
         self.post_calls.append((url, headers, payload, timeout_seconds))
         assert self.post_response is not None
         return self.post_response
+
+    async def stream_json_lines(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        response = await self.post_json(url, headers, payload, timeout_seconds)
+        message = response["choices"][0]["message"]
+        finish_reason = response["choices"][0].get("finish_reason")
+        delta: dict[str, Any] = {}
+        content = message.get("content")
+        if content is not None:
+            delta["content"] = _content_to_text(content)
+        if message.get("tool_calls") is not None:
+            delta["tool_calls"] = [
+                {"index": index, **tool_call}
+                for index, tool_call in enumerate(message["tool_calls"])
+            ]
+            finish_reason = finish_reason or "tool_calls"
+        yield {"choices": [{"delta": delta, "finish_reason": finish_reason}]}
+        if response.get("usage") is not None:
+            yield {"usage": response["usage"]}
 
     def get_json(
         self,
@@ -57,20 +85,60 @@ class FakeTransport:
 class FakeToolExecutor:
     calls: list[tuple[ToolCall, ...]] = field(default_factory=list)
 
-    def execute(
+    async def execute(
         self,
         tool_calls: tuple[ToolCall, ...],
         state: RuntimeState,
-    ) -> list[ToolExecutionResult]:
+    ):
         self.calls.append(tool_calls)
-        return [
-            ToolExecutionResult(
+        for tool_call in tool_calls:
+            yield ToolExecutionUpdate(
+                type="result",
+                result=ToolExecutionResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
                 content=f"result for {tool_call.name}",
+                ),
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
             )
-            for tool_call in tool_calls
-        ]
+
+
+def collect_stream(
+    client: OpenAICompatibleChatCompletionsClient,
+    snapshot: ContextSnapshot,
+) -> list[ModelStreamEvent]:
+    async def run() -> list[ModelStreamEvent]:
+        return [event async for event in client.stream(snapshot)]
+
+    return asyncio.run(run())
+
+
+def completed_event(events: list[ModelStreamEvent]) -> ModelStreamEvent:
+    return next(event for event in reversed(events) if event.type == "message_completed")
+
+
+def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
+    async def run() -> str:
+        final_text = ""
+        async for event in loop.stream(prompt):
+            if event.type == "completed":
+                final_text = event.text
+        return final_text
+
+    return asyncio.run(run())
+
+
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
 
 
 def write_env(
@@ -220,7 +288,7 @@ def test_chat_completions_payload_includes_messages_and_tools() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(default_params={"temperature": 0}),
-        transport=transport,
+        async_transport=transport,
     )
     snapshot = ContextSnapshot(
         system_prompt="system",
@@ -233,7 +301,7 @@ def test_chat_completions_payload_includes_messages_and_tools() -> None:
         ),
     )
 
-    client.send(snapshot)
+    collect_stream(client, snapshot)
 
     url, headers, payload, timeout = transport.post_calls[0]
     assert url == "https://api.openai.com/v1/chat/completions"
@@ -254,7 +322,7 @@ def test_chat_completions_projects_internal_tool_results() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
     assistant_tool_call = {
         "id": "call_x",
@@ -277,7 +345,7 @@ def test_chat_completions_projects_internal_tool_results() -> None:
         ),
     )
 
-    client.send(snapshot)
+    collect_stream(client, snapshot)
 
     payload = transport.post_calls[0][2]
     assert payload["messages"] == [
@@ -293,10 +361,10 @@ def test_chat_completions_omits_empty_tools() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
 
-    client.send(ContextSnapshot(system_prompt="", messages=()))
+    collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
 
     assert "tools" not in transport.post_calls[0][2]
 
@@ -320,10 +388,12 @@ def test_chat_completions_parses_text_response() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
 
-    response = client.send(ContextSnapshot(system_prompt="", messages=()))
+    response = completed_event(
+        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
+    )
 
     assert response.final_text == "hello"
     assert response.stop_reason == "stop"
@@ -346,13 +416,15 @@ def test_chat_completions_parses_tool_calls() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
 
-    response = client.send(ContextSnapshot(system_prompt="", messages=()))
+    response = completed_event(
+        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
+    )
 
     assert response.final_text == ""
-    assert response.tool_calls == (
+    assert response.metadata["tool_calls"] == (
         ToolCall(id="call_x", name="read_file", input={"path": "a.txt"}),
     )
     assert response.assistant_message["tool_calls"] == [raw_tool_call]
@@ -377,12 +449,16 @@ def test_chat_completions_generates_fallback_tool_call_id() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
 
-    response = client.send(ContextSnapshot(system_prompt="", messages=()))
+    response = completed_event(
+        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
+    )
 
-    assert response.tool_calls == (ToolCall(id="call_0", name="read_file", input={}),)
+    assert response.metadata["tool_calls"] == (
+        ToolCall(id="call_0", name="read_file", input={}),
+    )
 
 
 def test_chat_completions_rejects_invalid_tool_arguments() -> None:
@@ -405,11 +481,11 @@ def test_chat_completions_rejects_invalid_tool_arguments() -> None:
     )
     client = OpenAICompatibleChatCompletionsClient(
         resolved_config(),
-        transport=transport,
+        async_transport=transport,
     )
 
     with pytest.raises(ProviderError) as exc_info:
-        client.send(ContextSnapshot(system_prompt="", messages=()))
+        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
 
     assert exc_info.value.error_type == "invalid_tool_arguments"
 
@@ -469,7 +545,7 @@ def test_real_provider_client_can_be_injected_into_loop_for_final_text(
     )
     model_client = create_model_client(
         write_env(tmp_path),
-        transport=transport,
+        async_transport=transport,
     )
     state = RuntimeState()
     message_store = MessageStore(
@@ -488,7 +564,7 @@ def test_real_provider_client_can_be_injected_into_loop_for_final_text(
         tool_executor=FakeToolExecutor(),
     )
 
-    result = loop.run("hello")
+    result = run_to_final_text(loop, "hello")
 
     assert result == "done"
     assert transport.post_calls[0][2]["messages"] == [
@@ -517,7 +593,7 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
     }
 
     class SequencedTransport(FakeTransport):
-        def post_json(
+        async def post_json(
             self,
             url: str,
             headers: dict[str, str],
@@ -532,7 +608,7 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
     sequenced_transport = SequencedTransport()
     model_client = create_model_client(
         write_env(tmp_path),
-        transport=sequenced_transport,
+        async_transport=sequenced_transport,
     )
     state = RuntimeState()
     message_store = MessageStore(
@@ -552,7 +628,7 @@ def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
         tool_executor=tool_executor,
     )
 
-    result = loop.run("inspect")
+    result = run_to_final_text(loop, "inspect")
 
     assert result == "final"
     assert len(sequenced_transport.post_calls) == 2

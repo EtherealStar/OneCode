@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import shutil
@@ -53,10 +54,17 @@ def execute_one(
     name: str,
     tool_input: dict[str, Any],
 ) -> ToolExecutionResult:
-    return executor.execute(
-        (ToolCall(id="call-1", name=name, input=tool_input),),
-        state,
-    )[0]
+    async def collect() -> list[ToolExecutionResult]:
+        results: list[ToolExecutionResult] = []
+        async for update in executor.execute(
+            (ToolCall(id="call-1", name=name, input=tool_input),),
+            state,
+        ):
+            if update.result is not None:
+                results.append(update.result)
+        return results
+
+    return asyncio.run(collect())[0]
 
 
 def test_registry_generates_search_tool_schemas_and_prompts() -> None:

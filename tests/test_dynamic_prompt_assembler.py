@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -141,7 +142,7 @@ def test_context_engine_default_prompt_is_dynamic(tmp_path: Path) -> None:
     )
     engine = ContextEngine(message_store)
 
-    snapshot = engine.build_for_model(state)
+    snapshot = asyncio.run(engine.build_for_model(state))
 
     assert "# Identity\n" in snapshot.system_prompt
     assert "# Behavior Rules\n" in snapshot.system_prompt

@@ -127,13 +127,6 @@ def _handle(
         for line_number, line in enumerate(selected, start=offset)
     )
 
-    # edit_file 会读取这个会话内记录，用来强制已存在文件先读后改。
-    files_read = runtime.state.metadata.setdefault("files_read", set())
-    if not isinstance(files_read, set):
-        files_read = set(files_read)
-        runtime.state.metadata["files_read"] = files_read
-    files_read.add(str(path))
-
     return ToolExecutionResult(
         tool_call_id="",
         tool_name="read_file",

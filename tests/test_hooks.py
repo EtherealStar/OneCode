@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
 from services.guard import SandboxBoundary, SandboxGuard
 from services.hooks import HookEvent, HookRegistry, HookResult
+from services.observability import JsonlTraceSink, TraceRecorder
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolExecutionResult
@@ -31,10 +34,17 @@ def execute_one(
     tool_name: str,
     tool_input: dict[str, object],
 ) -> ToolExecutionResult:
-    return executor.execute(
-        (ToolCall(id="call-1", name=tool_name, input=tool_input),),
-        state,
-    )[0]
+    async def collect() -> list[ToolExecutionResult]:
+        results: list[ToolExecutionResult] = []
+        async for update in executor.execute(
+            (ToolCall(id="call-1", name=tool_name, input=tool_input),),
+            state,
+        ):
+            if update.result is not None:
+                results.append(update.result)
+        return results
+
+    return asyncio.run(collect())[0]
 
 
 def test_pre_tool_use_hook_can_block_edit_file(tmp_path: Path) -> None:
@@ -242,3 +252,43 @@ def test_hook_cannot_rewrite_denied_path_to_allowed_path(
     assert result.is_error is True
     assert "path_guard_denied" in result.content
     assert str(allowed.resolve()) not in state.metadata.get("files_read", set())
+
+
+def test_hook_registry_records_hook_trace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("one", encoding="utf-8")
+    sink = JsonlTraceSink(
+        tmp_path / ".onecode",
+        "session-hooks",
+        flush_interval_seconds=60,
+    )
+    recorder = TraceRecorder(
+        session_id="session-hooks",
+        workspace=workspace,
+        sink=sink,
+    )
+    hooks = HookRegistry(trace_recorder=recorder)
+    hooks.register(
+        HookEvent.PRE_TOOL_USE,
+        lambda payload: HookResult(updated_input={"offset": 1}),
+    )
+    executor, state = make_executor(workspace, hooks)
+
+    result = execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+    recorder.flush()
+
+    assert result.is_error is False
+    records = [
+        json.loads(line)
+        for line in sink.trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+    hook_end = next(
+        record
+        for record in records
+        if record["name"] == "hook" and record["record_type"] == "span_end"
+    )
+    assert hook_end["attributes"]["callback_count"] == 1
+    assert hook_end["attributes"]["blocking"] is False
+    assert hook_end["attributes"]["updated_input"] is True
+    assert hook_end["attributes"]["hook_error_count"] == 0

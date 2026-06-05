@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,7 @@ def test_context_engine_rebuilds_snapshot_from_current_messages(
         tool_schema_provider=tool_schema_provider,
     )
 
-    snapshot = engine.build_for_model(state)
+    snapshot = asyncio.run(engine.build_for_model(state))
 
     assert snapshot.system_prompt == "session=session-1"
     assert snapshot.messages == message_store.current_messages()
@@ -99,7 +100,7 @@ def test_context_preparer_can_replace_projected_messages(tmp_path: Path) -> None
         context_preparer=ReplacingPreparer(),
     )
 
-    snapshot = engine.build_for_model(state)
+    snapshot = asyncio.run(engine.build_for_model(state))
 
     assert snapshot.messages == (
         {"role": "user", "content": "original"},

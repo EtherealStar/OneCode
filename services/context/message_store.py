@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 import uuid
 
@@ -91,6 +92,19 @@ class MessageStore:
         """返回当前内存中的模型上下文消息副本。"""
 
         return tuple(deepcopy(self._messages))
+
+    def seed_messages(
+        self,
+        messages: Iterable[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """预置一条空消息链，并像普通追加一样写入 transcript。"""
+
+        if self._messages:
+            raise ValueError("cannot seed a non-empty message store")
+        stored: list[dict[str, Any]] = []
+        for message in messages:
+            stored.append(self._append(message))
+        return stored
 
     @property
     def transcript_store(self) -> JsonlTranscriptStore:

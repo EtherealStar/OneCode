@@ -31,6 +31,9 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
     if command == "/history":
         print(renderer.render_history(_recent_messages(runtime, args)))
         return CommandResult()
+    if command == "/trace":
+        print(renderer.render_trace(_recent_trace_records(runtime, args)))
+        return CommandResult()
     if command == "/clear":
         print(_clear(runtime))
         return CommandResult()
@@ -41,6 +44,7 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
         return result
     if command in {"/exit", "/quit"}:
         runtime.message_store.flush_transcript()
+        runtime.trace_recorder.flush()
         return CommandResult(should_exit=True)
 
     print(renderer.render_error(f"Unknown command: {command}. Use /help."))
@@ -105,11 +109,26 @@ def _recent_messages(runtime: CliRuntime, args: list[str]) -> tuple[dict, ...]:
     return messages[-limit:]
 
 
+def _recent_trace_records(runtime: CliRuntime, args: list[str]) -> list[dict]:
+    limit = 20
+    if args:
+        try:
+            limit = int(args[0])
+        except ValueError:
+            print(renderer.render_error("trace count must be an integer."))
+            return []
+    if limit < 1:
+        print(renderer.render_error("trace count must be positive."))
+        return []
+    return runtime.trace_recorder.recent_records(limit)
+
+
 def _clear(runtime: CliRuntime) -> str:
     old_session_id = runtime.state.session_id
     runtime.message_store.flush_transcript()
     new_session_id = runtime.state.start_new_session()
     runtime.message_store.clear_for_new_session(new_session_id)
+    runtime.trace_recorder.switch_session(new_session_id)
     if runtime.permission_store is not None:
         runtime.permission_store.clear()
     return renderer.render_clear(old_session_id, new_session_id)

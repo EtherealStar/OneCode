@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import asyncio
+from dataclasses import dataclass, field, replace
+import inspect
 import json
 import math
-from typing import TYPE_CHECKING, Any, Protocol
+import os
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from services.guard import GuardPolicy, SandboxGuard
 from services.hooks import HookEvent, HookRegistry
+from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
 from services.tools.registry import ToolRegistry
@@ -26,10 +31,14 @@ if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
 
 
+DEFAULT_MAX_TOOL_CONCURRENCY = 10
+
+
 @dataclass(frozen=True)
 class _PreparedInputError:
     result: ToolExecutionResult
     guard_policies: tuple[GuardPolicy, ...] = ()
+    permission_decision: PermissionDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,35 @@ class _PreparedInput:
     classification: ToolCallClassification
     guard_policies: tuple[GuardPolicy, ...] = ()
     approved_guard_policies: tuple[GuardPolicy, ...] = ()
+    permission_decision: PermissionDecision | None = None
+
+
+@dataclass(frozen=True)
+class _ReadyToolCall:
+    tool_call: ToolCall
+    descriptor: ToolDescriptor
+    tool_input: dict[str, Any]
+    runtime: ToolRuntime
+    classification: ToolCallClassification
+    guard_policies: tuple[GuardPolicy, ...] = ()
+    trace_parent_span_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _HandlerOutcome:
+    ready: _ReadyToolCall
+    result: ToolExecutionResult | None = None
+    exception: Exception | None = None
+
+
+@dataclass(frozen=True)
+class ToolExecutionUpdate:
+    type: Literal["started", "progress", "result", "error"]
+    result: ToolExecutionResult | None = None
+    tool_call_id: str = ""
+    tool_name: str = ""
+    content: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ToolExecutor(Protocol):
@@ -44,7 +82,7 @@ class ToolExecutor(Protocol):
         self,
         tool_calls: tuple[ToolCall, ...],
         state: object,
-    ) -> list[ToolExecutionResult]:
+    ) -> AsyncIterator[ToolExecutionUpdate]:
         ...
 
 
@@ -57,85 +95,129 @@ class RegistryToolExecutor:
         hooks: HookRegistry | None = None,
         permission_policy: PermissionPolicy | None = None,
         permission_prompter: PermissionPrompter | None = None,
+        max_tool_concurrency: int | None = None,
+        trace_recorder: TraceRecorder | None = None,
     ) -> None:
         self._registry = registry
         self._guard = guard
         self._hooks = hooks or HookRegistry()
         self._permission_policy = permission_policy
         self._permission_prompter = permission_prompter
+        self._max_tool_concurrency = _resolve_max_tool_concurrency(
+            max_tool_concurrency
+        )
+        self._trace_recorder = trace_recorder or TraceRecorder.noop()
 
-    def execute(
+    async def execute(
         self,
         tool_calls: tuple[ToolCall, ...],
         state: RuntimeState,
-    ) -> list[ToolExecutionResult]:
-        return [self._execute_one(tool_call, state) for tool_call in tool_calls]
+    ) -> AsyncIterator[ToolExecutionUpdate]:
+        with self._trace_recorder.span(
+            "tool_batch",
+            {
+                "tool_call_count": len(tool_calls),
+                "concurrency_candidate_count": sum(
+                    1 for call in tool_calls if self._is_concurrency_candidate(call, state)
+                ),
+            },
+        ) as batch_span:
+            index = 0
+            while index < len(tool_calls):
+                tool_call = tool_calls[index]
+                if not self._is_concurrency_candidate(tool_call, state):
+                    async for update in self._execute_one(
+                            tool_call,
+                            state,
+                            parent_span_id=batch_span.span_id,
+                    ):
+                        yield update
+                    index += 1
+                    continue
 
-    def _execute_one(
+                batch: list[ToolCall] = []
+                while index < len(tool_calls) and self._is_concurrency_candidate(
+                    tool_calls[index],
+                    state,
+                ):
+                    batch.append(tool_calls[index])
+                    index += 1
+                async for update in self._execute_concurrency_candidate_batch(
+                        batch,
+                        state,
+                        parent_span_id=batch_span.span_id,
+                ):
+                    yield update
+
+    async def _execute_one(
         self,
         tool_call: ToolCall,
         state: RuntimeState,
-    ) -> ToolExecutionResult:
-        descriptor = self._registry.get(tool_call.name)
-        if descriptor is None:
-            return self._tool_error(
-                tool_call,
-                None,
-                state,
-                _error_result(
-                    tool_call,
-                    "unknown_tool",
-                    f"Tool is not registered: {tool_call.name}",
-                ),
-            )
-
-        runtime = ToolRuntime(state=state, guard=self._guard)
-        tool_input = dict(tool_call.input)
-        # hook 之前先校验、分类并执行 guard，确保 deny/ask 基于模型原始请求，
-        # 不能被 hook 改写绕过。
-        prepared = self._prepare_input(tool_call, descriptor, tool_input, runtime)
-        if isinstance(prepared, _PreparedInputError):
-            return self._tool_error(
-                tool_call,
-                descriptor,
-                state,
-                prepared.result,
-                guard_policies=prepared.guard_policies,
-            )
-        runtime = replace(
-            runtime,
-            approved_guard_policies=prepared.approved_guard_policies,
+        *,
+        parent_span_id: str | None = None,
+    ) -> AsyncIterator[ToolExecutionUpdate]:
+        ready = await self._preflight_one(tool_call, state, parent_span_id=parent_span_id)
+        if isinstance(ready, ToolExecutionResult):
+            self._record_tool_result(ready, parent_span_id=parent_span_id)
+            yield _result_update(ready, update_type="error" if ready.is_error else "result")
+            return
+        yield _started_update(ready)
+        final = await self._finalize_outcome(
+            await self._run_handler_async(ready),
+            state,
         )
-        classification = prepared.classification
+        yield _result_update(final, update_type="error" if final.is_error else "result")
 
-        hook_result = self._hooks.run(
-            HookEvent.PRE_TOOL_USE,
+    async def _preflight_one(
+        self,
+        tool_call: ToolCall,
+        state: RuntimeState,
+        *,
+        parent_span_id: str | None = None,
+    ) -> _ReadyToolCall | ToolExecutionResult:
+        """Run all handler-before checks serially for one tool call."""
+        with self._trace_recorder.span(
+            "tool_preflight",
             {
-                "tool_call": tool_call,
-                "descriptor": descriptor,
-                "tool_input": dict(tool_input),
-                "classification": classification,
-                "state": state,
+                "tool_name": tool_call.name,
+                "tool_call_id": tool_call.id,
             },
-        )
-        if hook_result.blocking_error is not None:
-            return self._tool_error(
-                tool_call,
-                descriptor,
-                state,
-                _error_result(
+            parent_span_id=parent_span_id,
+        ) as span:
+            descriptor = self._registry.get(tool_call.name)
+            if descriptor is None:
+                result = await self._tool_error(
                     tool_call,
-                    "hook_blocked",
-                    hook_result.blocking_error,
-                ),
+                    None,
+                    state,
+                    _error_result(
+                        tool_call,
+                        "unknown_tool",
+                        f"Tool is not registered: {tool_call.name}",
+                    ),
+                )
+                span.end({"permission_action": "unknown_tool"})
+                return result
+
+            runtime = ToolRuntime(
+                state=state,
+                guard=self._guard,
+                tool_call_id=tool_call.id,
             )
-        if hook_result.updated_input is not None:
-            tool_input = dict(hook_result.updated_input)
-            # hook 修改后的输入视为一次新请求，必须重新通过 schema、工具校验、
-            # 分类和 guard 检查。
-            prepared = self._prepare_input(tool_call, descriptor, tool_input, runtime)
+            tool_input = dict(tool_call.input)
+            # hook 之前先校验、分类并执行 guard，确保 deny/ask 基于模型原始请求，
+            # 不能被 hook 改写绕过。
+            prepared = await self._prepare_input(tool_call, descriptor, tool_input, runtime)
             if isinstance(prepared, _PreparedInputError):
-                return self._tool_error(
+                span.end(
+                    self._preflight_trace_attributes(
+                        descriptor,
+                        None,
+                        prepared.guard_policies,
+                        prepared.permission_decision,
+                    )
+                )
+                return await self._tool_error(
                     tool_call,
                     descriptor,
                     state,
@@ -148,48 +230,280 @@ class RegistryToolExecutor:
             )
             classification = prepared.classification
 
-        try:
-            result = descriptor.handler(tool_input, runtime)
-            final_result = ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                tool_name=descriptor.name,
-                content=result.content,
-                is_error=result.is_error,
-                metadata=result.metadata,
-            )
-            if not final_result.is_error:
-                final_result = self._apply_result_policy(
-                    final_result,
-                    classification.result_policy,
-                )
-            if final_result.is_error:
-                return self._tool_error(
-                    tool_call,
-                    descriptor,
-                    state,
-                    final_result,
-                )
-            self._hooks.run(
-                HookEvent.POST_TOOL_USE,
+            hook_result = await self._hooks.run(
+                HookEvent.PRE_TOOL_USE,
                 {
                     "tool_call": tool_call,
                     "descriptor": descriptor,
                     "tool_input": dict(tool_input),
                     "classification": classification,
                     "state": state,
-                    "result": final_result,
                 },
             )
-            return final_result
-        except Exception as exc:
-            return self._tool_error(
-                tool_call,
-                descriptor,
-                state,
-                _error_result(tool_call, "tool_execution_error", str(exc)),
+            if hook_result.blocking_error is not None:
+                span.end(
+                    {
+                        **self._preflight_trace_attributes(
+                            descriptor,
+                            classification,
+                            prepared.guard_policies,
+                            prepared.permission_decision,
+                        ),
+                        "permission_action": "hook_blocked",
+                    }
+                )
+                return await self._tool_error(
+                    tool_call,
+                    descriptor,
+                    state,
+                    _error_result(
+                        tool_call,
+                        "hook_blocked",
+                        hook_result.blocking_error,
+                    ),
+                )
+            if hook_result.updated_input is not None:
+                tool_input = dict(hook_result.updated_input)
+                # hook 修改后的输入视为一次新请求，必须重新通过 schema、工具校验、
+                # 分类和 guard 检查。
+                prepared = await self._prepare_input(tool_call, descriptor, tool_input, runtime)
+                if isinstance(prepared, _PreparedInputError):
+                    span.end(
+                        self._preflight_trace_attributes(
+                            descriptor,
+                            None,
+                            prepared.guard_policies,
+                            prepared.permission_decision,
+                        )
+                    )
+                    return await self._tool_error(
+                        tool_call,
+                        descriptor,
+                        state,
+                        prepared.result,
+                        guard_policies=prepared.guard_policies,
+                    )
+                runtime = replace(
+                    runtime,
+                    approved_guard_policies=prepared.approved_guard_policies,
+                )
+                classification = prepared.classification
+
+            span.end(
+                self._preflight_trace_attributes(
+                    descriptor,
+                    classification,
+                    prepared.guard_policies,
+                    prepared.permission_decision,
+                )
+            )
+            return _ReadyToolCall(
+                tool_call=tool_call,
+                descriptor=descriptor,
+                tool_input=tool_input,
+                runtime=runtime,
+                classification=classification,
+                guard_policies=prepared.guard_policies,
+                trace_parent_span_id=parent_span_id,
             )
 
-    def _prepare_input(
+    async def _run_handler_async(self, ready: _ReadyToolCall) -> _HandlerOutcome:
+        if inspect.iscoroutinefunction(ready.descriptor.handler):
+            with self._trace_recorder.span(
+                "tool_execution",
+                {
+                    "tool_name": ready.descriptor.name,
+                    "tool_call_id": ready.tool_call.id,
+                },
+                parent_span_id=ready.trace_parent_span_id,
+            ):
+                try:
+                    result = await ready.descriptor.handler(
+                        ready.tool_input,
+                        ready.runtime,
+                    )
+                    return _HandlerOutcome(ready=ready, result=result)
+                except Exception as exc:
+                    return _HandlerOutcome(ready=ready, exception=exc)
+        return await asyncio.to_thread(self._run_handler, ready)
+
+    def _run_handler(self, ready: _ReadyToolCall) -> _HandlerOutcome:
+        """Execute only the concrete handler so it can safely run in a worker."""
+        with self._trace_recorder.span(
+            "tool_execution",
+            {
+                "tool_name": ready.descriptor.name,
+                "tool_call_id": ready.tool_call.id,
+            },
+            parent_span_id=ready.trace_parent_span_id,
+        ):
+            try:
+                return _HandlerOutcome(
+                    ready=ready,
+                    result=ready.descriptor.handler(ready.tool_input, ready.runtime),
+                )
+            except Exception as exc:
+                return _HandlerOutcome(ready=ready, exception=exc)
+
+    async def _finalize_outcome(
+        self,
+        outcome: _HandlerOutcome,
+        state: RuntimeState,
+    ) -> ToolExecutionResult:
+        """Normalize a handler outcome and apply hooks, budgets, and state effects."""
+        ready = outcome.ready
+        if outcome.exception is not None:
+            result = await self._tool_error(
+                ready.tool_call,
+                ready.descriptor,
+                state,
+                _error_result(
+                    ready.tool_call,
+                    "tool_execution_error",
+                    str(outcome.exception),
+                ),
+                guard_policies=ready.guard_policies,
+            )
+            self._record_tool_result(result, parent_span_id=ready.trace_parent_span_id)
+            return result
+
+        assert outcome.result is not None
+        final_result = ToolExecutionResult(
+            tool_call_id=ready.tool_call.id,
+            tool_name=ready.descriptor.name,
+            content=outcome.result.content,
+            is_error=outcome.result.is_error,
+            metadata=outcome.result.metadata,
+        )
+        if not final_result.is_error:
+            final_result = self._apply_result_policy(
+                final_result,
+                ready.classification.result_policy,
+            )
+        if final_result.is_error:
+            result = await self._tool_error(
+                ready.tool_call,
+                ready.descriptor,
+                state,
+                final_result,
+                guard_policies=ready.guard_policies,
+            )
+            self._record_tool_result(result, parent_span_id=ready.trace_parent_span_id)
+            return result
+        await self._hooks.run(
+            HookEvent.POST_TOOL_USE,
+            {
+                "tool_call": ready.tool_call,
+                "descriptor": ready.descriptor,
+                "tool_input": dict(ready.tool_input),
+                "classification": ready.classification,
+                "state": state,
+                "result": final_result,
+            },
+        )
+        self._apply_success_side_effects(final_result, state)
+        self._record_tool_result(
+            final_result,
+            parent_span_id=ready.trace_parent_span_id,
+        )
+        return final_result
+
+    def _is_concurrency_candidate(
+        self,
+        tool_call: ToolCall,
+        state: RuntimeState,
+    ) -> bool:
+        """Conservatively classify raw input for initial batch planning."""
+        descriptor = self._registry.get(tool_call.name)
+        if descriptor is None:
+            return False
+        runtime = ToolRuntime(state=state, guard=self._guard)
+        tool_input = dict(tool_call.input)
+        if self._validate_input(descriptor, tool_input, runtime) is not None:
+            return False
+        try:
+            classification = descriptor.classify_input(tool_input, runtime)
+        except Exception:
+            return False
+        return classification.concurrency_safe
+
+    async def _execute_concurrency_candidate_batch(
+        self,
+        tool_calls: list[ToolCall],
+        state: RuntimeState,
+        *,
+        parent_span_id: str | None = None,
+    ) -> AsyncIterator[ToolExecutionUpdate]:
+        """Preflight a safe-looking run, then execute allowed handlers in parallel."""
+        prepared: list[_ReadyToolCall | ToolExecutionResult] = [
+            await self._preflight_one(tool_call, state, parent_span_id=parent_span_id)
+            for tool_call in tool_calls
+        ]
+
+        if any(
+            isinstance(item, _ReadyToolCall)
+            and not item.classification.concurrency_safe
+            for item in prepared
+        ):
+            for item in prepared:
+                if isinstance(item, ToolExecutionResult):
+                    self._record_tool_result(item, parent_span_id=parent_span_id)
+                    yield _result_update(
+                        item,
+                        update_type="error" if item.is_error else "result",
+                    )
+                    continue
+                yield _started_update(item)
+                result = await self._finalize_outcome(
+                    await self._run_handler_async(item),
+                    state,
+                )
+                yield _result_update(
+                    result,
+                    update_type="error" if result.is_error else "result",
+                )
+            return
+
+        ready_calls = [
+            item for item in prepared if isinstance(item, _ReadyToolCall)
+        ]
+        for item in ready_calls:
+            yield _started_update(item)
+        outcomes_by_id = {
+            id(outcome.ready): outcome
+            for outcome in await self._run_handlers_concurrently(ready_calls)
+        }
+
+        for item in prepared:
+            if isinstance(item, ToolExecutionResult):
+                self._record_tool_result(item, parent_span_id=parent_span_id)
+                yield _result_update(
+                    item,
+                    update_type="error" if item.is_error else "result",
+                )
+                continue
+            result = await self._finalize_outcome(outcomes_by_id[id(item)], state)
+            yield _result_update(
+                result,
+                update_type="error" if result.is_error else "result",
+            )
+
+    async def _run_handlers_concurrently(
+        self,
+        ready_calls: list[_ReadyToolCall],
+    ) -> list[_HandlerOutcome]:
+        if len(ready_calls) <= 1:
+            return [await self._run_handler_async(ready) for ready in ready_calls]
+        worker_count = min(self._max_tool_concurrency, len(ready_calls))
+        semaphore = asyncio.Semaphore(worker_count)
+
+        async def run_one(ready: _ReadyToolCall) -> _HandlerOutcome:
+            async with semaphore:
+                return await self._run_handler_async(ready)
+
+        return list(await asyncio.gather(*(run_one(ready) for ready in ready_calls)))
+
+    async def _prepare_input(
         self,
         tool_call: ToolCall,
         descriptor: ToolDescriptor,
@@ -213,7 +527,7 @@ class RegistryToolExecutor:
             return _PreparedInputError(
                 _error_result(tool_call, "tool_guard_error", str(exc))
             )
-        decision_result = self._evaluate_permission(
+        decision_result = await self._evaluate_permission(
             tool_call=tool_call,
             descriptor=descriptor,
             classification=classification,
@@ -232,6 +546,7 @@ class RegistryToolExecutor:
             classification=classification,
             guard_policies=guard_policies,
             approved_guard_policies=approved_guard_policies,
+            permission_decision=decision_result,
         )
 
     def _validate_input(
@@ -289,7 +604,7 @@ class RegistryToolExecutor:
             policies.append(policy)
         return tuple(policies)
 
-    def _evaluate_permission(
+    async def _evaluate_permission(
         self,
         *,
         tool_call: ToolCall,
@@ -317,6 +632,7 @@ class RegistryToolExecutor:
             return _PreparedInputError(
                 _permission_denied_result(tool_call, decision),
                 guard_policies=guard_policies,
+                permission_decision=decision,
             )
         if decision.action != "ask":
             return decision
@@ -332,19 +648,45 @@ class RegistryToolExecutor:
             return _PreparedInputError(
                 _permission_ask_required_result(tool_call, decision),
                 guard_policies=guard_policies,
+                permission_decision=decision,
             )
 
         try:
-            response = self._permission_prompter.request_permission(request)
+            with self._trace_recorder.span(
+                "permission_wait",
+                {
+                    "tool_name": descriptor.name,
+                    "tool_call_id": tool_call.id,
+                    "permission_action": decision.action,
+                },
+            ) as span:
+                response = await self._permission_prompter.request_permission(request)
+                span.end(
+                    {
+                        "permission_action": response.action,
+                        "permission_scope": response.scope,
+                        "interrupted": False,
+                    }
+                )
         except (EOFError, KeyboardInterrupt):
             response = PermissionResponse(
                 action="deny",
                 feedback="Permission prompt was interrupted.",
             )
+            self._trace_recorder.event(
+                "permission_wait",
+                {
+                    "tool_name": descriptor.name,
+                    "tool_call_id": tool_call.id,
+                    "permission_action": response.action,
+                    "interrupted": True,
+                },
+            )
         if response.action != "allow":
             return _PreparedInputError(
                 _user_denied_result(tool_call, decision, response),
                 guard_policies=guard_policies,
+                permission_decision=decision,
             )
         self._permission_policy.record_response(request, response)
         return PermissionDecision(
@@ -367,6 +709,12 @@ class RegistryToolExecutor:
                 return _PreparedInputError(
                     _guard_error_result(tool_call, policy),
                     guard_policies=guard_policies,
+                    permission_decision=PermissionDecision(
+                        action="deny",
+                        reason=policy.reason,
+                        source="guard",
+                        guard_policies=guard_policies,
+                    ),
                 )
         for policy in guard_policies:
             if policy.action == "ask":
@@ -380,6 +728,7 @@ class RegistryToolExecutor:
                 return _PreparedInputError(
                     _permission_ask_required_result(tool_call, decision),
                     guard_policies=guard_policies,
+                    permission_decision=decision,
                 )
         for target in classification.targets:
             if (
@@ -397,12 +746,55 @@ class RegistryToolExecutor:
                 return _PreparedInputError(
                     _permission_ask_required_result(tool_call, decision),
                     guard_policies=guard_policies,
+                    permission_decision=decision,
                 )
         return PermissionDecision(
             action="allow",
             reason="Guard allowed the tool call.",
             source="guard",
             guard_policies=guard_policies,
+        )
+
+    def _preflight_trace_attributes(
+        self,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification | None,
+        guard_policies: tuple[GuardPolicy, ...],
+        decision: PermissionDecision | None,
+    ) -> dict[str, object]:
+        attributes: dict[str, object] = {
+            "tool_name": descriptor.name,
+            "target_count": len(classification.targets) if classification else 0,
+            "guard_actions": [policy.action for policy in guard_policies],
+            "permission_action": decision.action if decision is not None else "allow",
+        }
+        if classification is not None:
+            attributes.update(
+                {
+                    "read_only": classification.read_only,
+                    "modifies_filesystem": classification.modifies_filesystem,
+                    "concurrency_safe": classification.concurrency_safe,
+                }
+            )
+        return attributes
+
+    def _record_tool_result(
+        self,
+        result: ToolExecutionResult,
+        *,
+        parent_span_id: str | None,
+    ) -> None:
+        self._trace_recorder.event(
+            "tool_result",
+            {
+                "tool_name": result.tool_name,
+                "tool_call_id": result.tool_call_id,
+                "is_error": result.is_error,
+                "error": result.metadata.get("error"),
+                "content_chars": len(result.content),
+                "result_truncated": result.metadata.get("result_truncated") is True,
+            },
+            parent_span_id=parent_span_id,
         )
 
     def _apply_result_policy(
@@ -437,8 +829,28 @@ class RegistryToolExecutor:
             metadata=metadata,
         )
 
+    def _apply_success_side_effects(
+        self,
+        result: ToolExecutionResult,
+        state: RuntimeState,
+    ) -> None:
+        """Apply executor-owned session state updates after successful results."""
+        if result.tool_name not in {"read_file", "edit_file"}:
+            return
+        path = result.metadata.get("path")
+        if not isinstance(path, str) or not path:
+            return
 
-    def _tool_error(
+        # files_read is consumed by edit_file to enforce "read before edit".
+        # The executor updates it serially so read handlers can remain parallel.
+        files_read = state.metadata.setdefault("files_read", set())
+        if not isinstance(files_read, set):
+            files_read = set(files_read)
+            state.metadata["files_read"] = files_read
+        files_read.add(path)
+
+
+    async def _tool_error(
         self,
         tool_call: ToolCall,
         descriptor: ToolDescriptor | None,
@@ -454,7 +866,7 @@ class RegistryToolExecutor:
             is_error=True,
             metadata=result.metadata,
         )
-        self._hooks.run(
+        await self._hooks.run(
             HookEvent.TOOL_ERROR,
             {
                 "tool_call": tool_call,
@@ -467,6 +879,27 @@ class RegistryToolExecutor:
             },
         )
         return final_result
+
+
+def _started_update(ready: _ReadyToolCall) -> ToolExecutionUpdate:
+    return ToolExecutionUpdate(
+        type="started",
+        tool_call_id=ready.tool_call.id,
+        tool_name=ready.descriptor.name,
+    )
+
+
+def _result_update(
+    result: ToolExecutionResult,
+    *,
+    update_type: Literal["result", "error"],
+) -> ToolExecutionUpdate:
+    return ToolExecutionUpdate(
+        type=update_type,
+        result=result,
+        tool_call_id=result.tool_call_id,
+        tool_name=result.tool_name,
+    )
 
 
 def _validate_input_schema(
@@ -634,3 +1067,18 @@ def _error_result(
         is_error=True,
         metadata={"error": error},
     )
+
+
+def _resolve_max_tool_concurrency(value: int | None = None) -> int:
+    """Resolve the handler worker limit from constructor input or environment."""
+    if value is not None:
+        return value if value >= 1 else DEFAULT_MAX_TOOL_CONCURRENCY
+
+    raw_value = os.environ.get("ONECODE_MAX_TOOL_CONCURRENCY")
+    if raw_value is None or raw_value.strip() == "":
+        return DEFAULT_MAX_TOOL_CONCURRENCY
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return DEFAULT_MAX_TOOL_CONCURRENCY
+    return parsed if parsed >= 1 else DEFAULT_MAX_TOOL_CONCURRENCY
