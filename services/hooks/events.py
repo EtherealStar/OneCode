@@ -10,6 +10,7 @@ class HookEvent(StrEnum):
     POST_TOOL_USE = "PostToolUse"
     TOOL_ERROR = "ToolError"
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
+    ASSISTANT_MESSAGE_COMPLETED = "AssistantMessageCompleted"
     PRE_COMPACT = "PreCompact"
     POST_COMPACT = "PostCompact"
     COMPACT_FAILED = "CompactFailed"

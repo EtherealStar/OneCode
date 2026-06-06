@@ -8,7 +8,7 @@ context 负责内部消息结构、session transcript 和模型调用前的上�
 
 prompt 负责根据当前运行时状态组装 system prompt。
 
-compaction 和 projector 是目标上下文治理能力，负责压缩、替换、引用和模型可见 message 投影。当前代码还没有完整 `services/compaction/` 或 `services/context/projector.py`。
+compaction 和 projector 是上下文治理能力，负责压缩、替换、引用和模型可见 message 投影。当前代码已提供 `services/compaction/`、`services/context/projector.py`、session memory 和 durable tool result store 的第一版。
 
 这些能力都由 `core/context_engine.py` 编排，不应进入 `core/loop.py`。
 
@@ -64,11 +64,11 @@ OneCode 内部保留 provider-neutral `tool_result`，provider adapter 负责投
 - `transcript_refs`
 - `transition`
 
-当前 `usage_hints` 和 `transcript_refs` 预留给后续 compaction/projector 使用。
+`usage_hints` 和 `transcript_refs` 由 compaction-aware preparer 填充，用于把模型可见投影的 token 估算、compact 信息和外置结果引用带入快照。
 
 ## ContextPreparer 目标
 
-`ContextPreparer` 是 `ContextEngine` 中的可注入边界。当前默认是 no-op，目标上应承载：
+`ContextPreparer` 是 `ContextEngine` 中的可注入边界。当前默认是 no-op，compaction-aware 实现承载：
 
 - 大工具结果替换和引用。
 - 旧工具结果清理。
@@ -77,7 +77,7 @@ OneCode 内部保留 provider-neutral `tool_result`，provider adapter 负责投
 - context limit reactive compact。
 - 模型可见 message projector。
 
-preparer 可以同步或异步返回消息 iterable。它不决定主循环是否继续，只返回模型可见上下文或更新状态。
+preparer 可以同步或异步返回消息 iterable，也可以返回 `PreparedContext` 以携带 `usage_hints` 和 `transcript_refs`。它不决定主循环是否继续，只返回模型可见上下文或更新状态。
 
 ## DynamicPromptAssembler
 
@@ -122,4 +122,12 @@ fingerprint 应覆盖影响 section 输出的输入，例如 cwd、已读文件�
 5. tool schema provider 生成当前可见工具 schema。
 6. 返回 `ContextSnapshot`。
 
-当前代码已经完成第 1、4、5、6 步的可注入边界；第 2、3 步仍是后续目标。
+当前代码已经完成上述流程的第一版；后续改进集中在更精细的 compact safety、session memory anchor 和 provider recovery 上。
+
+## Session Memory
+
+Session Memory 是当前会话目录下的 Markdown 文件，路径为 `.onecode/<session_id>/session-memory.md`。它只服务当前会话压缩后的连续性，不是跨项目长期记忆。
+
+当前 runtime 在 assistant message 完成并写入 `MessageStore` 后发布 provider-neutral 的 `AssistantMessageCompleted` hook，并可调用 `SessionMemoryExtractionService`。该 service 使用 token 增长和工具调用增长策略判断是否需要更新 memory；满足阈值时复用 fork subagent，但 child runtime 被标记为 `memory_extraction_agent`，只允许通过 `edit_file` 写指定的 `session-memory.md`。
+
+Compaction service 不负责生成 Session Memory。它在尝试 session-memory compact 前只等待正在进行的 extraction，然后读取现有 Markdown 文件作为摘要来源；如果 memory 不存在、为空或压缩后仍超过阈值，则继续回退 full compact。

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from services.subagents import SubagentRequest, SubagentRunner
+from services.subagents.types import SubagentRequest
 from services.tools.types import (
     ToolCallClassification,
     ToolDescriptor,
@@ -15,6 +15,9 @@ from services.tools.types import (
     ValidationResult,
 )
 from tools.agent.prompt import PROMPT
+
+if TYPE_CHECKING:
+    from services.subagents.runner import SubagentRunner
 
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

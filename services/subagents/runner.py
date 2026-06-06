@@ -11,11 +11,11 @@ from core.context_engine import ContextEngine, StaticPromptAssembler
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
+from services.context.current_model_context import CurrentModelContext
 from services.guard import SandboxGuard
 from services.model.client import ModelClient
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
-from services.subagents.context import CurrentModelContext
 from services.subagents.definitions import get_agent_definition
 from services.subagents.forking import build_forked_messages
 from services.subagents.types import AgentDefinition, SubagentRequest, SubagentResult
@@ -66,12 +66,15 @@ class SubagentRunner:
                 error="unknown_subagent",
             )
         is_fork = request.subagent_type is None
+        is_memory_extraction = _is_memory_extraction_request(request)
         child_state = RuntimeState(max_turns=definition.max_turns or 20)
         child_state.metadata["hidden_tools"] = {"agent"}
         if definition.read_only:
             child_state.metadata["read_only_agent"] = True
         if is_fork:
             child_state.metadata["is_fork_child"] = True
+        if is_memory_extraction:
+            self._configure_memory_extraction_child(child_state, request)
         child_store = MessageStore(
             transcript_root=self._transcript_root,
             session_id=child_state.session_id,
@@ -87,7 +90,11 @@ class SubagentRunner:
             return seed_result
 
         registry = ToolRegistry(
-            _child_descriptors(definition, self._base_descriptors),
+            _child_descriptors(
+                definition,
+                self._base_descriptors,
+                memory_extraction=is_memory_extraction,
+            ),
             permission_policy=self._permission_policy,
         )
         prompt_assembler = self._prompt_assembler(definition, is_fork=is_fork)
@@ -118,7 +125,30 @@ class SubagentRunner:
             definition,
             request,
             is_fork=is_fork,
+            is_memory_extraction=is_memory_extraction,
         )
+
+    def _configure_memory_extraction_child(
+        self,
+        child_state: RuntimeState,
+        request: SubagentRequest,
+    ) -> None:
+        """Mark the child as an internal writer for one session memory file."""
+
+        allowed_path = request.metadata.get("allowed_memory_path")
+        if not isinstance(allowed_path, str) or not allowed_path:
+            return
+        normalized = str(Path(allowed_path).resolve())
+        child_state.metadata["memory_extraction_agent"] = True
+        child_state.metadata["allowed_memory_path"] = normalized
+        child_state.metadata["hidden_tools"] = {
+            "agent",
+            "bash",
+            "read_file",
+            "grep",
+            "glob",
+        }
+        child_state.metadata["files_read"] = {normalized}
 
     def _definition_for_request(
         self,
@@ -174,6 +204,7 @@ class SubagentRunner:
         request: SubagentRequest,
         *,
         is_fork: bool,
+        is_memory_extraction: bool,
     ) -> SubagentResult:
         started = perf_counter()
         self._trace_recorder.event(
@@ -184,6 +215,7 @@ class SubagentRunner:
                 "child_session_id": child_state.session_id,
                 "is_fork": is_fork,
                 "read_only": definition.read_only,
+                "purpose": request.metadata.get("purpose"),
                 "prompt_length": len(request.prompt),
             },
         )
@@ -264,7 +296,15 @@ class SubagentRunner:
 def _child_descriptors(
     definition: AgentDefinition,
     base_descriptors: tuple[ToolDescriptor, ...],
+    *,
+    memory_extraction: bool = False,
 ) -> tuple[ToolDescriptor, ...]:
+    if memory_extraction:
+        return tuple(
+            descriptor
+            for descriptor in base_descriptors
+            if descriptor.name == "edit_file"
+        )
     allowed_names = set(definition.tools)
     disallowed = set(definition.disallowed_tools)
     disallowed.add("agent")
@@ -276,6 +316,10 @@ def _child_descriptors(
             continue
         descriptors.append(descriptor)
     return tuple(descriptors)
+
+
+def _is_memory_extraction_request(request: SubagentRequest) -> bool:
+    return request.metadata.get("purpose") == "session_memory_extraction"
 
 
 def _tool_result_count(message_store: MessageStore) -> int:

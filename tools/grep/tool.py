@@ -158,7 +158,7 @@ def _classify_input(
         targets=(ToolTarget(kind="directory", operation="read", value=target),),
         result_policy=ToolResultPolicy(
             max_result_size_chars=20_000,
-            persist_when_exceeded=False,
+            persist_when_exceeded=True,
             preview_chars=4_000,
         ),
         permission_subject=f"grep:{target}:{parsed.pattern}",

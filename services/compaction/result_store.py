@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import re
-import uuid
 
 
 @dataclass(frozen=True)
@@ -38,14 +38,49 @@ class ToolResultStore:
     ) -> StoredResultRef:
         """Write a complete tool result and return a model-safe reference."""
 
+        self._results_dir.mkdir(parents=True, exist_ok=True)
         result_id = _safe_result_id(tool_call_id)
         path = self._results_dir / f"{result_id}.txt"
         if path.exists():
-            result_id = f"{result_id}-{uuid.uuid4().hex[:8]}"
-            path = self._results_dir / f"{result_id}.txt"
+            if _path_has_content(path, content):
+                return self._ref(
+                    result_id=result_id,
+                    path=path,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    content=content,
+                )
+            result_id, path = self._content_addressed_path(result_id, content)
 
-        self._results_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        return self._ref(
+            result_id=result_id,
+            path=path,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            content=content,
+        )
+
+    def _content_addressed_path(self, base_result_id: str, content: str) -> tuple[str, Path]:
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+        result_id = f"{base_result_id}-{content_hash}"
+        path = self._results_dir / f"{result_id}.txt"
+        suffix = 2
+        while path.exists() and not _path_has_content(path, content):
+            result_id = f"{base_result_id}-{content_hash}-{suffix}"
+            path = self._results_dir / f"{result_id}.txt"
+            suffix += 1
+        return result_id, path
+
+    def _ref(
+        self,
+        *,
+        result_id: str,
+        path: Path,
+        tool_call_id: str,
+        tool_name: str,
+        content: str,
+    ) -> StoredResultRef:
         return StoredResultRef(
             result_id=result_id,
             relative_path=f"tool-results/{path.name}",
@@ -74,4 +109,11 @@ class ToolResultStore:
 
 def _safe_result_id(tool_call_id: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_call_id).strip("._")
-    return safe or uuid.uuid4().hex
+    return safe or "result"
+
+
+def _path_has_content(path: Path, content: str) -> bool:
+    try:
+        return path.read_text(encoding="utf-8") == content
+    except OSError:
+        return False

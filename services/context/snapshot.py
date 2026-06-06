@@ -7,6 +7,16 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class PreparedContext:
+    messages: tuple[dict[str, Any], ...]
+    usage_hints: dict[str, Any] = field(default_factory=dict)
+    transcript_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __iter__(self):
+        return iter(self.messages)
+
+
+@dataclass(frozen=True)
 class ContextSnapshot:
     system_prompt: str
     messages: tuple[dict[str, Any], ...]

@@ -96,6 +96,14 @@ class PermissionPolicy:
                     metadata={"guard_policy": policy.to_tool_error()},
                 )
 
+        if state.metadata.get("memory_extraction_agent") is True:
+            return self._memory_extraction_decision(
+                descriptor=descriptor,
+                classification=classification,
+                guard_policies=guard_policies,
+                state=state,
+            )
+
         asks = self._ask_reasons(
             descriptor=descriptor,
             classification=classification,
@@ -129,6 +137,69 @@ class PermissionPolicy:
             reason="Permission policy allowed the tool call.",
             source="permission_policy",
             targets=classification.targets,
+            guard_policies=guard_policies,
+        )
+
+    def _memory_extraction_decision(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+        state: RuntimeState,
+    ) -> PermissionDecision:
+        """Hard-limit internal memory agents to one Markdown write target."""
+
+        allowed_path = state.metadata.get("allowed_memory_path")
+        if not isinstance(allowed_path, str) or not allowed_path:
+            return PermissionDecision(
+                action="deny",
+                reason="Memory extraction agent has no allowed memory path.",
+                source="memory_extraction_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        if descriptor.name != "edit_file":
+            return PermissionDecision(
+                action="deny",
+                reason="Memory extraction agent can only use edit_file.",
+                source="memory_extraction_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        normalized_allowed = resolve_path(Path(allowed_path))
+        targets = classification.targets
+        if len(targets) != 1:
+            return PermissionDecision(
+                action="deny",
+                reason="Memory extraction edit must target exactly one file.",
+                source="memory_extraction_agent",
+                targets=targets,
+                guard_policies=guard_policies,
+            )
+        target = targets[0]
+        if target.kind != "file" or target.operation != "write":
+            return PermissionDecision(
+                action="deny",
+                reason="Memory extraction edit must be a file write.",
+                source="memory_extraction_agent",
+                targets=targets,
+                guard_policies=guard_policies,
+            )
+        target_path = resolve_path(Path(target.value))
+        if target_path != normalized_allowed:
+            return PermissionDecision(
+                action="deny",
+                reason="Memory extraction agent cannot edit outside session memory.",
+                source="memory_extraction_agent",
+                targets=targets,
+                guard_policies=guard_policies,
+            )
+        return PermissionDecision(
+            action="allow",
+            reason="Memory extraction agent may edit the session memory file.",
+            source="memory_extraction_agent",
+            targets=targets,
             guard_policies=guard_policies,
         )
 

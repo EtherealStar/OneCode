@@ -102,6 +102,7 @@ def test_search_tools_classify_as_read_only_with_result_budgets() -> None:
     assert grep_classification.concurrency_safe is True
     assert grep_classification.targets[0].operation == "read"
     assert grep_classification.result_policy.max_result_size_chars == 20_000
+    assert grep_classification.result_policy.persist_when_exceeded is True
 
 
 def test_invalid_search_inputs_fail_before_handler(tmp_path: Path) -> None:

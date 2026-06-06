@@ -41,8 +41,7 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
         print(_compact(runtime, args))
         return CommandResult()
     if command == "/clear":
-        print(_clear(runtime))
-        return CommandResult()
+        return _clear(runtime)
     if command == "/resume":
         result = _resume(runtime, args)
         if result.runtime is not None:
@@ -129,15 +128,17 @@ def _recent_trace_records(runtime: CliRuntime, args: list[str]) -> list[dict]:
     return runtime.trace_recorder.recent_records(limit)
 
 
-def _clear(runtime: CliRuntime) -> str:
+def _clear(runtime: CliRuntime) -> CommandResult:
     old_session_id = runtime.state.session_id
     runtime.message_store.flush_transcript()
     new_session_id = runtime.state.start_new_session()
     runtime.message_store.clear_for_new_session(new_session_id)
-    runtime.trace_recorder.switch_session(new_session_id)
-    if runtime.permission_store is not None:
-        runtime.permission_store.clear()
-    return renderer.render_clear(old_session_id, new_session_id)
+    cleared = runtime.with_session(
+        state=runtime.state,
+        message_store=runtime.message_store,
+    )
+    print(renderer.render_clear(old_session_id, new_session_id))
+    return CommandResult(runtime=cleared)
 
 
 def _resume(runtime: CliRuntime, args: list[str]) -> CommandResult:
