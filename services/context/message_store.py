@@ -106,6 +106,40 @@ class MessageStore:
             stored.append(self._append(message))
         return stored
 
+    def replace_messages_for_compaction(
+        self,
+        messages: Iterable[dict[str, Any]],
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Replace only the active memory chain after a completed compact.
+
+        The transcript remains append-only: existing records are flushed first,
+        then the compacted chain is appended as new message records.
+        """
+
+        replacement = [deepcopy(message) for message in messages]
+        if not replacement:
+            raise ValueError("cannot replace active messages with an empty chain")
+
+        self.flush_transcript()
+        self._messages.clear()
+        stored: list[dict[str, Any]] = []
+        for message in replacement:
+            enriched = deepcopy(message)
+            message_metadata = dict(enriched.get("metadata") or {})
+            message_metadata.setdefault(
+                "compaction",
+                {
+                    "reason": reason,
+                    **(metadata or {}),
+                },
+            )
+            enriched["metadata"] = message_metadata
+            stored.append(self._append(enriched))
+        return stored
+
     @property
     def transcript_store(self) -> JsonlTranscriptStore:
         return self._transcript_store

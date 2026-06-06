@@ -11,6 +11,12 @@ from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.providers.factory import create_model_client
 from prompts.assembler import DynamicPromptAssembler
+from services.compaction import (
+    ContextCompactionService,
+    SessionMemoryStore,
+    SessionMemoryUpdater,
+    ToolResultStore,
+)
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.hooks import HookRegistry
@@ -57,14 +63,28 @@ def build_runtime(workspace: Path) -> CliRuntime:
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
     prompt_assembler = DynamicPromptAssembler(workspace, tool_registry=registry)
+    result_store = ToolResultStore(message_store.transcript_store.session_dir)
+    session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
+    session_memory_updater = SessionMemoryUpdater(
+        session_memory_store,
+        trace_recorder=trace_recorder,
+    )
+    hooks = HookRegistry(trace_recorder=trace_recorder)
+    compaction_service = ContextCompactionService(
+        message_store=message_store,
+        session_memory_store=session_memory_store,
+        result_store=result_store,
+        hooks=hooks,
+        trace_recorder=trace_recorder,
+    )
     context_engine = ContextEngine(
         message_store,
         prompt_assembler=prompt_assembler,
         tool_schema_provider=registry,
+        context_preparer=compaction_service,
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
     permission_prompter = CliPermissionPrompter()
-    hooks = HookRegistry(trace_recorder=trace_recorder)
     current_model_context = CurrentModelContext()
     model_client = create_model_client(workspace / ".env")
     subagent_runner = SubagentRunner(
@@ -79,6 +99,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
     )
+    compaction_service.bind_runtime(subagent_runner=subagent_runner)
     registry.register(agent_descriptor(subagent_runner))
     tool_executor = RegistryToolExecutor(
         registry,
@@ -87,6 +108,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_policy=permission_policy,
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
+        result_store=result_store,
     )
     loop = AgentLoop(
         state=state,
@@ -96,6 +118,9 @@ def build_runtime(workspace: Path) -> CliRuntime:
         tool_executor=tool_executor,
         trace_recorder=trace_recorder,
         current_model_context=current_model_context,
+        hooks=hooks,
+        compaction_service=compaction_service,
+        session_memory_updater=session_memory_updater,
     )
     config = model_client.config
     return CliRuntime(
@@ -114,6 +139,9 @@ def build_runtime(workspace: Path) -> CliRuntime:
         trace_recorder=trace_recorder,
         current_model_context=current_model_context,
         subagent_runner=subagent_runner,
+        compaction_service=compaction_service,
+        session_memory_store=session_memory_store,
+        session_memory_updater=session_memory_updater,
     )
 
 

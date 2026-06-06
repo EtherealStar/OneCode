@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from services.guard import GuardPolicy, SandboxGuard
 from services.hooks import HookEvent, HookRegistry
+from services.compaction.result_store import ToolResultStore
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
@@ -97,6 +98,7 @@ class RegistryToolExecutor:
         permission_prompter: PermissionPrompter | None = None,
         max_tool_concurrency: int | None = None,
         trace_recorder: TraceRecorder | None = None,
+        result_store: ToolResultStore | None = None,
     ) -> None:
         self._registry = registry
         self._guard = guard
@@ -107,6 +109,10 @@ class RegistryToolExecutor:
             max_tool_concurrency
         )
         self._trace_recorder = trace_recorder or TraceRecorder.noop()
+        self._result_store = result_store
+
+    def bind_result_store(self, result_store: ToolResultStore | None) -> None:
+        self._result_store = result_store
 
     async def execute(
         self,
@@ -793,6 +799,7 @@ class RegistryToolExecutor:
                 "error": result.metadata.get("error"),
                 "content_chars": len(result.content),
                 "result_truncated": result.metadata.get("result_truncated") is True,
+                "result_stored": result.metadata.get("result_stored") is True,
             },
             parent_span_id=parent_span_id,
         )
@@ -806,9 +813,34 @@ class RegistryToolExecutor:
         if max_chars is None or math.isinf(max_chars) or len(result.content) <= max_chars:
             return result
 
-        # durable result store 尚未实现；当前先返回结构化预览，并保留截断
-        # metadata，供后续 compaction/result-store 接入。
         preview = result.content[: policy.preview_chars]
+        if policy.persist_when_exceeded and self._result_store is not None:
+            stored_ref = self._result_store.persist_tool_result(
+                tool_call_id=result.tool_call_id,
+                tool_name=result.tool_name,
+                content=result.content,
+            )
+            metadata = {
+                **result.metadata,
+                "result_truncated": True,
+                "result_stored": True,
+                "original_size_chars": len(result.content),
+                "max_result_size_chars": max_chars,
+                "stored_result_id": stored_ref.result_id,
+                "stored_result_path": str(stored_ref.absolute_path),
+                "stored_result_relative_path": stored_ref.relative_path,
+            }
+            return ToolExecutionResult(
+                tool_call_id=result.tool_call_id,
+                tool_name=result.tool_name,
+                content=self._result_store.format_model_reference(
+                    stored_ref,
+                    preview=preview,
+                ),
+                is_error=result.is_error,
+                metadata=metadata,
+            )
+
         payload = {
             "result_truncated": True,
             "original_size_chars": len(result.content),

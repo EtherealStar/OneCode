@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from core.context_engine import ContextEngine
 from core.runtime_state import RuntimeState
 from core.stream_events import AgentEvent
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
+from services.hooks import HookEvent, HookRegistry
 from services.model.client import ModelClient
 from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
@@ -16,6 +18,25 @@ from services.observability import TraceRecorder
 from services.subagents.context import CurrentModelContext
 from services.tools.executor import ToolExecutor
 from services.tools.types import ToolExecutionResult
+
+
+class ReactiveCompactor(Protocol):
+    async def reactive_compact(
+        self,
+        state: RuntimeState,
+        *,
+        error: ProviderError,
+    ) -> Any:
+        ...
+
+
+class SessionMemoryUpdaterProtocol(Protocol):
+    async def update_after_turn(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+    ) -> None:
+        ...
 
 
 class AgentLoop:
@@ -29,6 +50,9 @@ class AgentLoop:
         tool_executor: ToolExecutor,
         trace_recorder: TraceRecorder | None = None,
         current_model_context: CurrentModelContext | None = None,
+        hooks: HookRegistry | None = None,
+        compaction_service: ReactiveCompactor | None = None,
+        session_memory_updater: SessionMemoryUpdaterProtocol | None = None,
     ) -> None:
         self.state = state
         self.message_store = message_store
@@ -40,12 +64,23 @@ class AgentLoop:
             self.state.session_id
         )
         self.current_model_context = current_model_context
+        self.hooks = hooks or HookRegistry()
+        self.compaction_service = compaction_service
+        self.session_memory_updater = session_memory_updater
 
     async def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
         with self.trace_recorder.span(
             "interaction",
             {"user_prompt_length": len(prompt)},
         ):
+            await self.hooks.run(
+                HookEvent.USER_PROMPT_SUBMIT,
+                {
+                    "prompt_length": len(prompt),
+                    "session_id": self.state.session_id,
+                    "turn_count": self.state.turn_count,
+                },
+            )
             self.message_store.append_user(prompt)
             yield AgentEvent(type="interaction_started")
             async for event in self._run_loop_async():
@@ -147,6 +182,12 @@ class AgentLoop:
                         "retryable": exc.retryable,
                     },
                 )
+                if await self._try_reactive_compact(exc):
+                    yield AgentEvent(
+                        type="transition",
+                        transition=TransitionReason.REACTIVE_COMPACT_RETRY.value,
+                    )
+                    continue
                 raise
 
             if completed_message is None or completed_message.assistant_message is None:
@@ -190,6 +231,7 @@ class AgentLoop:
                 type="transition",
                 transition=TransitionReason.COMPLETED.value,
             )
+            await self._update_session_memory()
             yield AgentEvent(type="completed", text=completed_message.final_text)
             return
 
@@ -244,3 +286,32 @@ class AgentLoop:
             "provider_id": getattr(config, "provider_id", None),
             "model": getattr(config, "model", None),
         }
+
+    async def _try_reactive_compact(self, error: ProviderError) -> bool:
+        if error.error_type != "context_limit_exceeded":
+            return False
+        if self.compaction_service is None:
+            return False
+        if self.state.has_attempted_reactive_compact:
+            return False
+        self.state.has_attempted_reactive_compact = True
+        self.state.set_transition(TransitionReason.REACTIVE_COMPACT_RETRY)
+        self._record_transition(TransitionReason.REACTIVE_COMPACT_RETRY)
+        self.trace_recorder.event(
+            "reactive_compact_retry",
+            {
+                "error_type": error.error_type,
+                "status_code": error.status_code,
+                "turn_count": self.state.turn_count,
+            },
+        )
+        await self.compaction_service.reactive_compact(self.state, error=error)
+        return True
+
+    async def _update_session_memory(self) -> None:
+        if self.session_memory_updater is None:
+            return
+        await self.session_memory_updater.update_after_turn(
+            self.message_store.current_messages(),
+            self.state,
+        )

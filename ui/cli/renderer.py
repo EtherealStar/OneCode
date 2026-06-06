@@ -17,7 +17,7 @@ def render_banner(runtime: CliRuntime) -> str:
             f"cwd: {runtime.workspace}",
             f"session: {runtime.state.session_id}",
             f"model: {runtime.provider_label} / {runtime.model}",
-            "commands: /help /tools /status /history /trace /resume /clear /exit",
+            "commands: /help /tools /status /history /trace /compact /resume /clear /exit",
         ]
     )
 
@@ -31,6 +31,7 @@ def render_help() -> str:
             "  /status            Show current runtime status.",
             "  /history [n]       Show recent message summaries.",
             "  /trace [n]         Show recent trace event summaries.",
+            "  /compact [focus]   Compact the active session context.",
             "  /resume <target>   Restore .onecode session id or messages.jsonl path.",
             "  /clear             Start a fresh session without deleting old transcripts.",
             "  /exit, /quit       Flush transcript and exit.",
@@ -82,6 +83,8 @@ def render_status(runtime: CliRuntime) -> str:
         if trace_path is not None
         else "disabled"
     )
+    compaction = runtime.state.metadata.get("last_compaction")
+    compact_lines = _compact_status_lines(runtime, compaction)
     return "\n".join(
         [
             "Status:",
@@ -99,6 +102,7 @@ def render_status(runtime: CliRuntime) -> str:
             ),
             f"  transcript: {_display_path(transcript_path, runtime.workspace)}",
             f"  trace: {trace_display}",
+            *compact_lines,
         ]
     )
 
@@ -159,6 +163,27 @@ def render_resume(session_id: str, messages_path: Path, workspace: Path) -> str:
     )
 
 
+def render_compact(result: Any, runtime: CliRuntime) -> str:
+    memory_path = (
+        runtime.session_memory_store.path
+        if runtime.session_memory_store is not None
+        else None
+    )
+    lines = [
+        "Compacted session:",
+        f"  trigger: {getattr(result, 'trigger').value}",
+        f"  tokens: {getattr(result, 'token_before')} -> {getattr(result, 'token_after')}",
+        f"  messages: {len(getattr(result, 'messages'))}",
+        (
+            "  transcript: "
+            f"{_display_path(runtime.message_store.transcript_store.messages_path, runtime.workspace)}"
+        ),
+    ]
+    if memory_path is not None:
+        lines.append(f"  session memory: {_display_path(memory_path, runtime.workspace)}")
+    return "\n".join(lines)
+
+
 def _message_role(message: dict[str, Any]) -> str:
     role = message.get("role")
     return role if isinstance(role, str) else "unknown"
@@ -214,6 +239,40 @@ def _trace_attribute(name: str, attributes: dict[str, Any]) -> str:
     if value is None:
         return ""
     return f"{name}={_preview(value)}"
+
+
+def _compact_status_lines(runtime: CliRuntime, compaction: Any) -> list[str]:
+    lines: list[str] = []
+    if runtime.compaction_service is not None:
+        config = runtime.compaction_service.config
+        lines.extend(
+            [
+                f"  auto compact threshold: {config.auto_compact_threshold_tokens}",
+                (
+                    "  auto compact failures: "
+                    f"{runtime.state.metadata.get('auto_compact_failure_count', 0)}"
+                ),
+            ]
+        )
+    if isinstance(compaction, dict):
+        lines.append(
+            "  last compact: "
+            f"{compaction.get('trigger', 'unknown')} "
+            f"{compaction.get('token_before', 0)}->{compaction.get('token_after', 0)}"
+        )
+    if runtime.session_memory_store is not None:
+        memory = runtime.session_memory_store.read()
+        if memory is None:
+            lines.append(
+                f"  session memory: {_display_path(runtime.session_memory_store.path, runtime.workspace)} (missing)"
+            )
+        else:
+            lines.append(
+                "  session memory: "
+                f"{_display_path(runtime.session_memory_store.path, runtime.workspace)} "
+                f"updated={memory.updated_at or 'unknown'}"
+            )
+    return lines
 
 
 def _display_path(path: Path, workspace: Path) -> str:

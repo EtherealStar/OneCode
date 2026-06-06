@@ -14,6 +14,7 @@ from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
 from services.model.types import LLMResponse, ModelUsage
+from services.model.types import ProviderError
 from services.observability import JsonlTraceSink, TraceRecorder
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.types import ToolCall, ToolExecutionResult
@@ -60,6 +61,33 @@ class FakeToolExecutor:
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
             )
+
+
+@dataclass
+class ContextLimitThenSuccessModel:
+    snapshots: list[ContextSnapshot] = field(default_factory=list)
+
+    async def stream(self, snapshot: ContextSnapshot):
+        self.snapshots.append(snapshot)
+        if len(self.snapshots) == 1:
+            raise ProviderError(
+                "too many tokens",
+                error_type="context_limit_exceeded",
+                status_code=413,
+            )
+        yield ModelStreamEvent.message_completed(
+            assistant_message=assistant_message("recovered"),
+            final_text="recovered",
+        )
+
+
+@dataclass
+class FakeReactiveCompactor:
+    calls: int = 0
+
+    async def reactive_compact(self, state: RuntimeState, *, error: ProviderError):
+        self.calls += 1
+        state.metadata["reactive_compacted"] = error.error_type
 
 
 def make_loop(
@@ -271,3 +299,30 @@ def test_loop_records_interaction_model_and_transition_trace(tmp_path: Path) -> 
     assert model_end["attributes"]["input_tokens"] == 3
     assert model_end["attributes"]["output_tokens"] == 5
     assert "hello" not in json.dumps(records, ensure_ascii=False)
+
+
+def test_loop_reactive_compacts_once_after_context_limit(tmp_path: Path) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = ContextLimitThenSuccessModel()
+    compactor = FakeReactiveCompactor()
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,  # type: ignore[arg-type]
+        tool_executor=FakeToolExecutor(),
+        compaction_service=compactor,
+    )
+
+    result = run_to_final_text(loop, "large context")
+
+    assert result == "recovered"
+    assert compactor.calls == 1
+    assert state.has_attempted_reactive_compact is True
+    assert state.metadata["reactive_compacted"] == "context_limit_exceeded"
+    assert len(model_client.snapshots) == 2

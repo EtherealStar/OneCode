@@ -132,6 +132,43 @@ def test_clear_starts_new_session_without_deleting_old_transcript(
     assert read_jsonl(new_messages_path)[0]["message"]["content"] == "new message"
 
 
+def test_replace_messages_for_compaction_appends_new_chain_without_deleting_history(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState(session_id="session-compact")
+    message_store = make_store(tmp_path, state)
+    message_store.append_user("old question")
+    message_store.append_assistant({"content": "old answer"})
+
+    stored = message_store.replace_messages_for_compaction(
+        (
+            {
+                "role": "user",
+                "content": "[Compact boundary]",
+                "metadata": {"is_compact_boundary": True},
+            },
+            {"role": "user", "content": "Summary: old work"},
+        ),
+        reason="manual",
+        metadata={"boundary_id": "boundary-1"},
+    )
+    message_store.flush_transcript()
+
+    messages_path = tmp_path / ".onecode" / state.session_id / "messages.jsonl"
+    records = read_jsonl(messages_path)
+
+    assert message_store.current_messages() == tuple(stored)
+    assert [record["message"]["content"] for record in records] == [
+        "old question",
+        "old answer",
+        "[Compact boundary]",
+        "Summary: old work",
+    ]
+    assert records[2]["parent_uuid"] == records[1]["uuid"]
+    assert records[2]["message"]["metadata"]["compaction"]["reason"] == "manual"
+    assert records[2]["message"]["metadata"]["compaction"]["boundary_id"] == "boundary-1"
+
+
 def test_restore_skips_bad_lines_and_continues_same_session(tmp_path: Path) -> None:
     state = RuntimeState(session_id="session-restore")
     message_store = make_store(tmp_path, state)
