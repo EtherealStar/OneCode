@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 
-VALID_MESSAGE_ROLES = {"user", "assistant", "tool_result"}
+VALID_MESSAGE_ROLES = {"user", "assistant", "tool_result", "attachment"}
 TOOL_RESULT_EXTERNALIZE_THRESHOLD_BYTES = 50 * 1024
 DEFAULT_TOOL_RESULT_PREVIEW_CHARS = 4_000
 

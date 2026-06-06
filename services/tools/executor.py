@@ -10,6 +10,7 @@ import math
 import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+from pathlib import Path
 
 from services.guard import GuardPolicy, SandboxGuard
 from services.hooks import HookEvent, HookRegistry
@@ -17,6 +18,7 @@ from services.compaction.result_store import ToolResultStore
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
+from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from services.tools.types import (
     ToolCall,
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TOOL_CONCURRENCY = 10
+FILE_STATE_TOOL_NAMES = {"read_file", "edit_file", "write_file", "filewrite"}
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,7 @@ class RegistryToolExecutor:
         max_tool_concurrency: int | None = None,
         trace_recorder: TraceRecorder | None = None,
         result_store: ToolResultStore | None = None,
+        file_state_cache: FileStateCache | None = None,
     ) -> None:
         self._registry = registry
         self._guard = guard
@@ -110,9 +114,17 @@ class RegistryToolExecutor:
         )
         self._trace_recorder = trace_recorder or TraceRecorder.noop()
         self._result_store = result_store
+        self._file_state_cache = file_state_cache or FileStateCache()
 
     def bind_result_store(self, result_store: ToolResultStore | None) -> None:
         self._result_store = result_store
+
+    def bind_file_state_cache(self, file_state_cache: FileStateCache | None) -> None:
+        self._file_state_cache = file_state_cache or FileStateCache()
+
+    @property
+    def file_state_cache(self) -> FileStateCache:
+        return self._file_state_cache
 
     async def execute(
         self,
@@ -407,7 +419,11 @@ class RegistryToolExecutor:
                 "result": final_result,
             },
         )
-        self._apply_success_side_effects(final_result, state)
+        self._apply_success_side_effects(
+            final_result,
+            state,
+            tool_input=ready.tool_input,
+        )
         self._record_tool_result(
             final_result,
             parent_span_id=ready.trace_parent_span_id,
@@ -865,9 +881,11 @@ class RegistryToolExecutor:
         self,
         result: ToolExecutionResult,
         state: RuntimeState,
+        *,
+        tool_input: dict[str, Any],
     ) -> None:
         """Apply executor-owned session state updates after successful results."""
-        if result.tool_name not in {"read_file", "edit_file"}:
+        if result.tool_name not in FILE_STATE_TOOL_NAMES:
             return
         path = result.metadata.get("path")
         if not isinstance(path, str) or not path:
@@ -880,6 +898,16 @@ class RegistryToolExecutor:
             files_read = set(files_read)
             state.metadata["files_read"] = files_read
         files_read.add(path)
+
+        # The mtime cache lives in the tool service because file tools are the
+        # durable source of observed file content, not attachment collection.
+        self._file_state_cache.snapshot_path(
+            Path(path),
+            offset=_int_or_none(tool_input.get("offset")),
+            limit=_int_or_none(tool_input.get("limit")),
+            partial=result.tool_name == "read_file"
+            and ("offset" in tool_input or "limit" in tool_input),
+        )
 
 
     async def _tool_error(
@@ -1114,3 +1142,9 @@ def _resolve_max_tool_concurrency(value: int | None = None) -> int:
     except ValueError:
         return DEFAULT_MAX_TOOL_CONCURRENCY
     return parsed if parsed >= 1 else DEFAULT_MAX_TOOL_CONCURRENCY
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None

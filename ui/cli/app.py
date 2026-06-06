@@ -11,6 +11,11 @@ from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.providers.factory import create_model_client
 from prompts.assembler import DynamicPromptAssembler
+from services.attachments import (
+    AttachmentCollector,
+    AttachmentContextPreparer,
+    AttachmentFileReader,
+)
 from services.compaction import (
     ContextCompactionService,
     SessionMemoryExtractionService,
@@ -26,6 +31,7 @@ from services.observability import JsonlTraceSink, TraceRecorder
 from services.permissions import PermissionPolicy, SessionPermissionStore
 from services.subagents.runner import SubagentRunner
 from services.tools.executor import RegistryToolExecutor
+from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from tools.agent import descriptor as agent_descriptor
 from tools.bash import descriptor as bash_descriptor
@@ -78,10 +84,21 @@ def build_runtime(workspace: Path) -> CliRuntime:
         message_store,
         prompt_assembler=prompt_assembler,
         tool_schema_provider=registry,
-        context_preparer=compaction_service,
+        context_preparer=AttachmentContextPreparer(compaction_service),
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
     permission_prompter = CliPermissionPrompter()
+    file_state_cache = FileStateCache()
+    attachment_reader = AttachmentFileReader(
+        guard=guard,
+        permission_policy=permission_policy,
+        permission_prompter=permission_prompter,
+    )
+    attachment_collector = AttachmentCollector(
+        workspace=workspace,
+        reader=attachment_reader,
+        file_state_cache=file_state_cache,
+    )
     current_model_context = CurrentModelContext()
     model_client = create_model_client(workspace / ".env")
     subagent_runner = SubagentRunner(
@@ -112,6 +129,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
         result_store=result_store,
+        file_state_cache=file_state_cache,
     )
     loop = AgentLoop(
         state=state,
@@ -145,6 +163,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         compaction_service=compaction_service,
         session_memory_store=session_memory_store,
         session_memory_extractor=session_memory_extractor,
+        attachment_collector=attachment_collector,
     )
 
 
@@ -177,9 +196,17 @@ async def main_loop_async(runtime: CliRuntime) -> int:
 
         try:
             print(renderer.render_running())
+            attachments = ()
+            if runtime.attachment_collector is not None:
+                attachments = await runtime.attachment_collector.collect_for_user_turn(
+                    line,
+                    runtime.state,
+                    runtime.message_store.current_messages(),
+                    is_main_thread=True,
+                )
             saw_delta = False
             final_text = ""
-            async for event in runtime.loop.stream(line):
+            async for event in runtime.loop.stream(line, attachments=attachments):
                 if event.type == "assistant_delta":
                     saw_delta = True
                     print(renderer.render_assistant_delta(event.text), end="", flush=True)

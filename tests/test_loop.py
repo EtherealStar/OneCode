@@ -10,6 +10,8 @@ from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from core.transitions import TransitionReason
+from services.attachments.context_preparer import AttachmentContextPreparer
+from services.attachments.types import AttachmentMessage
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
@@ -119,10 +121,16 @@ def assistant_message(text: str) -> dict[str, Any]:
     return {"role": "assistant", "content": [{"type": "text", "text": text}]}
 
 
-def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
+def run_to_final_text(
+    loop: AgentLoop,
+    prompt: str,
+    *,
+    attachments: object = None,
+) -> str:
     async def run() -> str:
         final_text = ""
-        async for event in loop.stream(prompt):
+        kwargs = {} if attachments is None else {"attachments": attachments}
+        async for event in loop.stream(prompt, **kwargs):
             if event.type == "completed":
                 final_text = event.text
         return final_text
@@ -152,6 +160,53 @@ def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
     assert len(model_client.snapshots) == 1
     assert tool_executor.calls == []
     assert message_store.current_messages()[-1] == assistant_message("done")
+
+
+def test_loop_persists_attachment_but_model_sees_projection(tmp_path: Path) -> None:
+    attachment = AttachmentMessage(
+        attachment={
+            "type": "file",
+            "path": "note.txt",
+            "content": "1\tone",
+            "offset": 1,
+            "limit": 1,
+        },
+        attachment_id="att_loop",
+        source="user_input",
+    ).to_message()
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = FakeModelClient(
+        [
+            LLMResponse(
+                assistant_message=assistant_message("done"),
+                final_text="done",
+            )
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(
+            message_store,
+            context_preparer=AttachmentContextPreparer(),
+        ),
+        model_client=model_client,
+        tool_executor=FakeToolExecutor(),
+    )
+
+    result = run_to_final_text(loop, "summarize @note.txt", attachments=[attachment])
+
+    assert result == "done"
+    stored = message_store.current_messages()
+    assert stored[0]["role"] == "user"
+    assert stored[1]["role"] == "attachment"
+    snapshot_roles = [message["role"] for message in model_client.snapshots[0].messages]
+    assert snapshot_roles == ["user", "assistant", "tool_result"]
 
 
 def test_loop_continues_when_tool_calls_present(tmp_path: Path) -> None:

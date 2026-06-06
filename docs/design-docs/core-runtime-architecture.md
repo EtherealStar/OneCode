@@ -16,7 +16,9 @@
 
 ## AgentLoop
 
-`AgentLoop.stream(prompt)` 是普通用户交互入口。它会先把 prompt 追加到 `MessageStore`，再进入 `_run_loop_async()`。
+`AgentLoop.stream(prompt, attachments=None)` 是普通用户交互入口。它会先把 prompt 追加到 `MessageStore`，再追加调用方预构建的 durable attachment messages，然后进入 `_run_loop_async()`。
+
+附件解析、文件读取、权限检查和投影不属于主循环。CLI 或其他入口负责在调用 loop 前收集附件；`ContextEngine` 的 preparer 负责在模型调用前把 internal attachment role 投影成 provider-visible messages。
 
 `AgentLoop.continue_stream()` 用于子 agent 或恢复场景，从已经 seed 到 `MessageStore` 的消息链继续运行，不重复追加用户 prompt。
 

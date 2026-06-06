@@ -14,13 +14,41 @@ from ui.cli.types import CliRuntime
 
 
 class FakeLoop:
-    async def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        attachments: object = None,
+    ) -> AsyncIterator[AgentEvent]:
         assert prompt == "hello"
+        assert attachments == ()
         yield AgentEvent(type="interaction_started")
         yield AgentEvent(type="assistant_delta", text="hel")
         await asyncio.sleep(0)
         yield AgentEvent(type="assistant_delta", text="lo")
         yield AgentEvent(type="completed", text="hello")
+
+
+class FakeAttachmentCollector:
+    async def collect_for_user_turn(self, prompt, state, messages, *, is_main_thread):
+        assert prompt == "hello"
+        assert is_main_thread is True
+        return ({"role": "attachment", "attachment": {"type": "plan_mode"}},)
+
+
+class FakeAttachmentLoop:
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        attachments: object = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert prompt == "hello"
+        assert attachments == (
+            {"role": "attachment", "attachment": {"type": "plan_mode"}},
+        )
+        yield AgentEvent(type="interaction_started")
+        yield AgentEvent(type="completed", text="done")
 
 
 def test_async_cli_renders_streamed_delta_before_exit(
@@ -57,3 +85,39 @@ def test_async_cli_renders_streamed_delta_before_exit(
     assert result == 0
     assert "Running..." in output
     assert "hello" in output
+
+
+def test_async_cli_collects_attachments_before_loop(
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    inputs = iter(["hello", "/exit"])
+
+    def fake_input(prompt: str) -> str:
+        return next(inputs)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    state = RuntimeState(session_id="session-cli")
+    runtime = CliRuntime(
+        workspace=tmp_path,
+        state=state,
+        message_store=MessageStore(
+            transcript_root=tmp_path / ".onecode",
+            session_id=state.session_id,
+            flush_interval_seconds=60,
+        ),
+        registry=ToolRegistry(),
+        loop=FakeAttachmentLoop(),  # type: ignore[arg-type]
+        provider_label="Fake",
+        model="fake-model",
+        model_client=object(),
+        tool_executor=object(),  # type: ignore[arg-type]
+        attachment_collector=FakeAttachmentCollector(),  # type: ignore[arg-type]
+    )
+
+    result = asyncio.run(main_loop_async(runtime))
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "done" in output

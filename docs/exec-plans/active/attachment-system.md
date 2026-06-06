@@ -7,7 +7,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 ## Purpose / Big Picture
 
-完成本计划后，OneCode 会把附件理解为一等运行时上下文。用户可以在工作区根目录输入 `summarize @architecture.md#L1-40`，OneCode 会在当前工作目录内解析这个文件引用，通过与文件工具相同的安全边界读取指定行，把结构化附件消息存入会话，并在下一次模型调用前临时投影为“模型好像已经调用过 `read_file` 并拿到结果”的上下文。
+完成本计划后，OneCode 会把附件理解为一等运行时上下文。用户可以在工作区根目录输入 `summarize @architecture.md#L1-40`，OneCode 会在当前工作目录内解析这个文件引用，通过与文件工具相同的安全边界读取指定行，把结构化附件消息存入会话，并在下一次模型调用前临时投影为“调用过 `read_file` 并拿到结果”的上下文。
 
 这很重要，因为附件系统让 runtime 能以结构化方式注入用户选择的文件、目录列表、记忆文件、排队命令、hook 结果以及未来 plan mode 提醒，而不是把这些内容硬编码进 agent 主循环，或者全部压平成无结构 prompt 文本。第一版完整可观察行为是文件和目录提及支持：CLI 用户输入带 `@filename` 的 prompt 后，下一次模型请求包含针对该文件的合成 `read_file` assistant 工具调用和匹配的工具结果；transcript 中只保存原始用户 prompt 和结构化附件消息。附件的 UI 渲染明确不在本计划范围内，必须作为技术债记录。
 
@@ -17,18 +17,16 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 - [x] (2026-06-07 00:35+08:00) 已阅读 `AGENTS.md`、`PLANS.md`、`architecture.md`、相关 context/runtime 设计文档、当前活跃的 session memory ExecPlan，以及附件参考文件 `docs/references/attachement/attachments.ts`。
 - [x] (2026-06-07 00:45+08:00) 已与用户确认设计决策：`@filename` 限定在当前工作目录；支持文件、行范围和目录，不支持图片或 PDF；虚拟 file-read 工具调用消息只在模型上下文中临时生成；shared attachments 不包含 todo reminders；必须实现 edited text file 检测和已读文件缓存；plan mode 当前只需要预留相关接口。
 - [x] (2026-06-07 00:55+08:00) 已创建本活跃 ExecPlan，未修改 runtime 实现代码。
-- [ ] 实现附件数据类型、文件状态缓存、mention 解析和 cwd 范围内路径解析。
-- [ ] 实现用户输入附件、共享运行时事件附件、仅主线程附件和 edited text file 检测。
-- [ ] 在 `MessageStore` 和 JSONL transcript 中保存 attachment messages，同时确保 raw `role="attachment"` 不暴露给 provider。
-- [ ] 将 attachment messages 投影成 provider 可见模型消息，包括临时合成的 file-read 工具调用对。
-- [ ] 在 CLI 输入进入 agent loop 前接入附件收集。
-- [ ] 增加测试、文档更新，并为暂缓的 UI 渲染新增技术债记录。
+- [x] (2026-06-07) 已实现附件数据类型、文件状态缓存、mention 解析和 cwd 范围内路径解析。
+- [x] (2026-06-07) 已实现用户输入附件、共享运行时事件附件接口、仅主线程附件和 edited text file 检测。
+- [x] (2026-06-07) 已在 `MessageStore` 和 JSONL transcript 中保存 attachment messages，并通过 context preparer 确保 raw `role="attachment"` 不暴露给 provider。
+- [x] (2026-06-07) 已将 attachment messages 投影成 provider 可见模型消息，包括临时合成的 file-read 工具调用对。
+- [x] (2026-06-07) 已在 CLI 输入进入 agent loop 前接入附件收集。
+- [x] (2026-06-07) 已增加 parser、collector、projector、runtime、loop 和 CLI 测试，并为暂缓的 UI 渲染新增技术债 `TD-016`。
+- [x] (2026-06-07) 已将文件状态缓存从附件层迁移到工具服务层 `services/tools/file_state.py`，并在 `read_file`、`edit_file`、未来 `write_file/filewrite` 成功结果后由 `RegistryToolExecutor` 统一更新缓存；附件 collector 只消费共享缓存生成 edited-file attachment。
 
 
 ## Surprises & Discoveries
-
-- Observation: 用户给出的参考路径是 `docs\references\attachment`，但仓库中实际路径是 `docs\references\attachement\attachments.ts`。
-  Evidence: `rg --files docs\references` 列出了 `docs\references\attachement\attachments.ts`。
 
 - Observation: OneCode 已经有模型回复完成后的生命周期 hook 和 session memory extraction 代码，因此附件系统不应该再为 memory 或 hook 引入另一套 main-loop-specific 事件机制。
   Evidence: `services/hooks/events.py` 包含 `ASSISTANT_MESSAGE_COMPLETED`，`core/loop.py` 已经在追加 assistant message 后调用 `_after_assistant_message_completed()`。
@@ -38,6 +36,9 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Observation: 参考实现区分 user-input attachments、all-thread attachments 和 main-thread-only attachments。用户想保留这种高层划分，但明确 shared 集合不包含 todo reminders。
   Evidence: `docs/references/attachement/attachments.ts` 中 `getAttachments()` 先处理 user-input attachments，再处理 all-thread attachments，最后处理 only-main-thread attachments。用户确认 shared attachments 不需要 todo reminder。
+
+- Observation: 文件状态缓存不应归属附件模块。`read_file`、`edit_file` 和未来写文件工具都是文件内容被观察或改变的事实来源，因此 mtime/content cache 应由工具执行服务维护，附件系统只负责把“已缓存文件被外部修改”的事实投影为 attachment。
+  Evidence: `services/tools/executor.py::_apply_success_side_effects()` 已经集中维护 `files_read`，供 `edit_file` 的 read-before-edit 规则使用；同一位置可以在工具成功后统一更新 `FileStateCache`。
 
 
 ## Decision Log
@@ -66,10 +67,31 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
   Rationale: 用户原始阶段 3 说明 UI 渲染暂不实现，或者可以记录为技术债。backend 仍应保留足够附件 metadata，方便未来 UI 展示。
   Date/Author: 2026-06-07 / User and Codex
 
+- Decision: 文件状态缓存归属 `services/tools/file_state.py`，并由 `RegistryToolExecutor` 在 `read_file`、`edit_file`、未来 `write_file/filewrite` 成功结果后更新。
+  Rationale: 已读/已写文件缓存是工具调用服务的会话事实，不是附件收集的私有状态。这样模型通过真实 file read/edit/write 工具观察或改变文件后，下一轮附件 collector 可以比较 mtime 并生成 edited text file attachment。
+  Date/Author: 2026-06-07 / User and Codex
+
 
 ## Outcomes & Retrospective
 
-本计划已创建，但实现尚未开始。尚未为附件系统新增或运行测试。当前预期结果保持不变：OneCode 能从用户输入和运行时状态收集结构化附件，将其保存为会话消息，并在不直接改变 provider wire protocol 的前提下投影进模型可见上下文。
+附件系统第一版已落地。当前实现新增 `services/attachments/`，支持 `@file`、quoted path、行范围、目录、cwd-scoped resolution、ambiguous/not-found 错误附件和 edited text file diff。文件状态缓存位于工具服务层 `services/tools/file_state.py`，由 `RegistryToolExecutor` 在 `read_file`、`edit_file`、未来 `write_file/filewrite` 成功结果后统一更新；CLI 将同一个 cache 传给附件 collector，用于下一轮比较 mtime。CLI 会在调用 `AgentLoop.stream()` 前收集 attachments；loop 只追加 durable `role="attachment"` messages；`AttachmentContextPreparer` 在模型调用前投影 attachment messages，确保 provider payload 不看到 raw attachment role。文件附件会临时投影为 synthetic `read_file` assistant tool call 和匹配的 synthetic `tool_result`，不会写回 transcript。
+
+已运行的验证：
+
+    uv run python -m pytest tests\test_attachment_parser.py tests\test_attachment_collector.py tests\test_attachment_projector.py tests\test_attachment_runtime.py tests\test_loop.py tests\test_async_cli_streaming.py -q
+
+结果：21 passed。后续迁移文件状态缓存到工具服务层后，相关测试为：
+
+    uv run python -m pytest tests\test_file_tools_guard.py tests\test_attachment_collector.py tests\test_async_cli_streaming.py tests\test_attachment_runtime.py -q
+
+结果：25 passed。
+
+最终验证：
+
+    uv run python -m compileall core services infrastructure tools ui
+    uv run python -m pytest tests -q
+
+结果：编译检查通过；全量测试 `212 passed`。
 
 
 ## Context and Orientation
@@ -95,7 +117,7 @@ OneCode 是 Python code agent runtime。主循环位于 `core/loop.py`。它通�
 
 然后，新增 `services/attachments/parser.py` 处理用户输入解析。它应暴露 `extract_at_mentions(text: str) -> tuple[AtMention, ...]` 和 `parse_line_fragment(raw: str) -> AtMention`。必须支持 `@file.py`、`@"path with spaces/file.py"`、`@src/app.py#L10` 和 `@src/app.py#L10-20`。必须剥离 `#heading` 这类非行号 fragment，而不是把它当成行范围。应在保留首次出现顺序的同时去重。Parser 不应读取文件系统。
 
-接着，新增 `services/attachments/file_state.py`。定义 `FileStateCache`，记录 resolved file path、content、mtime、offset、limit 以及缓存内容是否为 partial view。这个 cache 与当前 `RuntimeState.metadata["files_read"]` 分离；后者目前只记录路径供 read-before-edit 规则使用。该 cache 用于检测 `edited_text_file`：每个新 turn 前，比较缓存文件 mtime 与当前 mtime；当文本文件变化时读取新内容并生成紧凑 unified diff snippet。第一版可使用 Python 标准库 `difflib.unified_diff`，并把 snippet 限制在固定大小，例如 4,000 字符。如果文件被删除，则驱逐缓存项，不发出 attachment。如果文件不可读或被权限拒绝，跳过 edited-file attachment 并记录 trace event。
+接着，新增 `services/tools/file_state.py`。定义 `FileStateCache`，记录 resolved file path、content、mtime、offset、limit 以及缓存内容是否为 partial view。这个 cache 与当前 `RuntimeState.metadata["files_read"]` 分离；后者目前只记录路径供 read-before-edit 规则使用。`RegistryToolExecutor` 在 `read_file`、`edit_file`、未来 `write_file/filewrite` 成功后更新该 cache。该 cache 用于检测 `edited_text_file`：每个新 turn 前，比较缓存文件 mtime 与当前 mtime；当文本文件变化时读取新内容并生成紧凑 unified diff snippet。第一版可使用 Python 标准库 `difflib.unified_diff`，并把 snippet 限制在固定大小，例如 4,000 字符。如果文件被删除，则驱逐缓存项，不发出 attachment。如果文件不可读或被权限拒绝，跳过 edited-file attachment 并记录 trace event。
 
 新增 `services/attachments/resolver.py` 做 cwd-scoped resolution。它应暴露 `resolve_mention(mention: AtMention, workspace: Path) -> ResolvedMention | ResolutionError`。解析行为为：先把 mention 作为相对于 `workspace` 的精确路径尝试；如果存在，就使用它。如果不存在，则在 `workspace` 下搜索文件名匹配 mention 文本，或 normalized separators 后相对路径等于 mention 文本的路径。若刚好一个匹配，使用它。若多个匹配，返回 ambiguous resolution error，不要不可预测地选择一个。若没有匹配，返回 not found。绝不解析到 `workspace` 外。避免跟随 symlink 到 `workspace` 外；使用 `Path.resolve()`，并确认 resolved path 相对 resolved workspace。
 
@@ -306,7 +328,7 @@ File attachment 的 synthetic projection 形状应类似以下内部 Python dict
     def extract_at_mentions(text: str) -> tuple[AtMention, ...]:
         ...
 
-创建 `services/attachments/file_state.py`：
+创建 `services/tools/file_state.py`：
 
     @dataclass
     class FileState:
@@ -321,7 +343,8 @@ File attachment 的 synthetic projection 形状应类似以下内部 Python dict
         def get(self, path: Path) -> FileState | None: ...
         def set(self, state: FileState) -> None: ...
         def remove(self, path: Path) -> None: ...
-        def changed_text_attachments(self, reader: AttachmentFileReader) -> tuple[dict[str, Any], ...]: ...
+        def snapshot_path(self, path: Path, *, offset: int | None = None, limit: int | None = None, partial: bool = False) -> FileState | None: ...
+        def changed_text_files(self) -> tuple[ChangedTextFile, ...]: ...
 
 创建 `services/attachments/resolver.py`：
 

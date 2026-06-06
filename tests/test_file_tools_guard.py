@@ -113,6 +113,12 @@ def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> No
     assert result.tool_name == "read_file"
     assert result.content == "2\ttwo\n3\tthree"
     assert str(target.resolve()) in state.metadata["files_read"]
+    cached = executor.file_state_cache.get(target)
+    assert cached is not None
+    assert cached.path == target.resolve()
+    assert cached.content == "one\ntwo\nthree\n"
+    assert cached.partial is True
+    assert cached.mtime_ns == target.stat().st_mtime_ns
 
 
 def test_read_file_handler_does_not_record_files_read_directly(tmp_path: Path) -> None:
@@ -230,6 +236,10 @@ def test_edit_file_replaces_single_exact_match_after_read(tmp_path: Path) -> Non
     assert result.is_error is False
     assert result.metadata["replacement_count"] == 1
     assert target.read_text(encoding="utf-8") == "alpha BETA gamma"
+    cached = executor.file_state_cache.get(target)
+    assert cached is not None
+    assert cached.content == "alpha BETA gamma"
+    assert cached.partial is False
 
 
 def test_read_then_edit_same_response_uses_executor_recorded_files_read(
@@ -328,6 +338,9 @@ def test_edit_file_creates_new_file_when_old_string_is_empty(
     assert result.is_error is False
     assert target.read_text(encoding="utf-8") == "created"
     assert str(target.resolve()) in state.metadata["files_read"]
+    cached = executor.file_state_cache.get(target)
+    assert cached is not None
+    assert cached.content == "created"
 
 
 def test_edit_file_denied_write_does_not_modify_file(tmp_path: Path) -> None:

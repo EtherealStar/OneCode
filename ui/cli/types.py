@@ -10,6 +10,7 @@ from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
+from services.attachments import AttachmentCollector, AttachmentContextPreparer
 from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
 from services.compaction import (
@@ -27,6 +28,7 @@ from services.permissions import (
 )
 from services.subagents.runner import SubagentRunner
 from services.tools.executor import ToolExecutor
+from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 
 
@@ -53,6 +55,7 @@ class CliRuntime:
     session_memory_store: SessionMemoryStore | None = None
     session_memory_extractor: SessionMemoryExtractionService | None = None
     session_memory_updater: SessionMemoryUpdater | None = None
+    attachment_collector: AttachmentCollector | None = None
 
     def with_session(
         self,
@@ -88,6 +91,18 @@ class CliRuntime:
                 session_memory_store=session_memory_store,
                 result_store=result_store,
             )
+        file_state_cache = FileStateCache()
+        bind_file_state_cache = getattr(self.tool_executor, "bind_file_state_cache", None)
+        if callable(bind_file_state_cache):
+            bind_file_state_cache(file_state_cache)
+        attachment_collector = self.attachment_collector
+        if attachment_collector is not None:
+            attachment_collector = AttachmentCollector(
+                workspace=self.workspace,
+                reader=attachment_collector.reader,
+                file_state_cache=file_state_cache,
+                shared_sources=attachment_collector.shared_sources,
+            )
         session_memory_extractor = self.session_memory_extractor
         if session_memory_store is not None and self.subagent_runner is not None:
             session_memory_extractor = SessionMemoryExtractionService(
@@ -115,7 +130,7 @@ class CliRuntime:
                 tool_registry=self.registry,
             ),
             tool_schema_provider=self.registry,
-            context_preparer=self.compaction_service,
+            context_preparer=AttachmentContextPreparer(self.compaction_service),
         )
         loop = AgentLoop(
             state=state,
@@ -139,6 +154,7 @@ class CliRuntime:
             session_memory_store=session_memory_store or self.session_memory_store,
             session_memory_extractor=session_memory_extractor,
             session_memory_updater=session_memory_updater,
+            attachment_collector=attachment_collector,
         )
 
 
