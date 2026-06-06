@@ -31,6 +31,23 @@ class FakeSubagentRunner:
         )
 
 
+@dataclass
+class FakeMemoryExtractor:
+    store: SessionMemoryStore
+    waited: bool = False
+
+    async def wait_for_current_extraction(self, state: RuntimeState) -> None:
+        self.waited = True
+        self.store.write(
+            SessionMemory(
+                content="# Session Memory\n\n## Current Goal\nUpdated before compact.",
+                updated_at="2026-06-06T00:00:00+00:00",
+                covered_turn_count=state.turn_count,
+                source="fork",
+            )
+        )
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -102,6 +119,44 @@ def test_session_memory_compact_rewrites_active_chain_before_full_compact(
     assert messages[0]["metadata"]["is_compact_boundary"] is True
     assert "Session Memory" in messages[1]["content"]
     assert state.metadata["last_compaction"]["trigger"] == "auto_session_memory"
+
+
+def test_session_memory_compact_waits_for_running_extraction(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState(session_id="session-compact-wait")
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    for index in range(4):
+        message_store.append_user(f"old user message {index} " + ("x" * 1000))
+        message_store.append_assistant({"role": "assistant", "content": "old assistant"})
+    memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
+    extractor = FakeMemoryExtractor(memory_store)
+    runner = FakeSubagentRunner()
+    service = ContextCompactionService(
+        config=CompactionConfig(
+            default_context_window_tokens=1_000,
+            summary_output_reserved_tokens=100,
+            auto_compact_buffer_tokens=300,
+            session_memory_min_tokens=1,
+            session_memory_max_tokens=80,
+            session_memory_min_text_messages=1,
+        ),
+        message_store=message_store,
+        session_memory_store=memory_store,
+        session_memory_extractor=extractor,
+        subagent_runner=runner,
+    )
+
+    result = run(service.maybe_auto_compact(message_store.current_messages(), state))
+
+    assert result is not None
+    assert extractor.waited is True
+    assert runner.requests == []
+    assert "Updated before compact." in message_store.current_messages()[1]["content"]
 
 
 def test_full_compact_uses_implicit_fork_subagent(tmp_path: Path) -> None:

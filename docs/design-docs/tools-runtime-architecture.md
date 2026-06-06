@@ -110,9 +110,7 @@ executor 会先做保守候选分类，再对批次内每个调用串行 preflig
 - `persist_when_exceeded`
 - `preview_chars`
 
-当前 executor 已消费 `max_result_size_chars`。超出预算时，它返回 JSON 预览 payload，并在 metadata 中记录 `result_truncated`、`original_size_chars` 和 `max_result_size_chars`。
-
-durable result store 尚未实现，因此 `persist_when_exceeded` 当前只表达目标意图。通用持久化应在 result store / compaction 边界落地后接入 executor，而不是让每个工具手写不同外置格式。
+当前 executor 已消费 `max_result_size_chars`。超出预算时，若 `persist_when_exceeded=True` 且注入了 `ToolResultStore`，executor 会写入 durable result store 并返回模型可见引用；否则返回 JSON 预览 payload。metadata 会记录 `result_truncated`、`original_size_chars`、`max_result_size_chars` 和可用的 stored result 引用。
 
 ## Executor-Owned State Effects
 

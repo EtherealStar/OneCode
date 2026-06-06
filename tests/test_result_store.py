@@ -51,6 +51,49 @@ def test_result_store_persists_content_and_formats_reference(tmp_path) -> None:
     assert "full" in rendered
 
 
+def test_result_store_reuses_same_reference_for_same_content(tmp_path) -> None:
+    store = ToolResultStore(tmp_path / ".onecode" / "session-1")
+
+    first = store.persist_tool_result(
+        tool_call_id="call-1",
+        tool_name="grep",
+        content="full result",
+    )
+    second = store.persist_tool_result(
+        tool_call_id="call-1",
+        tool_name="grep",
+        content="full result",
+    )
+
+    assert second == first
+    assert sorted(path.name for path in store.results_dir.iterdir()) == ["call-1.txt"]
+
+
+def test_result_store_uses_stable_hash_suffix_for_changed_content(tmp_path) -> None:
+    store = ToolResultStore(tmp_path / ".onecode" / "session-1")
+
+    first = store.persist_tool_result(
+        tool_call_id="call-1",
+        tool_name="grep",
+        content="first result",
+    )
+    second = store.persist_tool_result(
+        tool_call_id="call-1",
+        tool_name="grep",
+        content="second result",
+    )
+    third = store.persist_tool_result(
+        tool_call_id="call-1",
+        tool_name="grep",
+        content="second result",
+    )
+
+    assert first.relative_path == "tool-results/call-1.txt"
+    assert second.relative_path.startswith("tool-results/call-1-")
+    assert third == second
+    assert len(tuple(store.results_dir.iterdir())) == 2
+
+
 def test_executor_persists_oversized_result_when_store_is_injected(tmp_path) -> None:
     state = RuntimeState(session_id="session-store")
     result_store = ToolResultStore(tmp_path / ".onecode" / state.session_id)

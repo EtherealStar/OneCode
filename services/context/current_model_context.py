@@ -1,4 +1,4 @@
-"""Current parent model-call context exposed to subagent tooling."""
+"""Current model-call snapshot holder shared by runtime services."""
 
 from __future__ import annotations
 

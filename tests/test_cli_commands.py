@@ -5,10 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from services.compaction import SessionMemoryStore
 from services.context.message_store import MessageStore
+from services.context.snapshot import ContextSnapshot
 from services.compaction.types import CompactionResult, CompactionTrigger
 from services.tools.executor import ToolExecutionUpdate
 from services.observability import JsonlTraceSink, TraceRecorder
+from services.context.current_model_context import CurrentModelContext
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolExecutionResult
 from tools.edit_file import descriptor as edit_file_descriptor
@@ -27,6 +30,14 @@ class FakeToolExecutor:
     async def execute(self, tool_calls: tuple, state: object):
         raise AssertionError("tools should not be called by command tests")
         yield ToolExecutionUpdate(type="result")
+
+
+class BindableFakeToolExecutor(FakeToolExecutor):
+    def __init__(self) -> None:
+        self.result_store = None
+
+    def bind_result_store(self, result_store: object) -> None:
+        self.result_store = result_store
 
 
 class FakeLoop:
@@ -57,6 +68,34 @@ class FakeCompactionService:
             token_before=100,
             token_after=25,
         )
+
+
+class BindableFakeCompactionService(FakeCompactionService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bound_message_store = None
+        self.bound_session_memory_store = None
+        self.bound_result_store = None
+
+    def bind_runtime(
+        self,
+        *,
+        message_store: object | None = None,
+        session_memory_store: object | None = None,
+        result_store: object | None = None,
+        subagent_runner: object | None = None,
+    ) -> None:
+        self.bound_message_store = message_store
+        self.bound_session_memory_store = session_memory_store
+        self.bound_result_store = result_store
+
+
+class FakeSubagentRunner:
+    def __init__(self) -> None:
+        self.parent_message_store = None
+
+    def bind_parent_message_store(self, message_store: object) -> None:
+        self.parent_message_store = message_store
 
 
 def make_runtime(tmp_path: Path) -> CliRuntime:
@@ -214,6 +253,46 @@ def test_clear_command_starts_new_session_without_deleting_old(
     )
     assert (tmp_path / ".onecode" / old_session / "messages.jsonl").exists()
     assert "Started new session" in output
+
+
+def test_clear_command_rebinds_session_scoped_services(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    runtime = make_runtime(tmp_path)
+    old_session = runtime.state.session_id
+    old_memory_store = SessionMemoryStore(
+        runtime.message_store.transcript_store.session_dir
+    )
+    executor = BindableFakeToolExecutor()
+    compaction = BindableFakeCompactionService()
+    current_context = CurrentModelContext(
+        ContextSnapshot(system_prompt="old", messages=())
+    )
+    subagent_runner = FakeSubagentRunner()
+    runtime = replace(
+        runtime,
+        tool_executor=executor,  # type: ignore[arg-type]
+        compaction_service=compaction,  # type: ignore[arg-type]
+        current_model_context=current_context,
+        subagent_runner=subagent_runner,  # type: ignore[arg-type]
+        session_memory_store=old_memory_store,
+    )
+
+    result = handle_command(runtime, "/clear")
+    cleared = result.runtime
+
+    capsys.readouterr()
+    assert cleared is not None
+    assert cleared.state.session_id != old_session
+    assert current_context.snapshot is None
+    assert executor.result_store is not None
+    assert str(cleared.state.session_id) in str(executor.result_store.results_dir)
+    assert compaction.bound_message_store is cleared.message_store
+    assert compaction.bound_session_memory_store is not old_memory_store
+    assert compaction.bound_result_store is executor.result_store
+    assert subagent_runner.parent_message_store is cleared.message_store
+    assert cleared.loop.message_store is cleared.message_store
 
 
 def test_unknown_command_does_not_exit(tmp_path: Path, capsys: Any) -> None:

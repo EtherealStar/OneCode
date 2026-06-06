@@ -10,12 +10,12 @@ from core.runtime_state import RuntimeState
 from core.stream_events import AgentEvent
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
+from services.context.current_model_context import CurrentModelContext
 from services.hooks import HookEvent, HookRegistry
 from services.model.client import ModelClient
 from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
 from services.observability import TraceRecorder
-from services.subagents.context import CurrentModelContext
 from services.tools.executor import ToolExecutor
 from services.tools.types import ToolExecutionResult
 
@@ -39,6 +39,19 @@ class SessionMemoryUpdaterProtocol(Protocol):
         ...
 
 
+class SessionMemoryExtractorProtocol(Protocol):
+    async def maybe_extract_after_model_response(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+        *,
+        assistant_message: dict[str, Any],
+        tool_calls: tuple[Any, ...],
+        usage: Any | None = None,
+    ) -> None:
+        ...
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -52,6 +65,7 @@ class AgentLoop:
         current_model_context: CurrentModelContext | None = None,
         hooks: HookRegistry | None = None,
         compaction_service: ReactiveCompactor | None = None,
+        session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
         session_memory_updater: SessionMemoryUpdaterProtocol | None = None,
     ) -> None:
         self.state = state
@@ -66,6 +80,7 @@ class AgentLoop:
         self.current_model_context = current_model_context
         self.hooks = hooks or HookRegistry()
         self.compaction_service = compaction_service
+        self.session_memory_extractor = session_memory_extractor
         self.session_memory_updater = session_memory_updater
 
     async def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
@@ -200,6 +215,7 @@ class AgentLoop:
                 self.state.add_usage(completed_message.usage)
 
             self.message_store.append_assistant(completed_message.assistant_message)
+            tool_calls = self._event_tool_calls(completed_message)
             yield AgentEvent(
                 type="assistant_message_completed",
                 text=completed_message.final_text,
@@ -208,10 +224,13 @@ class AgentLoop:
                     "output_interrupted": completed_message.output_interrupted,
                 },
             )
+            await self._after_assistant_message_completed(
+                completed_message,
+                tool_calls,
+            )
 
             # 是否继续执行工具取决于实际 tool_calls，而不是 provider 私有的
             # stop reason 字段。
-            tool_calls = self._event_tool_calls(completed_message)
             if tool_calls:
                 result_blocks: list[ToolExecutionResult] = []
                 async for event in self._execute_tools(tool_calls, result_blocks):
@@ -231,7 +250,6 @@ class AgentLoop:
                 type="transition",
                 transition=TransitionReason.COMPLETED.value,
             )
-            await self._update_session_memory()
             yield AgentEvent(type="completed", text=completed_message.final_text)
             return
 
@@ -308,10 +326,33 @@ class AgentLoop:
         await self.compaction_service.reactive_compact(self.state, error=error)
         return True
 
-    async def _update_session_memory(self) -> None:
-        if self.session_memory_updater is None:
-            return
-        await self.session_memory_updater.update_after_turn(
-            self.message_store.current_messages(),
-            self.state,
+    async def _after_assistant_message_completed(
+        self,
+        completed_message: ModelStreamEvent,
+        tool_calls: tuple[Any, ...],
+    ) -> None:
+        """Publish the provider-neutral post-sampling event and memory hook."""
+
+        messages = self.message_store.current_messages()
+        await self.hooks.run(
+            HookEvent.ASSISTANT_MESSAGE_COMPLETED,
+            {
+                "assistant_message": completed_message.assistant_message,
+                "final_text": completed_message.final_text,
+                "tool_calls": tool_calls,
+                "usage": completed_message.usage,
+                "state": self.state,
+                "messages": messages,
+            },
         )
+        if self.session_memory_extractor is not None:
+            await self.session_memory_extractor.maybe_extract_after_model_response(
+                messages,
+                self.state,
+                assistant_message=completed_message.assistant_message or {},
+                tool_calls=tool_calls,
+                usage=completed_message.usage,
+            )
+            return
+        if self.session_memory_updater is not None and not tool_calls:
+            await self.session_memory_updater.update_after_turn(messages, self.state)

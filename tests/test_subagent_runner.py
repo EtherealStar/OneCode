@@ -14,7 +14,9 @@ from services.model.stream import ModelStreamEvent
 from services.model.types import LLMResponse, ModelUsage
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, SessionPermissionStore
-from services.subagents import CurrentModelContext, SubagentRequest, SubagentRunner
+from services.context.current_model_context import CurrentModelContext
+from services.subagents.runner import SubagentRunner
+from services.subagents.types import SubagentRequest
 from services.tools.types import (
     ToolCall,
     ToolCallClassification,

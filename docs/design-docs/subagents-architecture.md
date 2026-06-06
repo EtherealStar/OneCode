@@ -14,7 +14,7 @@
 
 `services/subagents/forking.py` 构造 fork child 的消息链。
 
-`services/subagents/context.py` 保存当前父模型调用的 `ContextSnapshot`，供 fork child 继承父 prompt 字符串。
+`services/context/current_model_context.py` 保存当前父模型调用的 `ContextSnapshot`，供 fork child 继承父 prompt 字符串。该 holder 位于通用 context service 边界，避免 `core.loop` 依赖 subagent 包。
 
 `services/subagents/runner.py` 装配 child runtime，并同步 drain child loop 得到最终摘要。
 
@@ -80,6 +80,8 @@ child 的中间消息写入 child transcript，不写回父 `MessageStore`。父
 child registry 基于 `AgentDefinition.tools` 和 `disallowed_tools` 裁剪 base descriptors。若 definition 标记 read-only，`RuntimeState.metadata["read_only_agent"] = True`，permission policy 会硬性 deny 非只读或修改文件系统的工具调用。
 
 这意味着只读限制由权限层强制，不只是 prompt 约束。
+
+内部 runtime 任务可以通过 `SubagentRequest.metadata["purpose"]` 进入更窄的 fork mode。当前已落地 `purpose="session_memory_extraction"`：它仍使用 fork 消息链和父 prompt 字符串，但 child registry 只暴露 `edit_file`，child state 写入 `memory_extraction_agent=True` 和 `allowed_memory_path=<session-memory.md>`。`PermissionPolicy` 会拒绝任何非 `edit_file` 工具、任何非文件写入目标，以及任何不等于 `allowed_memory_path` 的编辑。这个限制是代码边界，不依赖 prompt 文本。
 
 ## Trace
 

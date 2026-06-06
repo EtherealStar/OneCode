@@ -1,6 +1,6 @@
 # Tech Debt Tracker
 
-最近审阅日期：2026-06-05
+最近审阅日期：2026-06-06
 
 本台账记录当前已实现的 OneCode runtime 骨架中可由代码证据支持的技术债。条目依据 `architecture.md`、`docs/design-docs/core-beliefs.md`、`docs/exec-plans/active/` 和当前代码边界整理。
 
@@ -9,12 +9,11 @@
 | 债务 ID | 标题 | 类型 | 区域 | 优先级 | 状态 |
 |:---|:---|:---|:---|:---|:---|
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
-| TD-005 | 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store | 架构 / 测试 | `services/context/`, `core/context_engine.py` | 中 | 部分缓解 |
-| TD-006 | 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地 | 架构 / 测试 | `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py` | 低 | 部分缓解 |
 | TD-007 | CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
+| TD-014 | Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用 | 架构 / 安全 | `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py` | 高 | 已识别 |
 
 ---
 
@@ -43,63 +42,6 @@
 
 **架构约束：**
 错误应成为 runtime state transition 和可观测事件，而不是 uncaught exception 或 core 中的 provider-specific 分支。
-
----
-
-### TD-005: 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store
-
-- **类型：** 架构 / 测试
-- **区域：** `services/context/`, `core/context_engine.py`
-- **优先级：** 中
-- **状态：** 部分缓解
-- **影响：** 长会话已经有基础 JSONL transcript 可恢复，但模型可见上下文仍没有 compact boundary、structured projector、summary memory 或通用 result store。这会让后续改动仍难以围绕 context limit 和恢复行为进行完整验证。
-
-**描述：**
-`MessageStore` 现在是内存优先且带 JSONL transcript 的 append-only store，`services/context/transcript.py` 会把消息定时写入 `.onecode/<session_id>/messages.jsonl`，并把超过 50KB 的工具结果外置到 `tool-results/` 后在恢复时读回。`ContextEngine` 默认仍使用 `NoOpContextPreparer`，`ContextSnapshot` 中的 `usage_hints` 和 `transcript_refs` 字段也没有由已实现服务填充。目标架构要求 projector、compaction service 和通用 result store 分离，这些治理能力仍未落地。
-
-**引入原因：**
-骨架阶段需要一个简单 session state，让 loop 和 provider 测试能先运行。基础 transcript 已作为第一步补齐，但 compaction/projector/result store 仍依赖后续设计。
-
-**修复方向：**
-实现 `services/context/projector.py`、`services/compaction/service.py` 和通用 result store。让 `ContextEngine` 在每次模型调用前编排这些服务，并补充模型可见大型工具结果替换、transcript refs、compact summaries 和 reactive compact retry 的测试。
-
-**关联代码：**
-- `services/context/message_store.py:L16` - 消息状态仍以内存为模型上下文来源，持久化 transcript 尚未参与投影策略。
-- `services/context/transcript.py:L27` - 基础 JSONL transcript 已落地，但只覆盖主链恢复和工具结果外置。
-- `core/context_engine.py:L31` - 默认 context preparation 是 no-op。
-- `services/context/snapshot.py:L14` - usage hints 和 transcript refs 已存在，但未被填充。
-
-**架构约束：**
-Context 和 compaction 应保持为由 `core/context_engine.py` 编排的 services；compaction 细节不应进入 main loop。
-
----
-
-### TD-006: 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地
-
-- **类型：** 架构 / 测试
-- **区域：** `services/tools/types.py`, `services/tools/executor.py`, `tools/read_file/tool.py`, `tools/grep/tool.py`
-- **优先级：** 低
-- **状态：** 部分缓解
-- **影响：** 工具 descriptor 已经能表达 `read_only`、`concurrency_safe` 和 `max_result_size_chars`，executor 已消费 `ToolResultPolicy.max_result_size_chars` 生成结构化截断预览，并已基于 `concurrency_safe` 对连续安全工具做并发调度。但 `read_only` 尚未独立驱动权限裁剪或策略判断，超大结果也还没有接入 durable result store。
-
-**描述：**
-`ToolDescriptor` 已包含工具元数据，`RegistryToolExecutor` 也已经使用 `modifies_filesystem` 决定 guard read/write 检查，并通过 `_apply_result_policy()` 对超过 `max_result_size_chars` 的工具结果生成 JSON 预览和截断 metadata。`RegistryToolExecutor` 现在会按 provider order 切分连续 `concurrency_safe=True` 候选批次，串行完成 permission preflight 后并发执行 handler，再按结果顺序 finalize。`read_file` 和 `edit_file` 的 `files_read` 更新也已迁移到 executor 的成功结果后处理，避免并发 handler 直接写共享 runtime state。剩余债务是 `read_only` 仍没有作为独立策略信号参与权限裁剪，且 `grep` 等大结果超过预算时仍只有预览，没有 durable result-store 引用。
-
-**引入原因：**
-当前文件工具集成优先完成 provider-compatible 工具循环、guard 强制执行和 hooks。完整工具调度与结果预算依赖后续 compaction/result store 能力。
-
-**修复方向：**
-让 executor 或工具运行时继续消费 descriptor metadata：基于 `read_only`/权限策略裁剪能力完善只读策略，基于 `max_result_size_chars` 在现有预览基础上接入 durable result-store 引用。补充覆盖只读策略和 result-store 持久化的测试；并发调度已有测试覆盖，后续扩展工具时应继续沿用 `concurrency_safe` 分类。
-
-**关联代码：**
-- `services/tools/types.py:L68` - `ToolCallClassification` 已定义 `read_only`、`concurrency_safe` 和 `result_policy`。
-- `services/tools/executor.py:L93` - executor 已基于 `concurrency_safe` 做连续批次调度。
-- `services/tools/executor.py:L564` - executor 已消费 result policy，但超过预算时仍只有结构化预览，没有 durable result-store 引用。
-- `tools/read_file/tool.py:L60` - `read_file` 设置无限 result budget，并通过行数参数自限流。
-- `tools/grep/tool.py:L160` - `grep` 已设置 20KB result policy，但超过预算时仍只有预览，没有 durable result-store 引用。
-
-**架构约束：**
-工具行为应由 registry metadata 驱动，避免在具体工具或主循环中散落 tool-name 分支。大结果治理应与 compaction/result store 边界协同。
 
 ---
 
@@ -219,6 +161,39 @@ BashTool 扩展必须继续通过 descriptor、ToolRegistry、guard 和 Permissi
 
 ---
 
+### TD-014: Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用
+
+- **类型：** 架构 / 安全
+- **区域：** `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py`
+- **优先级：** 高
+- **状态：** 已识别
+- **影响：** Manual、auto full 或 reactive compact 需要的是纯摘要任务，但当前通过 `subagent_type=None` 触发 fork subagent。fork definition 只禁用 `agent`，默认仍可见 read/edit/bash 等 base tools；“Do not call tools” 只是 prompt 文本，不能作为安全边界。内部 compact 可能触发工具调用、权限弹窗，甚至在用户允许后修改 workspace。
+
+**描述：**
+`ContextCompactionService._full_compact()` 通过 `SubagentRunner.run(SubagentRequest(..., subagent_type=None))` 创建 fork child，并在 compact prompt 中写入 “Do not call tools”。`services/subagents/definitions.py` 中的 `fork` agent 只设置 `disallowed_tools=("agent",)`，`AgentDefinition.tools` 默认是 `("*",)` 且 `read_only=False`。`SubagentRunner` 只根据 definition 裁剪工具，没有识别 compaction 请求中的 `metadata={"query_source": "compact"}` 来隐藏工具或强制只读。
+
+**引入原因：**
+Full compact 为了复用 fork 机制和父 prompt 字节继承，直接把 compact summary 作为 fork child 的 prompt；第一版先依赖 prompt 约束模型行为，尚未给内部 compaction child 建立专用 tool visibility 或 no-tools runner。
+
+**修复方向：**
+为 compaction 建立专用摘要 runner 或 subagent definition：工具 schema 应为空，或至少设置 read-only 并禁止所有状态改变工具。`SubagentRequest.metadata`/mode 应进入 child runtime state 或 runner policy，用于区分普通 fork 和 internal compact。补充测试验证 full compact child snapshot 的 tool schemas 为空、不会触发 permission prompter、不会执行工具。
+
+**关联代码：**
+- `services/compaction/service.py:L332` - full compact 使用 `subagent_type=None` 触发 fork。
+- `services/compaction/service.py:L335` - compact 请求 metadata 标记 `query_source=compact`，但 runner 没有消费。
+- `services/compaction/service.py:L687` - prompt 文本要求 “Do not call tools”。
+- `services/subagents/definitions.py:L53` - synthetic `fork` agent 定义。
+- `services/subagents/definitions.py:L56` - `fork` 只禁用 `agent` 工具。
+- `services/subagents/types.py:L20` - `AgentDefinition.tools` 默认允许 `("*",)`。
+- `services/subagents/types.py:L23` - `read_only` 默认是 `False`。
+- `services/subagents/runner.py:L70` - child 只隐藏 `agent`。
+- `services/subagents/runner.py:L72` - 只有 definition read-only 时才设置只读限制。
+
+**架构约束：**
+内部 runtime 任务的能力裁剪必须由 registry/permission 边界强制，不能依赖 prompt。Compaction 仍应由 context service 编排，不应在 `core/loop.py` 中增加 compact 或 subagent 特例。
+
+---
+
 ## 已解决条目归档
 
 ### TD-001: 工具结果消息 provider 投影
@@ -232,3 +207,29 @@ BashTool 扩展必须继续通过 descriptor、ToolRegistry、guard 和 Permissi
 ### TD-003: Registry-backed 工具 runtime
 
 - **解决方式：** 新增 `ToolDescriptor`、`ToolExecutionResult`、`ToolRuntime`、`ToolRegistry`、schema projection 和 concrete executor，`ContextEngine` 可从 registry 获取工具 schema。
+
+### TD-005: 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store
+
+- **解决方式：** 已落地 `services/context/projector.py`、`services/compaction/service.py`、session memory、`ToolResultStore` 和 compaction-aware `ContextEngine` preparer。`PreparedContext` 现在可把 compaction `usage_hints` 与 `transcript_refs` 写入 `ContextSnapshot`，并补充大工具结果替换、stored result refs 和 ContextEngine metadata 投影测试。剩余 compact safety 问题由 TD-014 跟踪；原 TD-015 已因设计取舍废弃。
+
+### TD-006: 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地
+
+- **解决方式：** `RegistryToolExecutor` 已消费 `ToolResultPolicy`，在注入 `ToolResultStore` 后将超预算结果写入 durable store；`PermissionPolicy` 已消费 `read_only` 强制 read-only subagent 和非只读命令 ask；`grep` 的 result policy 已改为超过 20KB 时允许持久化，并补充 result store、search tool policy 和 executor 预算测试。
+
+### TD-011: `core.loop` 与 subagent 当前上下文形成反向依赖
+
+- **解决方式：** 将 `CurrentModelContext` 移到 `services/context/current_model_context.py`，`core.loop` 只依赖通用 context service，不再 import `services.subagents.*`；`services/subagents/__init__.py` 不再导出 `SubagentRunner`，需要 runner 的装配点改为直接 import `services.subagents.runner`。补充 import-boundary 测试防止 core 重新依赖 subagent 具体模块。
+
+### TD-012: `/clear` 只切换消息链，未重绑定 session-scoped compaction 服务
+
+- **解决方式：** `/clear` 改为复用 `CliRuntime.with_session()` 并返回新的 `CliRuntime`，统一重绑定 message store、trace recorder、executor result store、compaction service、session memory updater、subagent parent store 和 current model context。补充 CLI 测试覆盖新 session 资源重绑。
+
+### TD-013: Compaction 投影持久化大结果非幂等，会重复写入 result store
+
+- **解决方式：** `ToolResultStore.persist_tool_result()` 改为幂等：同一 `tool_call_id` 且内容相同复用原文件，内容不同使用稳定内容 hash 后缀。补充 result store 和 compaction 连续两次 `prepare_for_model()` 的 refs 稳定性测试。
+
+### TD-015: Session memory 缺少真实 transcript anchor 和文件变更记录
+
+- **废弃原因：** 后续 Session Memory 设计不再依赖真实 transcript UUID 或 `last_summarized_message_uuid` 作为压缩边界。恢复 transcript 后会基于重建出来的当前消息链重新估算 token 增长和工具调用增长，达到阈值时固定触发一次后台 Session Memory 提取。因此不需要补 `MessageStore` message metadata anchor。
+- **废弃原因：** 后续 Session Memory 也不要求 executor 维护 `files_changed`，不要求 memory 文件包含 Files Changed 章节。Session Memory 由受限 fork agent 基于当前聊天记录和已有 memory 更新当前会话笔记；文件变更记录不是本设计的必要事实来源。
+- **保留说明：** 当前代码里可能仍存在规则版 updater 读取 `files_changed` 或写出 Files Changed 章节的实现细节，但这不再构成技术债修复目标。后续重写 Session Memory 提取时可以删除该章节或改为由 fork agent 自行维护普通文本摘要，不应为旧 TD-015 新增 executor 文件变更 side effect。

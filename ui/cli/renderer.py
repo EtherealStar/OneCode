@@ -272,6 +272,15 @@ def _compact_status_lines(runtime: CliRuntime, compaction: Any) -> list[str]:
                 f"{_display_path(runtime.session_memory_store.path, runtime.workspace)} "
                 f"updated={memory.updated_at or 'unknown'}"
             )
+        extraction = runtime.state.metadata.get("session_memory_extraction")
+        if isinstance(extraction, dict):
+            lines.append(
+                "  memory extraction: "
+                f"{extraction.get('last_status', 'unknown')} "
+                f"tokens={extraction.get('message_tokens', 0)} "
+                f"tools={extraction.get('tool_call_count', 0)} "
+                f"running={extraction.get('running', False)}"
+            )
     return lines
 
 

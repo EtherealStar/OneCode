@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Iterable, Protocol
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
-from services.context.snapshot import ContextSnapshot
+from services.context.snapshot import ContextSnapshot, PreparedContext
 
 
 class ContextPreparer(Protocol):
@@ -17,7 +17,11 @@ class ContextPreparer(Protocol):
         self,
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
-    ) -> Iterable[dict[str, Any]] | Awaitable[Iterable[dict[str, Any]]]:
+    ) -> (
+        Iterable[dict[str, Any]]
+        | PreparedContext
+        | Awaitable[Iterable[dict[str, Any]] | PreparedContext]
+    ):
         ...
 
 
@@ -75,7 +79,14 @@ class ContextEngine:
         prepared = self._context_preparer.prepare(current_messages, state)
         if inspect.isawaitable(prepared):
             prepared = await prepared
-        prepared_messages = tuple(prepared)
+        usage_hints: dict[str, Any] = {}
+        transcript_refs: tuple[str, ...] = ()
+        if isinstance(prepared, PreparedContext):
+            prepared_messages = tuple(prepared.messages)
+            usage_hints = dict(prepared.usage_hints)
+            transcript_refs = tuple(prepared.transcript_refs)
+        else:
+            prepared_messages = tuple(prepared)
         system_prompt = self._prompt_assembler.assemble(state)
         tool_schemas = tuple(self._tool_schema_provider.tool_schemas(state))
 
@@ -83,6 +94,8 @@ class ContextEngine:
             system_prompt=system_prompt,
             messages=prepared_messages,
             tool_schemas=tool_schemas,
+            usage_hints=usage_hints,
+            transcript_refs=transcript_refs,
             transition=(
                 state.last_transition.value if state.last_transition is not None else None
             ),

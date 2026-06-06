@@ -18,13 +18,14 @@ from services.compaction.types import (
 )
 from services.context.message_store import MessageStore
 from services.context.projector import ContextProjector
+from services.context.snapshot import PreparedContext
 from services.hooks import HookEvent, HookRegistry
 from services.model.types import ProviderError
 from services.observability import TraceRecorder
 from services.subagents.types import SubagentRequest
 
 if TYPE_CHECKING:
-    from services.subagents import SubagentRunner
+    from services.subagents.runner import SubagentRunner
 
 MICROCOMPACT_PLACEHOLDER = (
     "[Old tool result content cleared. Re-read the referenced file or rerun the "
@@ -36,6 +37,10 @@ class SubagentRunnerProtocol(Protocol):
     async def run(self, request: SubagentRequest): ...
 
 
+class SessionMemoryExtractorProtocol(Protocol):
+    async def wait_for_current_extraction(self, state: RuntimeState) -> None: ...
+
+
 class ContextCompactionService:
     def __init__(
         self,
@@ -43,6 +48,7 @@ class ContextCompactionService:
         config: CompactionConfig | None = None,
         message_store: MessageStore | None = None,
         session_memory_store: SessionMemoryStore | None = None,
+        session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
         result_store: ToolResultStore | None = None,
         subagent_runner: SubagentRunnerProtocol | None = None,
         hooks: HookRegistry | None = None,
@@ -51,6 +57,7 @@ class ContextCompactionService:
         self.config = config or CompactionConfig()
         self._message_store = message_store
         self._session_memory_store = session_memory_store
+        self._session_memory_extractor = session_memory_extractor
         self._result_store = result_store
         self._subagent_runner = subagent_runner
         self._hooks = hooks or HookRegistry()
@@ -61,6 +68,7 @@ class ContextCompactionService:
         *,
         message_store: MessageStore | None = None,
         session_memory_store: SessionMemoryStore | None = None,
+        session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
         result_store: ToolResultStore | None = None,
         subagent_runner: SubagentRunnerProtocol | None = None,
     ) -> None:
@@ -68,16 +76,24 @@ class ContextCompactionService:
             self._message_store = message_store
         if session_memory_store is not None:
             self._session_memory_store = session_memory_store
+        if session_memory_extractor is not None:
+            self._session_memory_extractor = session_memory_extractor
         if result_store is not None:
             self._result_store = result_store
         if subagent_runner is not None:
             self._subagent_runner = subagent_runner
 
+    def bind_session_memory_extractor(
+        self,
+        session_memory_extractor: SessionMemoryExtractorProtocol | None,
+    ) -> None:
+        self._session_memory_extractor = session_memory_extractor
+
     async def prepare(
         self,
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
-    ) -> tuple[dict[str, Any], ...]:
+    ) -> PreparedContext:
         result = await self.prepare_for_model(messages, state)
         if (
             result.token_after >= self.config.auto_compact_threshold_tokens
@@ -85,8 +101,8 @@ class ContextCompactionService:
         ):
             compacted = await self.maybe_auto_compact(messages, state)
             if compacted is not None:
-                return compacted.messages
-        return result.messages
+                return _prepared_context_from_result(compacted)
+        return _prepared_context_from_result(result)
 
     async def prepare_for_model(
         self,
@@ -253,6 +269,8 @@ class ContextCompactionService:
     ) -> CompactionResult | None:
         if self._session_memory_store is None:
             return None
+        if self._session_memory_extractor is not None:
+            await self._session_memory_extractor.wait_for_current_extraction(state)
         memory = self._session_memory_store.read()
         if memory is None or memory.is_empty:
             return None
@@ -635,6 +653,19 @@ def _stored_result_refs(messages: tuple[dict[str, Any], ...]) -> tuple[str, ...]
         if isinstance(ref, str):
             refs.append(ref)
     return tuple(refs)
+
+
+def _prepared_context_from_result(result: CompactionResult) -> PreparedContext:
+    return PreparedContext(
+        messages=result.messages,
+        usage_hints={
+            "compaction_trigger": result.trigger.value,
+            "token_before": result.token_before,
+            "token_after": result.token_after,
+            **result.metadata,
+        },
+        transcript_refs=result.transcript_refs,
+    )
 
 
 def _compact_messages(

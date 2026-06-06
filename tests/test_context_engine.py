@@ -8,6 +8,7 @@ from core.context_engine import ContextEngine
 from core.runtime_state import RuntimeState
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
+from services.context.snapshot import PreparedContext
 from services.tools.types import ToolExecutionResult
 
 
@@ -36,6 +37,19 @@ class ReplacingPreparer:
         state: RuntimeState,
     ) -> list[dict[str, Any]]:
         return [messages[0], {"role": "user", "content": "prepared"}]
+
+
+class MetadataPreparer:
+    def prepare(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+    ) -> PreparedContext:
+        return PreparedContext(
+            messages=(messages[0], {"role": "user", "content": "prepared"}),
+            usage_hints={"token_after": 123, "compaction_trigger": "micro"},
+            transcript_refs=("tool-results/call-1.txt",),
+        )
 
 
 def test_context_engine_rebuilds_snapshot_from_current_messages(
@@ -106,3 +120,29 @@ def test_context_preparer_can_replace_projected_messages(tmp_path: Path) -> None
         {"role": "user", "content": "original"},
         {"role": "user", "content": "prepared"},
     )
+
+
+def test_context_preparer_can_return_snapshot_metadata(tmp_path: Path) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    message_store.append_user("original")
+    engine = ContextEngine(
+        message_store,
+        context_preparer=MetadataPreparer(),
+    )
+
+    snapshot = asyncio.run(engine.build_for_model(state))
+
+    assert snapshot.messages == (
+        {"role": "user", "content": "original"},
+        {"role": "user", "content": "prepared"},
+    )
+    assert snapshot.usage_hints == {
+        "token_after": 123,
+        "compaction_trigger": "micro",
+    }
+    assert snapshot.transcript_refs == ("tool-results/call-1.txt",)
