@@ -6,6 +6,7 @@ from typing import Any
 
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
+from services.compaction.types import CompactionResult, CompactionTrigger
 from services.tools.executor import ToolExecutionUpdate
 from services.observability import JsonlTraceSink, TraceRecorder
 from services.tools.registry import ToolRegistry
@@ -32,6 +33,30 @@ class FakeLoop:
     async def stream(self, prompt: str):
         raise AssertionError("loop should not be called by command tests")
         yield
+
+
+class FakeCompactionService:
+    def __init__(self) -> None:
+        self.config = type(
+            "Config",
+            (),
+            {"auto_compact_threshold_tokens": 93000},
+        )()
+        self.focus: str | None = None
+
+    async def manual_compact(self, state: RuntimeState, *, focus: str | None = None):
+        self.focus = focus
+        state.metadata["last_compaction"] = {
+            "trigger": "manual",
+            "token_before": 100,
+            "token_after": 25,
+        }
+        return CompactionResult(
+            trigger=CompactionTrigger.MANUAL,
+            messages=({"role": "user", "content": "summary"},),
+            token_before=100,
+            token_after=25,
+        )
 
 
 def make_runtime(tmp_path: Path) -> CliRuntime:
@@ -88,6 +113,20 @@ def test_status_command_shows_session_and_model(tmp_path: Path, capsys: Any) -> 
     assert "TestProvider" in output
     assert "test-model" in output
     assert ".onecode" in output
+
+
+def test_compact_command_triggers_manual_compact(tmp_path: Path, capsys: Any) -> None:
+    runtime = make_runtime(tmp_path)
+    compaction = FakeCompactionService()
+    runtime = replace(runtime, compaction_service=compaction)  # type: ignore[arg-type]
+
+    result = handle_command(runtime, "/compact current goal")
+
+    output = capsys.readouterr().out
+    assert result.should_exit is False
+    assert compaction.focus == "current goal"
+    assert "Compacted session:" in output
+    assert "100 -> 25" in output
 
 
 def test_history_command_renders_recent_message_summaries(

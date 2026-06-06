@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from threading import Thread
+from typing import Any
 
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
@@ -33,6 +36,9 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
         return CommandResult()
     if command == "/trace":
         print(renderer.render_trace(_recent_trace_records(runtime, args)))
+        return CommandResult()
+    if command == "/compact":
+        print(_compact(runtime, args))
         return CommandResult()
     if command == "/clear":
         print(_clear(runtime))
@@ -159,3 +165,40 @@ def _resume(runtime: CliRuntime, args: list[str]) -> CommandResult:
         )
     )
     return CommandResult(runtime=resumed)
+
+
+def _compact(runtime: CliRuntime, args: list[str]) -> str:
+    if runtime.compaction_service is None:
+        return renderer.render_error("Compaction is not enabled for this runtime.")
+    focus = " ".join(args).strip() or None
+    try:
+        result = _run_async_blocking(
+            runtime.compaction_service.manual_compact(runtime.state, focus=focus)
+        )
+    except Exception as exc:
+        return renderer.render_error(str(exc))
+    runtime.message_store.flush_transcript()
+    runtime.trace_recorder.flush()
+    return renderer.render_compact(result, runtime)
+
+
+def _run_async_blocking(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    result: dict[str, Any] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(awaitable)
+        except BaseException as exc:
+            result["error"] = exc
+
+    thread = Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")

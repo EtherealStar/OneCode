@@ -11,6 +11,12 @@ from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
 from services.context.message_store import MessageStore
+from services.compaction import (
+    ContextCompactionService,
+    SessionMemoryStore,
+    SessionMemoryUpdater,
+    ToolResultStore,
+)
 from services.observability import TraceRecorder
 from services.permissions import (
     PermissionPolicy,
@@ -41,6 +47,9 @@ class CliRuntime:
     )
     current_model_context: CurrentModelContext | None = None
     subagent_runner: SubagentRunner | None = None
+    compaction_service: ContextCompactionService | None = None
+    session_memory_store: SessionMemoryStore | None = None
+    session_memory_updater: SessionMemoryUpdater | None = None
 
     def with_session(
         self,
@@ -53,6 +62,27 @@ class CliRuntime:
             self.current_model_context.snapshot = None
         if self.subagent_runner is not None:
             self.subagent_runner.bind_parent_message_store(message_store)
+        session_memory_store = None
+        result_store = ToolResultStore(message_store.transcript_store.session_dir)
+        if self.session_memory_store is not None:
+            session_memory_store = SessionMemoryStore(
+                message_store.transcript_store.session_dir
+            )
+        bind_result_store = getattr(self.tool_executor, "bind_result_store", None)
+        if callable(bind_result_store):
+            bind_result_store(result_store)
+        if self.compaction_service is not None:
+            self.compaction_service.bind_runtime(
+                message_store=message_store,
+                session_memory_store=session_memory_store,
+                result_store=result_store,
+            )
+        session_memory_updater = self.session_memory_updater
+        if session_memory_store is not None:
+            session_memory_updater = SessionMemoryUpdater(
+                session_memory_store,
+                trace_recorder=self.trace_recorder,
+            )
         context_engine = ContextEngine(
             message_store,
             prompt_assembler=DynamicPromptAssembler(
@@ -60,6 +90,7 @@ class CliRuntime:
                 tool_registry=self.registry,
             ),
             tool_schema_provider=self.registry,
+            context_preparer=self.compaction_service,
         )
         loop = AgentLoop(
             state=state,
@@ -69,6 +100,8 @@ class CliRuntime:
             tool_executor=self.tool_executor,
             trace_recorder=self.trace_recorder,
             current_model_context=self.current_model_context,
+            compaction_service=self.compaction_service,
+            session_memory_updater=session_memory_updater,
         )
         if self.permission_store is not None:
             self.permission_store.clear()
@@ -77,6 +110,8 @@ class CliRuntime:
             state=state,
             message_store=message_store,
             loop=loop,
+            session_memory_store=session_memory_store or self.session_memory_store,
+            session_memory_updater=session_memory_updater,
         )
 
 

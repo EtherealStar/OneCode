@@ -100,6 +100,7 @@ class PermissionPolicy:
             descriptor=descriptor,
             classification=classification,
             guard_policies=guard_policies,
+            state=state,
         )
         if asks:
             if self._session_allows_all(
@@ -207,6 +208,7 @@ class PermissionPolicy:
         descriptor: ToolDescriptor,
         classification: ToolCallClassification,
         guard_policies: tuple[GuardPolicy, ...],
+        state: RuntimeState,
     ) -> list[str]:
         reasons: list[str] = []
         for target in classification.targets:
@@ -223,7 +225,7 @@ class PermissionPolicy:
                 policy.normalized_path,
                 self.protected_project_dirs,
             )
-            if protected is not None:
+            if protected is not None and not _is_session_tool_result_read(policy, state):
                 reasons.append(
                     f"Target is inside a protected project directory: {protected}"
                 )
@@ -284,6 +286,21 @@ def _protected_project_dir(
         if part.lower() in protected:
             return part
     return None
+
+
+def _is_session_tool_result_read(policy: GuardPolicy, state: RuntimeState) -> bool:
+    if policy.operation not in {"read", "list"}:
+        return False
+    session_id = state.session_id
+    parts = [part.lower() for part in resolve_path(policy.normalized_path).parts]
+    for index, part in enumerate(parts):
+        if part != ".onecode":
+            continue
+        if index + 2 >= len(parts):
+            continue
+        if parts[index + 1] == session_id.lower() and parts[index + 2] == "tool-results":
+            return True
+    return False
 
 
 def _is_suspicious_windows_path(original_path: str, normalized_path: Path) -> bool:

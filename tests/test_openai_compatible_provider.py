@@ -537,6 +537,18 @@ def test_http_errors_are_provider_errors() -> None:
     assert server.retryable is True
 
 
+def test_context_limit_http_errors_are_provider_neutral() -> None:
+    payload = '{"error":{"message":"This model has too many tokens in the prompt"}}'
+
+    too_large = provider_error_from_http_status(413, payload, provider_id="openai")
+    bad_request = provider_error_from_http_status(400, payload, provider_id="openai")
+
+    assert too_large.error_type == "context_limit_exceeded"
+    assert too_large.retryable is False
+    assert bad_request.error_type == "context_limit_exceeded"
+    assert bad_request.retryable is False
+
+
 def test_real_provider_client_can_be_injected_into_loop_for_final_text(
     tmp_path: Path,
 ) -> None:

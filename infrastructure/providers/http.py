@@ -236,11 +236,13 @@ def provider_error_from_http_status(
     *,
     provider_id: str | None = None,
 ) -> ProviderError:
-    error_type = _error_type_for_status(status_code)
+    message = _extract_error_message(raw_body) or f"Provider HTTP error {status_code}."
+    error_type = _error_type_for_status(status_code, message)
     # retryable 保持 provider-neutral，后续主循环可以映射到 transition，
     # 无需理解 HTTP 状态细节。
     retryable = status_code == 429 or status_code >= 500
-    message = _extract_error_message(raw_body) or f"Provider HTTP error {status_code}."
+    if error_type == "context_limit_exceeded":
+        retryable = False
     return ProviderError(
         message,
         provider_id=provider_id,
@@ -250,7 +252,9 @@ def provider_error_from_http_status(
     )
 
 
-def _error_type_for_status(status_code: int) -> str:
+def _error_type_for_status(status_code: int, message: str = "") -> str:
+    if status_code == 413 or _looks_like_context_limit(message):
+        return "context_limit_exceeded"
     if status_code in {401, 403}:
         return "authentication_error"
     if status_code == 429:
@@ -258,6 +262,19 @@ def _error_type_for_status(status_code: int) -> str:
     if status_code >= 500:
         return "server_error"
     return "invalid_response"
+
+
+def _looks_like_context_limit(message: str) -> bool:
+    lowered = message.lower()
+    markers = (
+        "prompt_too_long",
+        "context_length_exceeded",
+        "context length",
+        "too many tokens",
+        "maximum context",
+        "context limit",
+    )
+    return any(marker in lowered for marker in markers)
 
 
 def _extract_error_message(raw_body: str | None) -> str | None:
