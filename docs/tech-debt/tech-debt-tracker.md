@@ -14,6 +14,7 @@
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
 | TD-014 | Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用 | 架构 / 安全 | `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py` | 高 | 已识别 |
+| TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
 
 ---
 
@@ -191,6 +192,34 @@ Full compact 为了复用 fork 机制和父 prompt 字节继承，直接把 comp
 
 **架构约束：**
 内部 runtime 任务的能力裁剪必须由 registry/permission 边界强制，不能依赖 prompt。Compaction 仍应由 context service 编排，不应在 `core/loop.py` 中增加 compact 或 subagent 特例。
+
+---
+
+### TD-016: 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染
+
+- **类型：** UI / 可观测性
+- **区域：** `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py`
+- **优先级：** 低
+- **状态：** 已识别
+- **影响：** 用户输入 `@file` 后，runtime 会收集、持久化并在模型上下文中投影附件，但 CLI 当前只显示普通 running/assistant/tool result 输出，不展示附件卡片、解析状态、目录列表摘要或 edited-file diff 提醒。用户无法从 UI 直接确认哪些附件进入了本 turn。
+
+**描述：**
+`AttachmentCollector` 已在 CLI 调用 loop 前收集 attachment messages，`MessageStore` 会持久化 `role="attachment"`，`AttachmentContextPreparer` 会在 provider 调用前投影为合法 messages。`ui/cli/renderer.py` 尚未提供 attachment-specific 渲染函数，`main_loop_async()` 也没有在模型调用前输出收集到的附件摘要。
+
+**引入原因：**
+附件系统第一版优先交付 backend 行为和 provider-safe 投影。计划范围明确暂缓 UI 渲染，以避免在结构化 metadata 尚未稳定前固化终端展示样式。
+
+**修复方向：**
+为 CLI 增加简洁的附件摘要渲染：文件路径与行范围、目录条目数量、解析失败原因、edited text file diff 状态。渲染应消费 `services/attachments/types.py` 的稳定字段，不重新解析 prompt 或读取文件。
+
+**关联代码：**
+- `services/attachments/types.py:L1` - attachment message 的 durable internal shape。
+- `services/attachments/collector.py:L1` - CLI 当前收集的 attachment payload 来源。
+- `ui/cli/app.py:L192` - CLI 在调用 loop 前收集附件，但不渲染。
+- `ui/cli/renderer.py:L1` - 缺少 attachment rendering 入口。
+
+**架构约束：**
+UI 渲染不能成为附件投影或安全判断的事实来源；guard、permission 和 provider-safe projection 仍应留在 services/context 边界。
 
 ---
 

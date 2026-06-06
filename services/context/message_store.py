@@ -88,6 +88,19 @@ class MessageStore:
             )
         return stored_results
 
+    def append_attachments(
+        self,
+        attachments: Iterable[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """追加 durable attachment messages，不写入 synthetic tool pairs。"""
+
+        stored: list[dict[str, Any]] = []
+        for attachment in attachments:
+            next_message = deepcopy(attachment)
+            next_message.setdefault("role", "attachment")
+            stored.append(self._append(next_message))
+        return stored
+
     def current_messages(self) -> tuple[dict[str, Any], ...]:
         """返回当前内存中的模型上下文消息副本。"""
 

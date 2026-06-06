@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from typing import Any, Protocol
 
 from core.context_engine import ContextEngine
@@ -83,7 +83,12 @@ class AgentLoop:
         self.session_memory_extractor = session_memory_extractor
         self.session_memory_updater = session_memory_updater
 
-    async def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        attachments: Iterable[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
         with self.trace_recorder.span(
             "interaction",
             {"user_prompt_length": len(prompt)},
@@ -97,6 +102,8 @@ class AgentLoop:
                 },
             )
             self.message_store.append_user(prompt)
+            if attachments is not None:
+                self.message_store.append_attachments(attachments)
             yield AgentEvent(type="interaction_started")
             async for event in self._run_loop_async():
                 yield event

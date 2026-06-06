@@ -32,8 +32,11 @@ compaction 和 projector 是上下文治理能力，负责压缩、替换、引�
 - `user`
 - `assistant`
 - `tool_result`
+- `attachment`
 
 OneCode 内部保留 provider-neutral `tool_result`，provider adapter 负责投影为目标 wire format。
+
+`attachment` 是 durable internal role，用于保存用户输入或运行时收集到的结构化上下文。它不能直接进入 provider payload；`AttachmentContextPreparer` 会在模型调用前把它投影成合法的 user、assistant 和 `tool_result` 消息。例如文件附件会临时变成 synthetic `read_file` assistant tool call 和匹配的 synthetic tool result，但这些 synthetic 消息不会写回 `MessageStore` 或 transcript。
 
 ## JsonlTranscriptStore
 
@@ -123,6 +126,8 @@ fingerprint 应覆盖影响 section 输出的输入，例如 cwd、已读文件�
 6. 返回 `ContextSnapshot`。
 
 当前代码已经完成上述流程的第一版；后续改进集中在更精细的 compact safety、session memory anchor 和 provider recovery 上。
+
+附件投影是该流程的一环：CLI 或其他入口只负责提交预构建 attachment messages，`ContextEngine` 通过 context preparer 在 provider 调用前隐藏 raw attachment role。Provider adapter 不应包含 attachment-specific 分支；如果 provider payload 中出现 `role="attachment"`，应视为 context preparation bug。
 
 ## Session Memory
 
