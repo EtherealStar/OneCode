@@ -1,99 +1,134 @@
 # Core Runtime Architecture
 
-本文描述 `core/` 的架构边界。`core/` 是 OneCode agent runtime 的编排层，只表达生命周期、状态和 transition，不承载具体工具、provider、安全策略、prompt 文本或 UI 行为。
+本文描述 `core/` 的架构边界。`core/` 是 OneCode agent runtime 的编排层，只表达生命周期、状态和 transition，不承载具体工具、provider、安全策略、prompt 文本、上下文治理策略或 UI 行为。
 
-## 模块职责
+## 文件职责
 
-`core/loop.py` 定义 `AgentLoop`，是当前 runtime 的薄主循环。它负责接收用户输入、追加 user message、每轮重建上下文、调用模型、写入 assistant message、执行模型实际请求的工具调用、写回 tool results，并在没有工具调用时完成任务。
+| 文件 | 职责 |
+|:---|:---|
+| `core/loop.py` | 薄主循环 `AgentLoop`：上下文重建 → 模型流式调用 → 工具执行 → transition/completed |
+| `core/context_engine.py` | 每轮模型调用前重建 `ContextSnapshot` 的边界层及三个可注入协议 |
+| `core/runtime_state.py` | 单会话可变状态（usage、轮次、恢复标志、session id、metadata） |
+| `core/transitions.py` | provider-neutral 的 `TransitionReason` 枚举 |
+| `core/stream_events.py` | loop 对外输出的 `AgentEvent` 类型 |
 
-`core/context_engine.py` 定义 `ContextEngine` 和三个可注入协议：`ContextPreparer`、`PromptAssembler`、`ToolSchemaProvider`。它是模型调用前的上下文重建边界。
+## 接口设计
 
-`core/runtime_state.py` 定义 `RuntimeState`，保存单个会话的 usage、turn count、max turns、session id、last transition 和 metadata。
+### AgentLoop
 
-`core/transitions.py` 定义 provider-neutral 的 transition reason。当前 loop 已消费 `tool_use`、`completed`、`max_turns`、`rate_limit_retry`、`reactive_compact_retry`、`max_output_tokens_escalate` 和 `max_output_tokens_recovery`；stop hook continue 仍是目标恢复能力。
+```python
+async def stream(prompt, *, attachments=None) -> AsyncIterator[AgentEvent]
+async def continue_stream() -> AsyncIterator[AgentEvent]
+```
 
-`core/stream_events.py` 定义 loop 向 UI 或调用方输出的 `AgentEvent`，使 CLI 能消费 streaming assistant delta、工具事件、transition 和 completed 结果。
+- `stream` 是普通用户交互入口：触发 `UserPromptSubmit` hook，追加 user message 与调用方预构建的 durable attachment，再进入 `_run_loop_async()`。
+- `continue_stream` 用于子 agent / 恢复场景，从已 seed 到 `MessageStore` 的消息链继续，不重复追加用户 prompt。
 
-## AgentLoop
+构造依赖（除前 5 个外均可选）：`state`、`message_store`、`context_engine`、`model_client`、`tool_executor`、`trace_recorder`、`current_model_context`、`hooks`、`compaction_service`（`ReactiveCompactor`）、`session_memory_extractor`、`session_memory_updater`、`model_retry_runner`、`error_log_recorder`。
 
-`AgentLoop.stream(prompt, attachments=None)` 是普通用户交互入口。它会先把 prompt 追加到 `MessageStore`，再追加调用方预构建的 durable attachment messages，然后进入 `_run_loop_async()`。
+附件解析、文件读取、权限检查和投影不属于主循环：CLI 在调用前收集附件，`ContextEngine` 的 preparer 在模型调用前把 attachment role 投影成 provider-visible messages。
 
-附件解析、文件读取、权限检查和投影不属于主循环。CLI 或其他入口负责在调用 loop 前收集附件；`ContextEngine` 的 preparer 负责在模型调用前把 internal attachment role 投影成 provider-visible messages。
+### ContextEngine
 
-`AgentLoop.continue_stream()` 用于子 agent 或恢复场景，从已经 seed 到 `MessageStore` 的消息链继续运行，不重复追加用户 prompt。
+```python
+async def build_for_model(state) -> ContextSnapshot
+```
 
-当前主循环行为：
+三个可注入协议：
 
-1. 递增 `RuntimeState.turn_count`。
-2. 超过 `max_turns` 时设置 `TransitionReason.MAX_TURNS` 并返回停止文本。
-3. 调用 `ContextEngine.build_for_model(state)`。
-4. 通过 `ModelRetryRunner` 调用 `ModelClient.stream(snapshot)`；retryable provider error 会触发 `rate_limit_retry` transition 和指数退避，失败 attempt 的 partial streaming 事件不会外显。
-5. 等待 provider-neutral `message_completed` 事件。
-6. 如果 provider 返回 `output_interrupted=True`，先走 max-output recovery：首次设置 `max_output_tokens=64000` 并重试同一消息链；后续最多 3 次追加截断 assistant 和 continuation prompt 后继续。
-7. 累计 usage，追加 assistant message。
-8. 如果 `message_completed.metadata["tool_calls"]` 中存在实际工具调用，则执行工具并进入下一轮。
-9. 如果没有工具调用，则设置 `completed` transition 并返回 final text。
+- `ContextPreparer.prepare(messages, state)`：返回消息 iterable 或 `PreparedContext`，可同步或异步。是 compaction/记忆/附件的接入点。
+- `PromptAssembler.assemble(state) -> str`。
+- `ToolSchemaProvider.tool_schemas(state) -> Iterable[dict]`。
 
-主循环判断是否继续时只看实际 tool calls，不依赖 provider 私有 `stop_reason`。
+默认实现 `NoOpContextPreparer` / `StaticPromptAssembler` / `EmptyToolSchemaProvider` 用于测试与 subagent fork。CLI 装配会注入 attachment→memory→compaction 的 preparer 链、`DynamicPromptAssembler` 和 `ToolRegistry`。
 
-## ContextEngine
+### RuntimeState
 
-`ContextEngine` 当前从 `MessageStore.current_messages()` 读取内部消息副本，经过 `ContextPreparer`，再调用 `PromptAssembler` 和 `ToolSchemaProvider` 生成 `ContextSnapshot`。
+稳定字段：`usage`、`turn_count`、`max_turns`（默认 20）、`has_attempted_reactive_compact`、`has_escalated_max_output_tokens`、`max_output_recovery_count`、`last_transition`、`session_id`、`metadata`。
 
-默认实现：
+方法：`add_usage(usage)`、`set_transition(transition)`、`start_new_session() -> str`（重置消息相关状态、usage、transition、metadata，但保留 `max_turns`）。
 
-- `NoOpContextPreparer`：透传消息，是未来 compaction/projector 的接入点。
-- `DynamicPromptAssembler(Path.cwd())`：默认生成非空 system prompt。
-- `EmptyToolSchemaProvider`：测试或最小装配时不暴露工具。
+metadata 当前承载：`files_read`、`files_changed`、`disabled_tools`/`denied_tools`/`hidden_tools`、`read_only_agent`、`is_fork_child`、`memory_extraction_agent`/`allowed_memory_path`、`long_term_memory_extraction_agent`/`allowed_memory_dir`、`model_request_overrides`、`task_list_id`/`parent_task_list_id`、`mcp_server_instructions`、`workspace` 等。
 
-CLI 装配会显式传入 `DynamicPromptAssembler(workspace, tool_registry=registry)` 和 `ToolRegistry`，因此真实运行时的 prompt 和 tool schema 都来自当前可见工具视图。
+### AgentEvent
 
-## RuntimeState
+`type` 取值：`interaction_started`、`assistant_delta`、`assistant_message_completed`、`tool_call_ready`、`tool_started`、`tool_progress`、`tool_result`、`transition`、`completed`、`error`。字段含 `text`、`result`、`transition`、`metadata`。当前 loop 不主动 yield `error`，未捕获异常向上抛出并由 CLI 记录到 error log。
 
-`RuntimeState` 是会话级可变状态。稳定字段包括：
+## 核心数据流
 
-- `usage`：累计模型 usage。
-- `turn_count` 与 `max_turns`：主循环轮次控制。
-- `has_attempted_reactive_compact`：目标 reactive compact 状态。
-- `has_escalated_max_output_tokens`：当前 session 是否已经把模型请求的输出 token 预算提升到恢复值。
-- `max_output_recovery_count`：max output continuation recovery 次数。
-- `last_transition`：上一轮 transition。
-- `session_id`：当前会话 UUID。
-- `metadata`：运行期扩展事实。
+```mermaid
+sequenceDiagram
+  participant Caller as CLI / SubagentRunner
+  participant Loop as AgentLoop
+  participant Engine as ContextEngine
+  participant Retry as ModelRetryRunner
+  participant Model as ModelClient
+  participant Exec as ToolExecutor
+  participant Store as MessageStore
 
-当前 metadata 已用于：
+  Caller->>Loop: stream(prompt, attachments)
+  Loop->>Store: append_user + append_attachments
+  loop 每轮
+    Loop->>Loop: turn_count += 1 (超限→max_turns→return)
+    Loop->>Engine: build_for_model(state)
+    Engine-->>Loop: ContextSnapshot
+    Loop->>Retry: stream(λ model.stream(snapshot))
+    Retry->>Model: stream(snapshot)
+    Model-->>Retry: ModelStreamEvent*
+    Retry-->>Loop: 缓冲后的事件 (失败attempt丢弃)
+    alt context_limit_exceeded 且首次
+      Loop->>Loop: reactive compact → reactive_compact_retry → continue
+    else output_interrupted
+      Loop->>Loop: escalate / recovery → continue
+    end
+    Loop->>Store: append_assistant
+    Loop->>Loop: AssistantMessageCompleted hook (session memory)
+    alt 有实际 tool_calls
+      Loop->>Exec: execute(tool_calls)
+      Exec-->>Loop: ToolExecutionResult*
+      Loop->>Store: append_tool_results (+followup)
+      Loop->>Loop: set tool_use → continue
+    else 无 tool_calls
+      Loop->>Loop: TurnStopped hook → completed → return
+    end
+  end
+```
 
-- `files_read`：executor 在 `read_file` / `edit_file` 成功后记录规范化路径，供 `edit_file` 的 read-before-edit 规则使用。
-- `disabled_tools`、`denied_tools`、`hidden_tools`：工具可见性裁剪。
-- `read_only_agent`：只读 subagent 的硬性权限限制。
-- `is_fork_child`：fork child 标记。
+## 关键机制
 
-`start_new_session()` 会重置消息相关状态、usage、transition 和 metadata，但保留 `max_turns` 作为运行时配置。
+### 续轮判定
 
-## Transition
+主循环判断是否继续时只看 `message_completed.metadata["tool_calls"]` 中是否存在实际工具调用，不依赖 provider 私有 `stop_reason`。
 
-当前代码中的 transition 名称是稳定 runtime 词汇：
+### Transition
 
-- `tool_use`
-- `completed`
-- `max_turns`
-- `rate_limit_retry`
-- `reactive_compact_retry`
-- `max_output_tokens_escalate`
-- `max_output_tokens_recovery`
-- `stop_hook_continue`
+`TransitionReason`（StrEnum）：`tool_use`、`completed`、`max_turns`、`rate_limit_retry`、`reactive_compact_retry`、`max_output_tokens_escalate`、`max_output_tokens_recovery`、`stop_hook_continue`。
 
-恢复类 transition 现在已有第一版 loop 行为：retryable provider error 映射为 `rate_limit_retry`；context limit 由 loop 触发一次 reactive compact 并映射为 `reactive_compact_retry`；输出 token 中断先映射为 `max_output_tokens_escalate`，之后映射为 `max_output_tokens_recovery`。`stop_hook_continue` 仍是目标能力。
+| Transition | 触发条件 | loop 行为 |
+|:---|:---|:---|
+| `max_turns` | `turn_count > max_turns` | 设置 transition 后 return |
+| `rate_limit_retry` | `ModelRetryRunner` 重试前回调 | 重试同一轮 |
+| `reactive_compact_retry` | `context_limit_exceeded` 且首次 | 触发 compact 后 `continue`，不 append assistant |
+| `max_output_tokens_escalate` | 首次 `output_interrupted` | 设 `max_output_tokens=64000`，`continue`，不 append assistant |
+| `max_output_tokens_recovery` | 再次 interrupted 且 recovery < 3 | append 截断 assistant + continuation prompt，`continue` |
+| `tool_use` | 有实际 tool calls | append 结果后 `continue` |
+| `completed` | 无 tool calls 自然结束 | return final text |
+
+`stop_hook_continue` 已在枚举中定义，loop 当前未消费，是目标恢复能力。
+
+### 错误恢复分层
+
+- HTTP/transport 把 429/5xx/网络错误标记为 `ProviderError(retryable=...)`。
+- `ModelRetryRunner` 对 `retryable` 且非 `context_limit_exceeded` 的错误做指数退避，映射为 `rate_limit_retry`；耗尽后抛 `RetryExhaustedError`。
+- `AgentLoop` 处理 `context_limit_exceeded`（reactive compact）和 `output_interrupted`（escalate / recovery）。
+- 不可恢复错误经 `error_log_recorder` 记录后向上抛出。
+
+详见 `model-provider-architecture.md`。
+
+### Session memory 钩子
+
+assistant 消息写入后，loop 触发 `AssistantMessageCompleted` hook 并优先调用 `session_memory_extractor`；仅在无 extractor 且本轮无 tool calls 时调用 `session_memory_updater`。详见 `compaction-architecture.md`。
 
 ## Core 不负责的内容
 
-`core/` 不应实现：
-
-- 具体工具逻辑或工具名分支。
-- provider wire protocol、HTTP、API key 或模型 catalog。
-- 路径规范化、sandbox 分类或权限 UI。
-- system prompt 的具体 section 文本。
-- transcript 文件格式和 trace 文件格式。
-- CLI slash commands 或渲染。
-
-这些能力分别属于 `tools/`、`infrastructure/`、`services/guard`、`services/permissions`、`prompts/`、`services/context`、`services/observability` 和 `ui/cli`。
+具体工具逻辑与工具名分支、provider wire protocol / HTTP / API key / 模型 catalog、路径规范化与 sandbox 分类、权限 UI、system prompt section 文本、上下文压缩与记忆策略、transcript / trace 文件格式、CLI slash command 与渲染。这些分别属于 `tools/`、`infrastructure/`、`services/guard`、`services/permissions`、`prompts/`、`services/context|compaction|memory|attachments`、`services/observability` 和 `ui/cli`。
