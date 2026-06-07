@@ -259,6 +259,7 @@ class AgentLoop:
                 )
                 continue
 
+            await self._after_turn_stopped(completed_message, tool_calls)
             self.state.set_transition(TransitionReason.COMPLETED)
             self._record_transition(TransitionReason.COMPLETED)
             yield AgentEvent(
@@ -371,3 +372,26 @@ class AgentLoop:
             return
         if self.session_memory_updater is not None and not tool_calls:
             await self.session_memory_updater.update_after_turn(messages, self.state)
+
+    async def _after_turn_stopped(
+        self,
+        completed_message: ModelStreamEvent,
+        tool_calls: tuple[Any, ...],
+    ) -> None:
+        messages = self.message_store.current_messages()
+        await self.hooks.run(
+            HookEvent.TURN_STOPPED,
+            {
+                "assistant_message": completed_message.assistant_message,
+                "final_text": completed_message.final_text,
+                "tool_calls": tool_calls,
+                "usage": completed_message.usage,
+                "state": self.state,
+                "messages": messages,
+                "query_source": self.state.metadata.get("query_source"),
+                "long_term_memory_writes": self.state.metadata.get(
+                    "long_term_memory_writes",
+                    (),
+                ),
+            },
+        )

@@ -11,6 +11,7 @@ class HookEvent(StrEnum):
     TOOL_ERROR = "ToolError"
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
     ASSISTANT_MESSAGE_COMPLETED = "AssistantMessageCompleted"
+    TURN_STOPPED = "TurnStopped"
     PRE_COMPACT = "PreCompact"
     POST_COMPACT = "PostCompact"
     COMPACT_FAILED = "CompactFailed"

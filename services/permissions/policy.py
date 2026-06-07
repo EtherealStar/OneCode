@@ -10,6 +10,7 @@ from typing import Any
 from core.runtime_state import RuntimeState
 from infrastructure.filesystem.paths import resolve_path
 from services.guard import GuardPolicy
+from services.memory.paths import is_auto_memory_markdown_path, is_auto_memory_path
 from services.permissions.project_settings import ProjectPermissionSettingsStore
 from services.permissions.rules import PermissionBehavior, PermissionRule
 from services.permissions.session import SessionPermissionStore
@@ -133,6 +134,13 @@ class PermissionPolicy:
                 guard_policies=guard_policies,
                 state=state,
             )
+        if state.metadata.get("long_term_memory_extraction_agent") is True:
+            return self._long_term_memory_extraction_decision(
+                descriptor=descriptor,
+                classification=classification,
+                guard_policies=guard_policies,
+                state=state,
+            )
 
         asks = self._ask_reasons(
             descriptor=descriptor,
@@ -251,6 +259,99 @@ class PermissionPolicy:
             action="allow",
             reason="Memory extraction agent may edit the session memory file.",
             source="memory_extraction_agent",
+            targets=targets,
+            guard_policies=guard_policies,
+        )
+
+    def _long_term_memory_extraction_decision(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+        state: RuntimeState,
+    ) -> PermissionDecision:
+        """Hard-limit internal long-term memory agents."""
+
+        allowed_dir = state.metadata.get("allowed_memory_dir")
+        if not isinstance(allowed_dir, str) or not allowed_dir:
+            return PermissionDecision(
+                action="deny",
+                reason="Long-term memory extraction agent has no allowed memory directory.",
+                source="long_term_memory_extraction_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        workspace = _workspace_from_memory_dir(Path(allowed_dir))
+        allowed_read_tools = {"read_file", "grep", "glob"}
+        allowed_write_tools = {"write_file", "edit_file"}
+        if descriptor.name not in allowed_read_tools | allowed_write_tools:
+            return PermissionDecision(
+                action="deny",
+                reason="Long-term memory extraction agent can only use file search/read and memory write tools.",
+                source="long_term_memory_extraction_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        if descriptor.name in allowed_read_tools:
+            if not classification.read_only or classification.modifies_filesystem:
+                return PermissionDecision(
+                    action="deny",
+                    reason="Long-term memory extraction read tools must be read-only.",
+                    source="long_term_memory_extraction_agent",
+                    targets=classification.targets,
+                    guard_policies=guard_policies,
+                )
+            if any(policy.action != "allow" for policy in guard_policies):
+                return PermissionDecision(
+                    action="deny",
+                    reason="Long-term memory extraction agent cannot read outside the workspace boundary.",
+                    source="long_term_memory_extraction_agent",
+                    targets=classification.targets,
+                    guard_policies=guard_policies,
+                )
+            return PermissionDecision(
+                action="allow",
+                reason="Long-term memory extraction agent may read workspace context.",
+                source="long_term_memory_extraction_agent",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        targets = classification.targets
+        if not targets:
+            return PermissionDecision(
+                action="deny",
+                reason="Long-term memory writes must target a memory Markdown file.",
+                source="long_term_memory_extraction_agent",
+                targets=targets,
+                guard_policies=guard_policies,
+            )
+        for index, target in enumerate(targets):
+            if target.kind != "file" or target.operation != "write":
+                return PermissionDecision(
+                    action="deny",
+                    reason="Long-term memory extraction writes must be file writes.",
+                    source="long_term_memory_extraction_agent",
+                    targets=targets,
+                    guard_policies=guard_policies,
+                )
+            target_path = target.normalized_value or (
+                str(guard_policies[index].normalized_path)
+                if index < len(guard_policies)
+                else target.value
+            )
+            if not is_auto_memory_markdown_path(target_path, workspace):
+                return PermissionDecision(
+                    action="deny",
+                    reason="Long-term memory extraction agent cannot write outside .onecode/memory Markdown files.",
+                    source="long_term_memory_extraction_agent",
+                    targets=targets,
+                    guard_policies=guard_policies,
+                )
+        return PermissionDecision(
+            action="allow",
+            reason="Long-term memory extraction agent may write memory Markdown files.",
+            source="long_term_memory_extraction_agent",
             targets=targets,
             guard_policies=guard_policies,
         )
@@ -388,7 +489,11 @@ class PermissionPolicy:
                 policy.normalized_path,
                 self.protected_project_dirs,
             )
-            if protected is not None and not _is_session_tool_result_read(policy, state):
+            if (
+                protected is not None
+                and not _is_session_tool_result_read(policy, state)
+                and not _is_long_term_memory_project_path(policy, self.project_store)
+            ):
                 reasons.append(
                     f"Target is inside a protected project directory: {protected}"
                 )
@@ -532,6 +637,34 @@ def _is_session_tool_result_read(policy: GuardPolicy, state: RuntimeState) -> bo
         if parts[index + 1] == session_id.lower() and parts[index + 2] == "tool-results":
             return True
     return False
+
+
+def _is_long_term_memory_project_path(
+    policy: GuardPolicy,
+    project_store: ProjectPermissionSettingsStore | None,
+) -> bool:
+    if project_store is None:
+        return False
+    workspace = _workspace_from_project_store(project_store)
+    if workspace is None:
+        return False
+    return is_auto_memory_path(policy.normalized_path, workspace)
+
+
+def _workspace_from_project_store(
+    project_store: ProjectPermissionSettingsStore,
+) -> Path | None:
+    try:
+        return resolve_path(project_store.settings_path.parent.parent)
+    except Exception:
+        return None
+
+
+def _workspace_from_memory_dir(memory_dir: Path) -> Path:
+    resolved = resolve_path(memory_dir)
+    if resolved.name.lower() == "memory" and resolved.parent.name.lower() == ".onecode":
+        return resolved.parent.parent
+    return resolved.parent
 
 
 def _is_suspicious_windows_path(original_path: str, normalized_path: Path) -> bool:

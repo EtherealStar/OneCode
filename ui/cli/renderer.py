@@ -86,6 +86,7 @@ def render_status(runtime: CliRuntime) -> str:
     )
     compaction = runtime.state.metadata.get("last_compaction")
     compact_lines = _compact_status_lines(runtime, compaction)
+    memory_lines = _long_term_memory_status_lines(runtime)
     mcp_lines = _mcp_status_lines(runtime)
     return "\n".join(
         [
@@ -105,6 +106,7 @@ def render_status(runtime: CliRuntime) -> str:
             f"  transcript: {_display_path(transcript_path, runtime.workspace)}",
             f"  trace: {trace_display}",
             *mcp_lines,
+            *memory_lines,
             *compact_lines,
         ]
     )
@@ -331,6 +333,30 @@ def _mcp_status_lines(runtime: CliRuntime) -> list[str]:
             f"failed={failed} disabled={disabled} tools={tool_count}"
         )
     ]
+
+
+def _long_term_memory_status_lines(runtime: CliRuntime) -> list[str]:
+    store = runtime.long_term_memory_store
+    if store is None:
+        return ["  long-term memory: disabled"]
+    topic_count = len(store.scan())
+    index_state = "present" if store.entrypoint_path.exists() else "missing"
+    lines = [
+        f"  long-term memory dir: {_display_path(store.memory_dir, runtime.workspace)}",
+        f"  long-term memory index: {index_state}",
+        f"  long-term memory topics: {topic_count}",
+    ]
+    extraction = runtime.state.metadata.get("long_term_memory_extraction")
+    if isinstance(extraction, dict):
+        lines.append(
+            "  long-term memory extraction: "
+            f"{extraction.get('last_status', extraction.get('last_decision', 'unknown'))} "
+            f"running={extraction.get('running', False)}"
+        )
+    surfaced = runtime.state.metadata.get("long_term_memory_surface_paths")
+    if isinstance(surfaced, list) and surfaced:
+        lines.append(f"  relevant memories surfaced: {', '.join(str(item) for item in surfaced[:5])}")
+    return lines
 
 
 def _display_path(path: Path, workspace: Path) -> str:

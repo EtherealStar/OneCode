@@ -58,6 +58,30 @@ def behavior_rules_section(context: PromptRuntimeContext) -> PromptSection:
     )
 
 
+def instruction_memory_section(context: PromptRuntimeContext) -> PromptSection:
+    return PromptSection(
+        key="instruction_memory",
+        title="OneCode Instructions",
+        body=context.instruction_memory,
+        fingerprint=_fingerprint(
+            "instruction_memory",
+            context.instruction_memory_fingerprint,
+        ),
+    )
+
+
+def long_term_memory_section(context: PromptRuntimeContext) -> PromptSection:
+    return PromptSection(
+        key="long_term_memory",
+        title="Long-Term Memory",
+        body=context.long_term_memory_prompt,
+        fingerprint=_fingerprint(
+            "long_term_memory",
+            context.long_term_memory_fingerprint,
+        ),
+    )
+
+
 def workspace_state_section(context: PromptRuntimeContext) -> PromptSection:
     lines = [f"cwd: {context.cwd}"]
     tool_names = [tool.name for tool in context.visible_tools]
@@ -193,6 +217,8 @@ def default_sections(context: PromptRuntimeContext) -> tuple[PromptSection, ...]
     return (
         identity_section(context),
         behavior_rules_section(context),
+        instruction_memory_section(context),
+        long_term_memory_section(context),
         workspace_state_section(context),
         available_tools_section(context),
         available_skills_section(context),

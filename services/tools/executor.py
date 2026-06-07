@@ -915,6 +915,23 @@ class RegistryToolExecutor:
             files_read = set(files_read)
             state.metadata["files_read"] = files_read
         files_read.add(path)
+        if result.tool_name in {"edit_file", "write_file", "filewrite"}:
+            files_changed = state.metadata.setdefault("files_changed", set())
+            if not isinstance(files_changed, set):
+                files_changed = set(files_changed)
+                state.metadata["files_changed"] = files_changed
+            files_changed.add(path)
+            if _is_long_term_memory_markdown_path(path):
+                writes = state.metadata.setdefault("long_term_memory_writes", [])
+                if not isinstance(writes, list):
+                    writes = list(writes)
+                    state.metadata["long_term_memory_writes"] = writes
+                writes.append(
+                    {
+                        "turn_count": state.turn_count,
+                        "path": path,
+                    }
+                )
 
         # The mtime cache lives in the tool service because file tools are the
         # durable source of observed file content, not attachment collection.
@@ -1182,3 +1199,14 @@ def _tool_names(value: object) -> tuple[str, ...]:
         if name and name not in names:
             names.append(name)
     return tuple(names)
+
+
+def _is_long_term_memory_markdown_path(path: str) -> bool:
+    target = Path(path)
+    parts = [part.lower() for part in target.parts]
+    for index, part in enumerate(parts):
+        if part != ".onecode":
+            continue
+        if index + 1 < len(parts) and parts[index + 1] == "memory":
+            return target.suffix.lower() == ".md"
+    return False
