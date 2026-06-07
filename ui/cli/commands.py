@@ -10,6 +10,7 @@ from typing import Any
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
 from services.context.transcript import JsonlTranscriptStore
+from services.tasks import TaskStoreError, resolve_task_list_id
 from ui.cli import renderer
 from ui.cli.types import CliRuntime, CommandResult
 
@@ -27,6 +28,9 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
         return CommandResult()
     if command == "/tools":
         print(renderer.render_tools(runtime.registry.descriptors()))
+        return CommandResult()
+    if command == "/tasks":
+        print(_tasks(runtime))
         return CommandResult()
     if command == "/mcp":
         print(renderer.render_mcp_status(runtime, show_tools=args[:1] == ["tools"]))
@@ -186,6 +190,22 @@ def _compact(runtime: CliRuntime, args: list[str]) -> str:
     runtime.message_store.flush_transcript()
     runtime.trace_recorder.flush()
     return renderer.render_compact(result, runtime)
+
+
+def _tasks(runtime: CliRuntime) -> str:
+    if runtime.task_store is None:
+        return renderer.render_error("Task tracking is not enabled for this runtime.")
+    task_list_id = resolve_task_list_id(runtime.state)
+    try:
+        tasks = runtime.task_store.list_tasks(task_list_id)
+    except TaskStoreError as exc:
+        return renderer.render_error(str(exc))
+    return renderer.render_tasks(
+        runtime,
+        tasks,
+        task_list_id=task_list_id,
+        tasks_dir=runtime.task_store.tasks_dir(task_list_id),
+    )
 
 
 def _run_async_blocking(awaitable: Any) -> Any:

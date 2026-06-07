@@ -38,6 +38,7 @@ from services.permissions import (
 )
 from services.skills import SkillCatalogProvider
 from services.subagents.runner import SubagentRunner
+from services.tasks import TaskStore
 from services.tools.executor import ToolExecutor
 from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
@@ -75,6 +76,7 @@ class CliRuntime:
     instruction_memory_loader: InstructionMemoryLoader | None = None
     long_term_memory_provider: LongTermMemoryPromptProvider | None = None
     memory_selector: RelevantMemorySelector | None = None
+    task_store: TaskStore | None = None
 
     def with_session(
         self,

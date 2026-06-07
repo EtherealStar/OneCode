@@ -12,6 +12,8 @@ class HookEvent(StrEnum):
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
     ASSISTANT_MESSAGE_COMPLETED = "AssistantMessageCompleted"
     TURN_STOPPED = "TurnStopped"
+    TASK_CREATED = "TaskCreated"
+    TASK_COMPLETED = "TaskCompleted"
     PRE_COMPACT = "PreCompact"
     POST_COMPACT = "PostCompact"
     COMPACT_FAILED = "CompactFailed"
