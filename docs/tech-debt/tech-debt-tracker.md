@@ -11,8 +11,6 @@
 | TD-007 | CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
-| TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
-| TD-014 | Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用 | 架构 / 安全 | `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py` | 高 | 已识别 |
 | TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
 
 ---
@@ -107,67 +105,6 @@ BashTool 扩展必须继续通过 descriptor、ToolRegistry、guard 和 Permissi
 
 ---
 
-### TD-010: Subagent 第一版缺少 background、worktree 和自定义 agent 加载
-
-- **类型：** 架构 / 测试
-- **区域：** `services/subagents/`, `tools/agent/`, `ui/cli/app.py`
-- **优先级：** 中
-- **状态：** 已识别
-- **影响：** 主 agent 已能通过 `agent` 工具同步运行四个内置 subagent，并支持 fork prompt 继承、递归隐藏、只读硬限制和权限 bubble；但还不能在后台运行子任务，不能为 child 创建隔离 worktree，也不能从用户、项目或插件目录加载自定义 agent 定义。
-
-**描述：**
-当前 subagent 机制只实现内置 `general-purpose`、`Explore`、`Plan` 和隐藏 `fork`。`SubagentRunner` 使用父 model client、父 permission policy/prompter、同一个 sandbox guard 和固定 base descriptors 创建 child runtime。省略 `subagent_type` 会 fork 父消息链并复用父轮次已渲染 system prompt 字符串；显式类型使用干净 child 消息链。第一版没有 `run_in_background` 输入字段，没有独立 worktree 策略，没有用户自定义 agent loader，也没有完整 prompt-cache identical fork 参数校验。
-
-**引入原因：**
-第一版刻意收窄范围，先验证 subagent 作为普通工具接入、child 上下文隔离、fork prompt 字节继承、只读权限硬限制和 CLI 权限 bubble。background、worktree 和自定义 agent 都需要额外生命周期、配置优先级、审计和恢复设计。
-
-**修复方向：**
-后续按独立 ExecPlan 设计 background task lifecycle、child worktree 创建/清理、agent definition loader 和权限规则来源。若要追求 provider prompt-cache 命中，还需要记录并比较 system prompt、tool schema、model、message prefix 和其他 provider 参数，而不只是复用父 system prompt 字符串。
-
-**关联代码：**
-- `services/subagents/definitions.py:L1` - 只定义四个内置 agent。
-- `services/subagents/runner.py:L1` - child runtime 同步 drain `AgentLoop.continue_stream()`，没有 background lifecycle 或 worktree 隔离。
-- `tools/agent/tool.py:L1` - 输入 schema 只有 `prompt` 和 `subagent_type`，没有 `run_in_background`。
-- `services/permissions/policy.py:L1` - read-only subagent 通过 permission deny-first 硬限制写入或未知副作用工具调用。
-
-**架构约束：**
-后续扩展仍应保持 subagent 通过 `agent` tool descriptor 和 `SubagentRunner` 接入，不应在 `core/loop.py` 中添加 subagent 工具名分支。任何 worktree 或自定义 agent 能力必须继续经过 guard、permission policy 和 registry 可见性裁剪。
-
----
-
-### TD-014: Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用
-
-- **类型：** 架构 / 安全
-- **区域：** `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py`
-- **优先级：** 高
-- **状态：** 已识别
-- **影响：** Manual、auto full 或 reactive compact 需要的是纯摘要任务，但当前通过 `subagent_type=None` 触发 fork subagent。fork definition 只禁用 `agent`，默认仍可见 read/edit/bash 等 base tools；“Do not call tools” 只是 prompt 文本，不能作为安全边界。内部 compact 可能触发工具调用、权限弹窗，甚至在用户允许后修改 workspace。
-
-**描述：**
-`ContextCompactionService._full_compact()` 通过 `SubagentRunner.run(SubagentRequest(..., subagent_type=None))` 创建 fork child，并在 compact prompt 中写入 “Do not call tools”。`services/subagents/definitions.py` 中的 `fork` agent 只设置 `disallowed_tools=("agent",)`，`AgentDefinition.tools` 默认是 `("*",)` 且 `read_only=False`。`SubagentRunner` 只根据 definition 裁剪工具，没有识别 compaction 请求中的 `metadata={"query_source": "compact"}` 来隐藏工具或强制只读。
-
-**引入原因：**
-Full compact 为了复用 fork 机制和父 prompt 字节继承，直接把 compact summary 作为 fork child 的 prompt；第一版先依赖 prompt 约束模型行为，尚未给内部 compaction child 建立专用 tool visibility 或 no-tools runner。
-
-**修复方向：**
-为 compaction 建立专用摘要 runner 或 subagent definition：工具 schema 应为空，或至少设置 read-only 并禁止所有状态改变工具。`SubagentRequest.metadata`/mode 应进入 child runtime state 或 runner policy，用于区分普通 fork 和 internal compact。补充测试验证 full compact child snapshot 的 tool schemas 为空、不会触发 permission prompter、不会执行工具。
-
-**关联代码：**
-- `services/compaction/service.py:L332` - full compact 使用 `subagent_type=None` 触发 fork。
-- `services/compaction/service.py:L335` - compact 请求 metadata 标记 `query_source=compact`，但 runner 没有消费。
-- `services/compaction/service.py:L687` - prompt 文本要求 “Do not call tools”。
-- `services/subagents/definitions.py:L53` - synthetic `fork` agent 定义。
-- `services/subagents/definitions.py:L56` - `fork` 只禁用 `agent` 工具。
-- `services/subagents/types.py:L20` - `AgentDefinition.tools` 默认允许 `("*",)`。
-- `services/subagents/types.py:L23` - `read_only` 默认是 `False`。
-- `services/subagents/runner.py:L70` - child 只隐藏 `agent`。
-- `services/subagents/runner.py:L72` - 只有 definition read-only 时才设置只读限制。
-
-**架构约束：**
-内部 runtime 任务的能力裁剪必须由 registry/permission 边界强制，不能依赖 prompt。Compaction 仍应由 context service 编排，不应在 `core/loop.py` 中增加 compact 或 subagent 特例。
-
----
-
 ### TD-016: 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染
 
 - **类型：** UI / 可观测性
@@ -197,6 +134,16 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 ---
 
 ## 已解决条目归档
+
+### TD-014: Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用
+
+- **解决方式：** `SubagentRunner` 现在通过 `_is_compact_request()` 识别 compact 请求（`metadata["query_source"] == "compact"`）。命中时 `_child_descriptors(..., compact=True)` 返回空工具集，使 compact child 的 `tool_schemas(state)` 为空；同时设置 `child_state.metadata["read_only_agent"]=True` 作为执行入口 deny-first 兜底，并把 permission prompter 关闭。能力裁剪由空 registry 和 permission 边界强制，不再依赖 prompt 文本。补充 `tests/test_subagent_runner.py::test_compact_fork_child_has_no_tools_and_never_prompts` 验证 compact child snapshot tool schemas 为空、不会触发 permission prompter、即便模型尝试调用工具也被拦截（unknown_tool），并通过 subagent、compaction、import-boundary 相关测试。
+
+### TD-010: Subagent 第一版缺少 background、worktree 和自定义 agent 加载
+
+- **废弃原因：** background 能力已落地（`tools/agent/tool.py` 的 `run_in_background` 输入字段、`_start_background_agent()` 接入 `BackgroundTaskManager`，runner 通过 `_is_background_agent_request()` 在后台运行时关闭 permission prompter）。
+- **废弃原因：** worktree 隔离和自定义 agent（用户/项目/插件目录加载）经评估不在项目目标范围内，不再作为技术债修复目标。`get_agent_definition()` 继续只解析内置 `BUILT_IN_AGENTS` 即满足当前需求。
+- **保留说明：** 若未来重新需要 worktree 隔离或自定义 agent loader，应另开 ExecPlan，并继续保持经过 guard、permission policy 和 registry 可见性裁剪的接入方式。
 
 ### TD-004: 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程
 
