@@ -148,3 +148,29 @@ def test_bash_permission_panel_renders_command_and_targets(tmp_path: Path) -> No
     assert "description: write output" in panel
     assert "read_only: False" in panel
     assert "target: out.txt" in panel
+    assert "[p] allow this command prefix for this project" in panel
+
+
+def test_bash_permission_prompter_builds_project_update(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    request = _request(
+        workspace,
+        bash_descriptor(),
+        {"command": "npm run test", "description": "test"},
+    )
+    prompter = CliPermissionPrompter(
+        input_func=lambda prompt: "p",
+        output_func=lambda output: None,
+    )
+
+    response = asyncio.run(prompter.request_permission(request))
+
+    assert response.action == "allow"
+    assert response.scope == "project"
+    assert len(response.permission_updates) == 1
+    update = response.permission_updates[0]
+    assert update.destination == "projectSettings"
+    assert update.behavior == "allow"
+    assert update.rules[0].tool_name == "bash"
+    assert update.rules[0].rule_content == "npm run:*"

@@ -4,8 +4,17 @@ from pathlib import Path
 
 from core.runtime_state import RuntimeState
 from services.guard import SandboxBoundary, SandboxGuard
-from services.permissions import PermissionPolicy, SessionPermissionStore
+from services.permissions import (
+    PermissionPolicy,
+    PermissionRuleValue,
+    PermissionUpdate,
+    ProjectPermissionSettingsStore,
+    SessionPermissionStore,
+)
+from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolRuntime
+from tools.bash import descriptor as bash_descriptor
+from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 
 
@@ -118,3 +127,122 @@ def test_tool_level_session_deny_hides_tool_at_policy_level(tmp_path: Path) -> N
 
     assert decision.action == "deny"
     assert decision.source == "tool_policy"
+
+
+def test_project_tool_deny_hides_tool_and_denies_execution(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ProjectPermissionSettingsStore(workspace / ".onecode" / "settings.json")
+    store.apply_update(
+        PermissionUpdate(
+            type="addRules",
+            rules=(PermissionRuleValue("edit_file"),),
+            behavior="deny",
+            destination="projectSettings",
+        )
+    )
+    policy = PermissionPolicy(project_store=store)
+    state = RuntimeState()
+    descriptor = edit_file_descriptor()
+    registry = ToolRegistry([descriptor], permission_policy=policy)
+
+    assert registry.visible_descriptors(state) == ()
+    assert policy.evaluate(
+        tool_call=ToolCall(
+            id="call-1",
+            name="edit_file",
+            input={"file_path": "a.txt", "old_string": "a", "new_string": "b"},
+        ),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(
+            {"file_path": "a.txt", "old_string": "a", "new_string": "b"},
+            ToolRuntime(state=state),
+        ),
+        guard_policies=(),
+        state=state,
+    ).action == "deny"
+
+
+def test_project_bash_content_rules_are_deny_first(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ProjectPermissionSettingsStore(workspace / ".onecode" / "settings.json")
+    store.apply_update(
+        PermissionUpdate(
+            type="addRules",
+            rules=(
+                PermissionRuleValue("bash", "npm run:*"),
+                PermissionRuleValue("bash", "rm -rf:*"),
+            ),
+            behavior="allow",
+            destination="projectSettings",
+        )
+    )
+    store.apply_update(
+        PermissionUpdate(
+            type="addRules",
+            rules=(PermissionRuleValue("bash", "rm -rf:*"),),
+            behavior="deny",
+            destination="projectSettings",
+        )
+    )
+    policy = PermissionPolicy(project_store=store)
+    state = RuntimeState()
+    descriptor = bash_descriptor()
+    runtime = ToolRuntime(state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace)))
+
+    allowed_input = {"command": "npm run test"}
+    allowed = policy.evaluate(
+        tool_call=ToolCall(id="call-1", name="bash", input=allowed_input),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(allowed_input, runtime),
+        guard_policies=(),
+        state=state,
+    )
+    denied_input = {"command": "rm -rf build"}
+    denied = policy.evaluate(
+        tool_call=ToolCall(id="call-2", name="bash", input=denied_input),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(denied_input, runtime),
+        guard_policies=(),
+        state=state,
+    )
+
+    assert allowed.action == "allow"
+    assert allowed.source == "project_settings"
+    assert denied.action == "deny"
+    assert denied.source == "project_settings"
+
+
+def test_project_ask_rule_keeps_tool_visible_but_requests_permission(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ProjectPermissionSettingsStore(workspace / ".onecode" / "settings.json")
+    store.apply_update(
+        PermissionUpdate(
+            type="addRules",
+            rules=(PermissionRuleValue("bash"),),
+            behavior="ask",
+            destination="projectSettings",
+        )
+    )
+    policy = PermissionPolicy(project_store=store)
+    state = RuntimeState()
+    descriptor = bash_descriptor()
+    registry = ToolRegistry([descriptor], permission_policy=policy)
+    runtime = ToolRuntime(state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace)))
+    tool_input = {"command": "git status"}
+
+    decision = policy.evaluate(
+        tool_call=ToolCall(id="call-1", name="bash", input=tool_input),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(tool_input, runtime),
+        guard_policies=(),
+        state=state,
+    )
+
+    assert registry.visible_descriptors(state) == (descriptor,)
+    assert decision.action == "ask"
+    assert "Project permission settings" in decision.reason

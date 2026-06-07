@@ -1,6 +1,6 @@
 # Tech Debt Tracker
 
-最近审阅日期：2026-06-06
+最近审阅日期：2026-06-07
 
 本台账记录当前已实现的 OneCode runtime 骨架中可由代码证据支持的技术债。条目依据 `architecture.md`、`docs/design-docs/core-beliefs.md`、`docs/exec-plans/active/` 和当前代码边界整理。
 
@@ -10,7 +10,7 @@
 |:---|:---|:---|:---|:---|:---|
 | TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
 | TD-007 | CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
-| TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
+| TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
 | TD-014 | Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用 | 架构 / 安全 | `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py` | 高 | 已识别 |
@@ -76,28 +76,30 @@ CLI 不应直接实现 runtime recovery、权限策略或 provider-specific 分�
 
 ---
 
-### TD-008: 动态 prompt 已落地，但可见工具裁剪尚未接入完整 permission policy
+### TD-008: 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy
 
 - **类型：** 架构 / 安全
 - **区域：** `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/`
 - **优先级：** 中
 - **状态：** 部分缓解
-- **影响：** 第一版 `ToolRegistry.visible_descriptors(state)` 已让 tool schema 和 tool prompt section 使用同一个可见工具视图，并已接入 `PermissionPolicy` 的工具级 deny/disabled。真实项目权限、用户规则、组织策略、多来源规则合并和路径级 guard policy 仍不能在模型调用前完整裁剪工具能力。
+- **影响：** 第一版 `ToolRegistry.visible_descriptors(state)` 已让 tool schema 和 tool prompt section 使用同一个可见工具视图，并已接入 `PermissionPolicy` 的工具级 deny/disabled 和项目级整工具 deny。项目级 `.onecode/settings.json` 已支持 `permissions.allow`、`permissions.deny`、`permissions.ask`，并能在执行入口匹配内容规则。用户规则、组织策略、多来源规则合并和路径级 guard policy 仍不能在模型调用前完整裁剪工具能力。
 
 **描述：**
-`DynamicPromptAssembler` 会从 `ToolRegistry.visible_descriptors(state)` 读取工具 prompt，`tool_schemas(state)` 也基于同一视图生成 provider-visible schema。当前可见性接口用于保持 prompt/schema 一致，并会消费注入的 `PermissionPolicy` 来裁剪工具级 deny/disabled。它还没有把路径级 guard、项目配置、用户配置、组织策略或持久规则合并成完整工具可见性判断。执行入口仍依赖 `RegistryToolExecutor` 对具体 `ToolTarget` 重复执行 guard 和 permission policy 检查。
+`DynamicPromptAssembler` 会从 `ToolRegistry.visible_descriptors(state)` 读取工具 prompt，`tool_schemas(state)` 也基于同一视图生成 provider-visible schema。当前可见性接口用于保持 prompt/schema 一致，并会消费注入的 `PermissionPolicy` 来裁剪工具级 deny/disabled 和项目级整工具 deny。`services/permissions/project_settings.py` 已从 `.onecode/settings.json` 加载项目级规则；`services/permissions/policy.py` 已在执行入口处理项目级 ask、allow 和内容 deny。它还没有把路径级 guard、用户配置、组织策略或更多规则来源合并成完整工具可见性判断。执行入口仍依赖 `RegistryToolExecutor` 对具体 `ToolTarget` 重复执行 guard 和 permission policy 检查。
 
 **引入原因：**
-动态 prompt 架构需要先有统一可见工具视图，才能避免 schema 和 prompt 看到不同工具集合。第一版 permission policy 已接入工具级裁剪和 session 临时授权，但完整规则来源、优先级、持久化、审计和路径级预裁剪仍需要后续设计。
+动态 prompt 架构需要先有统一可见工具视图，才能避免 schema 和 prompt 看到不同工具集合。第一版 permission policy 已接入工具级裁剪、session 临时授权和项目级持久规则，但完整规则来源、优先级、审计和路径级预裁剪仍需要后续设计。
 
 **修复方向：**
-继续扩展 provider-neutral permission policy service，加入用户、项目、本地、组织、CLI flag 和持久 session 规则来源。保持 deny-first 顺序：任意有效 deny 都应同时裁剪 schema、prompt 和执行入口。路径参数级判断仍应在工具执行前基于实际输入重复校验，不应由 prompt 组装阶段猜测。
+继续扩展 provider-neutral permission policy service，加入用户、本地、组织、CLI flag 和持久 session 规则来源。保持 deny-first 顺序：任意整工具 deny 都应同时裁剪 schema、prompt 和执行入口；内容 deny 必须在执行入口基于实际输入重复校验。路径参数级判断仍应在工具执行前基于实际输入重复校验，不应由 prompt 组装阶段猜测。
 
 **关联代码：**
 - `services/tools/registry.py:L31` - `visible_descriptors(state)` 是 prompt/schema 统一视图入口，并已接入工具级 permission policy。
 - `prompts/assembler.py:L33` - assembler 从 registry 读取当前可见工具。
 - `services/tools/executor.py:L96` - executor 仍在执行入口检查具体工具调用。
-- `services/permissions/policy.py:L1` - 第一版 permission policy 已落地，但只覆盖内存 session 和固定规则。
+- `services/permissions/policy.py:L1` - permission policy 已落地项目级规则、内存 session 和固定规则。
+- `services/permissions/project_settings.py:L1` - 项目级 `.onecode/settings.json` 权限规则 store。
+- `services/permissions/rules.py:L1` - 持久权限规则 parser 和 serializer。
 - `services/guard/policy.py:L19` - guard policy 已能对具体路径返回 allow/ask/deny。
 
 **架构约束：**

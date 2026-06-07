@@ -12,6 +12,9 @@ class SessionPermissionStore:
 
     def __init__(self) -> None:
         self._allowed_directories: set[tuple[str, str, Path]] = set()
+        self._allowed_tools: set[str] = set()
+        self._allowed_skills: set[str] = set()
+        self._denied_skills: set[str] = set()
         self._denied_tools: set[str] = set()
         self._disabled_tools: set[str] = set()
 
@@ -41,6 +44,29 @@ class SessionPermissionStore:
                 return True
         return False
 
+    def allow_tool(self, tool_name: str) -> None:
+        """Allow a whole tool for this session without weakening deny checks."""
+
+        if tool_name:
+            self._allowed_tools.add(tool_name)
+
+    def is_tool_allowed(self, tool_name: str) -> bool:
+        return tool_name in self._allowed_tools
+
+    def allow_skill(self, skill_name: str) -> None:
+        if skill_name:
+            self._allowed_skills.add(skill_name.lstrip("/"))
+
+    def deny_skill(self, skill_name: str) -> None:
+        if skill_name:
+            self._denied_skills.add(skill_name.lstrip("/"))
+
+    def is_skill_allowed(self, skill_name: str) -> bool:
+        return skill_name.lstrip("/") in self._allowed_skills
+
+    def is_skill_denied(self, skill_name: str) -> bool:
+        return skill_name.lstrip("/") in self._denied_skills
+
     def deny_tool(self, tool_name: str) -> None:
         if tool_name:
             self._denied_tools.add(tool_name)
@@ -57,5 +83,8 @@ class SessionPermissionStore:
 
     def clear(self) -> None:
         self._allowed_directories.clear()
+        self._allowed_tools.clear()
+        self._allowed_skills.clear()
+        self._denied_skills.clear()
         self._denied_tools.clear()
         self._disabled_tools.clear()

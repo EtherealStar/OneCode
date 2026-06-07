@@ -243,6 +243,14 @@ class AgentLoop:
                 async for event in self._execute_tools(tool_calls, result_blocks):
                     yield event
                 self.message_store.append_tool_results(result_blocks)
+                followup_messages = tuple(
+                    message
+                    for result in result_blocks
+                    if not result.is_error
+                    for message in result.followup_messages
+                )
+                if followup_messages:
+                    self.message_store.append_attachments(followup_messages)
                 self.state.set_transition(TransitionReason.TOOL_USE)
                 self._record_transition(TransitionReason.TOOL_USE)
                 yield AgentEvent(

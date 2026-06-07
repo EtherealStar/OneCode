@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any, Literal
 from services.tools.types import ToolTarget
 
 if TYPE_CHECKING:
+    from services.permissions.rules import PermissionUpdate
     from services.guard import GuardPolicy
     from services.tools.types import ToolCall, ToolCallClassification, ToolDescriptor
 
 
 PermissionAction = Literal["allow", "ask", "deny", "passthrough"]
-PermissionScope = Literal["once", "session"]
+PermissionScope = Literal["once", "session", "project"]
 
 
 @dataclass(frozen=True)
@@ -52,3 +53,4 @@ class PermissionResponse:
     scope: PermissionScope = "once"
     feedback: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    permission_updates: tuple[PermissionUpdate, ...] = ()

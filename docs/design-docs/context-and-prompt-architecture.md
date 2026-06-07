@@ -38,6 +38,8 @@ OneCode 内部保留 provider-neutral `tool_result`，provider adapter 负责投
 
 `attachment` 是 durable internal role，用于保存用户输入或运行时收集到的结构化上下文。它不能直接进入 provider payload；`AttachmentContextPreparer` 会在模型调用前把它投影成合法的 user、assistant 和 `tool_result` 消息。例如文件附件会临时变成 synthetic `read_file` assistant tool call 和匹配的 synthetic tool result，但这些 synthetic 消息不会写回 `MessageStore` 或 transcript。
 
+`skill` attachment 是 runtime 按需加载技能全文的 payload。`skill` 工具的普通工具结果只保留 `Launching skill: <name>` 这类短文本，完整 `SKILL.md` 内容作为 durable `role="attachment"` 写入 transcript；下一轮 provider 调用前，`AttachmentProjector` 会把它投影成 synthetic user message，包含 `[skill loaded: <name>]` 边界、参数、来源和技能正文。
+
 ## JsonlTranscriptStore
 
 `JsonlTranscriptStore` 将消息写入 `.onecode/<session_id>/messages.jsonl`。每条 record 包含：
@@ -89,12 +91,13 @@ preparer 可以同步或异步返回消息 iterable，也可以返回 `PreparedC
 - `RuntimeState`
 - 当前 cwd
 - 当前可见工具 descriptor
+- 当前可见 skill catalog
 - 已读文件列表
 - last transition
 
 它刻意不包含 API key、provider 配置、session id、transcript 路径或 CLI mode。
 
-CLI 装配会把 `ToolRegistry` 传给 assembler，因此 prompt 中的可用工具说明与 provider-visible tool schema 来自同一个可见工具视图。
+CLI 装配会把 `ToolRegistry` 和 skill catalog provider 传给 assembler，因此 prompt 中的可用工具说明与 provider-visible tool schema 来自同一个可见工具视图；skill section 只展示名称、描述和 when-to-use 摘要，不展示技能全文。
 
 ## Prompt Sections
 
@@ -104,6 +107,7 @@ CLI 装配会把 `ToolRegistry` 传给 assembler，因此 prompt 中的可用工
 - behavior rules
 - workspace state
 - available tools
+- available skills
 - per-tool prompt
 
 section 输出顺序稳定，空 body 会被跳过。工具专属 prompt 不放在 `prompts/`，而是由 `tools/<tool_name>/prompt.py` 提供，再通过 descriptor 暴露给 assembler。

@@ -103,6 +103,51 @@ def available_tools_section(context: PromptRuntimeContext) -> PromptSection:
     )
 
 
+def available_skills_section(context: PromptRuntimeContext) -> PromptSection:
+    if not context.visible_skills:
+        body = ""
+    else:
+        body = _skill_listing_body(context)
+    fingerprint = _fingerprint(
+        "available_skills",
+        "\n".join(
+            f"{skill.name}:{skill.description}:{skill.when_to_use or ''}"
+            for skill in context.visible_skills
+        ),
+    )
+    return PromptSection(
+        key="available_skills",
+        title="Available Skills",
+        body=body,
+        fingerprint=fingerprint,
+    )
+
+
+def _skill_listing_body(
+    context: PromptRuntimeContext,
+    *,
+    budget_chars: int = 8000,
+    description_chars: int = 250,
+) -> str:
+    """Render a compact skill catalog without leaking full SKILL.md content."""
+
+    lines: list[str] = []
+    for skill in context.visible_skills:
+        description = _truncate_one_line(skill.description, description_chars)
+        suffix = ""
+        if skill.when_to_use:
+            suffix = " - Use when " + _truncate_one_line(
+                skill.when_to_use,
+                description_chars,
+            )
+        line = f"- {skill.name}: {description}{suffix}"
+        candidate = "\n".join([*lines, line])
+        if len(candidate) > budget_chars:
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def tool_prompt_sections(context: PromptRuntimeContext) -> tuple[PromptSection, ...]:
     sections: list[PromptSection] = []
     for tool in context.visible_tools:
@@ -126,6 +171,7 @@ def default_sections(context: PromptRuntimeContext) -> tuple[PromptSection, ...]
         behavior_rules_section(context),
         workspace_state_section(context),
         available_tools_section(context),
+        available_skills_section(context),
         *tool_prompt_sections(context),
     )
 
@@ -133,3 +179,10 @@ def default_sections(context: PromptRuntimeContext) -> tuple[PromptSection, ...]
 def _fingerprint(*parts: str) -> str:
     payload = "\0".join(parts)
     return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _truncate_one_line(value: str, limit: int) -> str:
+    text = " ".join(value.split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."

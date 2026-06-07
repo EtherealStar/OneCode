@@ -35,7 +35,7 @@
 
 ## Permission Policy
 
-`services/permissions/` 负责把工具级规则、guard 结果、危险目录规则、可疑路径规则、session 临时授权和 UI 用户确认合并成最终工具调用决策。
+`services/permissions/` 负责把工具级规则、项目级持久规则、guard 结果、危险目录规则、可疑路径规则、session 临时授权和 UI 用户确认合并成最终工具调用决策。
 
 `types.py` 定义 provider-neutral 结构：
 
@@ -46,24 +46,33 @@
 
 这些类型不绑定 CLI；测试、CLI 或未来 UI 都可以实现自己的 prompter。
 
-`session.py` 实现内存中的 `SessionPermissionStore`。它支持本 session 内按工具名、operation 和目录授权，也支持 session 级工具 deny/disabled。它不写磁盘，`/clear` 和 `/resume` 会清理临时授权。
+`session.py` 实现内存中的 `SessionPermissionStore`。它支持本 session 内按工具名、operation 和目录授权，也支持 session 级工具 allow、工具 deny/disabled 和 skill allow/deny。它不写磁盘，`/clear` 和 `/resume` 会清理临时授权。
+
+`rules.py` 定义持久权限规则的数据结构和字符串格式。规则字符串可以是整工具规则，例如 `bash` 或 `edit_file`，也可以是内容规则，例如 `bash(npm run:*)`。括号内容支持反斜杠和括号转义。
+
+`project_settings.py` 实现项目级 `.onecode/settings.json` 读写。第一版读取和维护 `permissions.allow`、`permissions.deny`、`permissions.ask` 三个字符串数组。写入会保留 settings 中其他字段，重复添加同一条规则不会产生重复项；settings JSON 损坏或权限字段类型错误时不会覆盖原文件。
 
 `policy.py` 实现 deny-first `PermissionPolicy`。当前顺序：
 
 1. `read_only_agent` 对 state-changing 调用直接 deny。
-2. 工具级 denied/disabled 直接 deny。
+2. 工具级 denied/disabled 和项目级整工具 deny 直接 deny。
 3. guard deny 直接 deny。
-4. 非只读 `command/execute`、受保护项目目录、可疑 Windows 路径和 guard ask 产生 ask。
-5. session allow 只能覆盖 ask，不能覆盖 deny。
-6. 无 ask 时 allow。
+4. 项目级内容 deny 直接 deny。
+5. 项目级 ask、非只读 `command/execute`、受保护项目目录、可疑 Windows 路径和 guard ask 产生 ask。
+6. 项目级 allow 和 session allow 只能覆盖 ask，不能覆盖任何 deny。
+7. 无 ask 时 allow。
 
 受保护项目目录当前包括 `.git`、`.vscode`、`.idea`、`.onecode`。
 
-`prompter.py` 定义 async `PermissionPrompter` protocol。当前 CLI 通过终端输入实现权限确认。非交互 executor 未注入 prompter 时，ask 会变成结构化 `permission_ask_required` 工具结果，保持 fail closed。
+项目级整工具 deny 会影响工具可见性，内容规则只在执行入口基于本次 `ToolTarget` 和 guard policy 判断。`bash(prefix:*)` 风格的内容规则会按命令前缀匹配，例如 `bash(npm run:*)` 可匹配 `npm run test`。
+
+Skill `allowed-tools` 会在 skill 成功加载后写入 session 级整工具 allow，用来把后续本来需要 ask 的工具调用降为 allow。该 allow 只在 deny-first 检查之后生效，不能覆盖 read-only subagent、工具 deny/disabled、specific skill deny、guard deny 或项目级 deny。
+
+`prompter.py` 定义 async `PermissionPrompter` protocol。当前 CLI 通过终端输入实现权限确认，并可为 Bash 权限确认生成项目级 allow 更新。非交互 executor 未注入 prompter 时，ask 会变成结构化 `permission_ask_required` 工具结果，保持 fail closed。
 
 ## Registry 可见性
 
-`PermissionPolicy.is_tool_visible()` 被 `ToolRegistry.visible_descriptors(state)` 消费。被工具级 deny 或 disabled 的工具不会进入 provider schema 或 prompt 工具说明。
+`PermissionPolicy.is_tool_visible()` 被 `ToolRegistry.visible_descriptors(state)` 消费。被工具级 deny、项目级整工具 deny 或 disabled 的工具不会进入 provider schema 或 prompt 工具说明。
 
 路径参数级判断不能在 prompt 组装阶段猜测，仍必须在执行入口基于实际 `ToolTarget` 重复 guard 和 permission policy。
 

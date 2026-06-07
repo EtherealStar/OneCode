@@ -28,7 +28,12 @@ from services.guard import SandboxBoundary, SandboxGuard
 from services.hooks import HookRegistry
 from services.model.types import ProviderError
 from services.observability import JsonlTraceSink, TraceRecorder
-from services.permissions import PermissionPolicy, SessionPermissionStore
+from services.permissions import (
+    PermissionPolicy,
+    ProjectPermissionSettingsStore,
+    SessionPermissionStore,
+)
+from services.skills import LoaderSkillCatalogProvider
 from services.subagents.runner import SubagentRunner
 from services.tools.executor import RegistryToolExecutor
 from services.tools.file_state import FileStateCache
@@ -39,6 +44,7 @@ from tools.edit_file import descriptor as edit_file_descriptor
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from tools.skill import descriptor as skill_descriptor
 from ui.cli import renderer
 from ui.cli.commands import handle_command
 from ui.cli.permissions import CliPermissionPrompter
@@ -54,22 +60,40 @@ def build_runtime(workspace: Path) -> CliRuntime:
         cwd=workspace,
     )
     permission_store = SessionPermissionStore()
-    permission_policy = PermissionPolicy(permission_store)
+    project_permission_store = ProjectPermissionSettingsStore(
+        workspace / ".onecode" / "settings.json"
+    )
+    project_permission_store.load_rules()
+    permission_policy = PermissionPolicy(
+        permission_store,
+        project_store=project_permission_store,
+    )
+    skill_provider = LoaderSkillCatalogProvider()
     trace_sink = JsonlTraceSink(workspace / ".onecode", state.session_id)
     trace_recorder = TraceRecorder(
         session_id=state.session_id,
         workspace=workspace,
         sink=trace_sink,
     )
+    runner_ref: dict[str, SubagentRunner] = {}
     base_descriptors = (
         read_file_descriptor(),
         edit_file_descriptor(),
         glob_descriptor(),
         grep_descriptor(),
         bash_descriptor(),
+        skill_descriptor(
+            skill_provider=skill_provider,
+            cwd=lambda: workspace,
+            fork_runner=lambda: runner_ref.get("runner"),
+        ),
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
-    prompt_assembler = DynamicPromptAssembler(workspace, tool_registry=registry)
+    prompt_assembler = DynamicPromptAssembler(
+        workspace,
+        tool_registry=registry,
+        skill_provider=skill_provider,
+    )
     result_store = ToolResultStore(message_store.transcript_store.session_dir)
     session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
     hooks = HookRegistry(trace_recorder=trace_recorder)
@@ -113,6 +137,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
     )
+    runner_ref["runner"] = subagent_runner
     session_memory_extractor = SessionMemoryExtractionService(
         session_memory_store,
         subagent_runner=subagent_runner,
@@ -164,6 +189,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         session_memory_store=session_memory_store,
         session_memory_extractor=session_memory_extractor,
         attachment_collector=attachment_collector,
+        skill_provider=skill_provider,
     )
 
 
