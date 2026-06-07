@@ -17,7 +17,7 @@ def render_banner(runtime: CliRuntime) -> str:
             f"cwd: {runtime.workspace}",
             f"session: {runtime.state.session_id}",
             f"model: {runtime.provider_label} / {runtime.model}",
-            "commands: /help /tools /status /history /trace /compact /resume /clear /exit",
+            "commands: /help /tools /mcp /status /history /trace /compact /resume /clear /exit",
         ]
     )
 
@@ -28,6 +28,7 @@ def render_help() -> str:
             "Commands:",
             "  /help              Show commands.",
             "  /tools             List enabled tools.",
+            "  /mcp [tools]       Show MCP server status and discovered tools.",
             "  /status            Show current runtime status.",
             "  /history [n]       Show recent message summaries.",
             "  /trace [n]         Show recent trace event summaries.",
@@ -85,6 +86,7 @@ def render_status(runtime: CliRuntime) -> str:
     )
     compaction = runtime.state.metadata.get("last_compaction")
     compact_lines = _compact_status_lines(runtime, compaction)
+    mcp_lines = _mcp_status_lines(runtime)
     return "\n".join(
         [
             "Status:",
@@ -102,9 +104,37 @@ def render_status(runtime: CliRuntime) -> str:
             ),
             f"  transcript: {_display_path(transcript_path, runtime.workspace)}",
             f"  trace: {trace_display}",
+            *mcp_lines,
             *compact_lines,
         ]
     )
+
+
+def render_mcp_status(runtime: CliRuntime, *, show_tools: bool = False) -> str:
+    if runtime.mcp_manager is None:
+        return "MCP: disabled"
+    snapshot = runtime.mcp_manager.snapshot()
+    if not snapshot.statuses:
+        return "MCP: no servers configured"
+    lines = ["MCP servers:"]
+    for status in snapshot.statuses:
+        detail = f"  {status.name} [{status.transport}] {status.state}"
+        if status.state == "connected":
+            detail += f" tools={status.tool_count}"
+            if status.instructions_present:
+                detail += " instructions=yes"
+        if status.error:
+            detail += f" error={status.error}"
+        lines.append(detail)
+    if show_tools:
+        lines.append("MCP tools:")
+        if not snapshot.tools:
+            lines.append("  none")
+        for tool in snapshot.tools:
+            lines.append(
+                f"  {tool.descriptor_name}: {tool.server_name}/{tool.tool_name}"
+            )
+    return "\n".join(lines)
 
 
 def render_history(messages: Iterable[dict[str, Any]], *, start_index: int = 1) -> str:
@@ -282,6 +312,25 @@ def _compact_status_lines(runtime: CliRuntime, compaction: Any) -> list[str]:
                 f"running={extraction.get('running', False)}"
             )
     return lines
+
+
+def _mcp_status_lines(runtime: CliRuntime) -> list[str]:
+    if runtime.mcp_manager is None:
+        return ["  mcp: disabled"]
+    snapshot = runtime.mcp_manager.snapshot()
+    if not snapshot.statuses:
+        return ["  mcp: no servers configured"]
+    connected = sum(1 for status in snapshot.statuses if status.state == "connected")
+    failed = sum(1 for status in snapshot.statuses if status.state == "failed")
+    disabled = sum(1 for status in snapshot.statuses if status.state == "disabled")
+    tool_count = sum(status.tool_count for status in snapshot.statuses)
+    return [
+        (
+            "  mcp: "
+            f"servers={len(snapshot.statuses)} connected={connected} "
+            f"failed={failed} disabled={disabled} tools={tool_count}"
+        )
+    ]
 
 
 def _display_path(path: Path, workspace: Path) -> str:

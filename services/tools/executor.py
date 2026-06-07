@@ -220,6 +220,7 @@ class RegistryToolExecutor:
             runtime = ToolRuntime(
                 state=state,
                 guard=self._guard,
+                file_state_cache=self._file_state_cache,
                 tool_call_id=tool_call.id,
             )
             tool_input = dict(tool_call.input)
@@ -440,7 +441,11 @@ class RegistryToolExecutor:
         descriptor = self._registry.get(tool_call.name)
         if descriptor is None:
             return False
-        runtime = ToolRuntime(state=state, guard=self._guard)
+        runtime = ToolRuntime(
+            state=state,
+            guard=self._guard,
+            file_state_cache=self._file_state_cache,
+        )
         tool_input = dict(tool_call.input)
         if self._validate_input(descriptor, tool_input, runtime) is not None:
             return False

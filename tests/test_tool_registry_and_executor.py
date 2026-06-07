@@ -30,6 +30,7 @@ from services.tools.types import (
     ValidationResult,
 )
 from tools.read_file import descriptor as read_file_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 
 
 class FakePrompter:
@@ -807,6 +808,51 @@ def test_permission_policy_hides_schema_prompt_and_denies_old_tool_call() -> Non
     result = execute_results(
         executor,
         (ToolCall(id="call-1", name="tool", input={"call_id": "call-1"}),),
+        state,
+    )[0]
+
+    assert registry.tool_schemas(state) == ()
+    assert registry.tool_prompt_sections(state) == ()
+    assert json.loads(result.content)["error"] == "permission_denied"
+
+
+def test_project_settings_deny_hides_write_file_and_denies_old_call(tmp_path) -> None:
+    from services.permissions import (
+        PermissionRuleValue,
+        PermissionUpdate,
+        ProjectPermissionSettingsStore,
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ProjectPermissionSettingsStore(workspace / ".onecode" / "settings.json")
+    store.apply_update(
+        PermissionUpdate(
+            type="addRules",
+            rules=(PermissionRuleValue("write_file"),),
+            behavior="deny",
+            destination="projectSettings",
+        )
+    )
+    policy = PermissionPolicy(project_store=store)
+    descriptor = write_file_descriptor()
+    registry = ToolRegistry([descriptor], permission_policy=policy)
+    executor = RegistryToolExecutor(
+        registry,
+        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
+        permission_policy=policy,
+    )
+    state = RuntimeState()
+
+    result = execute_results(
+        executor,
+        (
+            ToolCall(
+                id="call-1",
+                name="write_file",
+                input={"file_path": "a.txt", "content": "new"},
+            ),
+        ),
         state,
     )[0]
 

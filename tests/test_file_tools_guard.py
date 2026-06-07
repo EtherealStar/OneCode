@@ -12,6 +12,7 @@ from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolExecutionResult, ToolRuntime
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 
 
 def make_executor(
@@ -22,7 +23,9 @@ def make_executor(
     guard = SandboxGuard(
         SandboxBoundary(cwd=workspace, denied_patterns=denied_patterns)
     )
-    registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
+    registry = ToolRegistry(
+        [read_file_descriptor(), edit_file_descriptor(), write_file_descriptor()]
+    )
     return RegistryToolExecutor(registry, guard=guard), RuntimeState()
 
 
@@ -92,6 +95,22 @@ def test_edit_file_descriptor_classifies_input() -> None:
     assert classification.targets[0].value == "a.txt"
     assert classification.result_policy.max_result_size_chars == 50_000
     assert classification.permission_subject == "edit_file:a.txt"
+
+
+def test_write_file_descriptor_classifies_input() -> None:
+    classification = write_file_descriptor().classify_input(
+        {"file_path": "a.txt", "content": "new"},
+        ToolRuntime(state=RuntimeState()),
+    )
+
+    assert classification.read_only is False
+    assert classification.modifies_filesystem is True
+    assert classification.concurrency_safe is False
+    assert classification.targets[0].kind == "file"
+    assert classification.targets[0].operation == "write"
+    assert classification.targets[0].value == "a.txt"
+    assert classification.result_policy.max_result_size_chars == 50_000
+    assert classification.permission_subject == "write_file:a.txt"
 
 
 def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> None:
@@ -379,6 +398,170 @@ def test_edit_file_external_write_returns_ask_without_writing(
         state,
         "edit_file",
         {"file_path": str(outside), "old_string": "old", "new_string": "new"},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "permission_ask_required"
+    assert outside.read_text(encoding="utf-8") == "old"
+
+
+def test_write_file_creates_new_file_and_parent_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "nested" / "new.txt"
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "nested/new.txt", "content": "one\ntwo\n"},
+    )
+
+    assert result.is_error is False
+    assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+    assert result.metadata["operation"] == "create"
+    assert result.metadata["line_count"] == 2
+    assert str(target.resolve()) in state.metadata["files_read"]
+    cached = executor.file_state_cache.get(target)
+    assert cached is not None
+    assert cached.content == "one\ntwo\n"
+    assert cached.partial is False
+
+
+def test_write_file_requires_prior_full_read_for_existing_file(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    unread = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "a.txt", "content": "new"},
+    )
+    execute_one(executor, state, "read_file", {"file_path": "a.txt", "limit": 1})
+    partial = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "a.txt", "content": "new"},
+    )
+
+    assert unread.is_error is True
+    assert unread.metadata["error"] == "file_not_read"
+    assert partial.is_error is True
+    assert partial.metadata["error"] == "file_not_fully_read"
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_write_file_overwrites_after_full_read_and_returns_diff(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "a.txt", "content": "alpha\nBETA\n"},
+    )
+
+    assert result.is_error is False
+    assert result.metadata["operation"] == "update"
+    assert result.metadata["line_count"] == 2
+    assert result.metadata["diff_truncated"] is False
+    assert "-beta" in result.content
+    assert "+BETA" in result.content
+    assert target.read_text(encoding="utf-8") == "alpha\nBETA\n"
+    cached = executor.file_state_cache.get(target)
+    assert cached is not None
+    assert cached.content == "alpha\nBETA\n"
+
+
+def test_write_file_rejects_file_modified_after_read(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+    execute_one(executor, state, "read_file", {"file_path": "a.txt"})
+    target.write_text("external", encoding="utf-8")
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "a.txt", "content": "new"},
+    )
+
+    assert result.is_error is True
+    assert result.metadata["error"] == "file_unexpectedly_modified"
+    assert target.read_text(encoding="utf-8") == "external"
+
+
+def test_write_file_rejects_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "subdir").mkdir()
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "subdir", "content": "new"},
+    )
+
+    assert result.is_error is True
+    assert result.metadata["error"] == "path_is_directory"
+
+
+def test_write_file_denied_path_does_not_write(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "secret.txt"
+    target.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace, denied_patterns=("secret.txt",))
+    execute_one(executor, state, "read_file", {"file_path": "secret.txt"})
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": "secret.txt", "content": "new"},
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.content)
+    assert payload["error"] == "path_guard_denied"
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_write_file_external_path_returns_ask_without_writing(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("old", encoding="utf-8")
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "write_file",
+        {"file_path": str(outside), "content": "new"},
     )
 
     assert result.is_error is True

@@ -12,6 +12,7 @@ from tools.bash import descriptor as bash_descriptor
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 from ui.cli.permissions import CliPermissionPrompter, render_permission_panel
 
 
@@ -76,6 +77,26 @@ def test_edit_file_permission_panel_renders_simplified_diff(tmp_path: Path) -> N
     assert "- old_string: old" in panel
     assert "+ new_string: new" in panel
     assert "replace_all: True" in panel
+
+
+def test_write_file_permission_panel_renders_preview_and_line_count(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    request = _request(
+        workspace,
+        write_file_descriptor(),
+        {"file_path": str(outside), "content": "one\ntwo\n"},
+    )
+
+    panel = render_permission_panel(request)
+
+    assert "Write file permission requested" in panel
+    assert "operation: write" in panel
+    assert "line_count: 2" in panel
+    assert "content_preview: one two" in panel
 
 
 def test_search_permission_panels_have_distinct_titles(tmp_path: Path) -> None:

@@ -27,6 +27,11 @@ from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.hooks import HookRegistry
 from services.model.types import ProviderError
+from services.mcp import (
+    McpConnectionManager,
+    build_mcp_tool_descriptors,
+    load_project_mcp_config,
+)
 from services.observability import JsonlTraceSink, TraceRecorder
 from services.permissions import (
     PermissionPolicy,
@@ -45,6 +50,7 @@ from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from tools.skill import descriptor as skill_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 from ui.cli import renderer
 from ui.cli.commands import handle_command
 from ui.cli.permissions import CliPermissionPrompter
@@ -75,10 +81,20 @@ def build_runtime(workspace: Path) -> CliRuntime:
         workspace=workspace,
         sink=trace_sink,
     )
+    mcp_config = load_project_mcp_config(workspace)
+    mcp_manager = McpConnectionManager(
+        workspace,
+        mcp_config,
+        trace_recorder=trace_recorder,
+    )
+    mcp_snapshot = mcp_manager.connect_all_blocking()
+    state.metadata["mcp_server_instructions"] = mcp_snapshot.instructions
+    mcp_descriptors = build_mcp_tool_descriptors(mcp_manager)
     runner_ref: dict[str, SubagentRunner] = {}
     base_descriptors = (
         read_file_descriptor(),
         edit_file_descriptor(),
+        write_file_descriptor(),
         glob_descriptor(),
         grep_descriptor(),
         bash_descriptor(),
@@ -87,6 +103,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
             cwd=lambda: workspace,
             fork_runner=lambda: runner_ref.get("runner"),
         ),
+        *mcp_descriptors,
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
     prompt_assembler = DynamicPromptAssembler(
@@ -190,6 +207,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         session_memory_extractor=session_memory_extractor,
         attachment_collector=attachment_collector,
         skill_provider=skill_provider,
+        mcp_manager=mcp_manager,
     )
 
 
@@ -203,6 +221,8 @@ async def main_loop_async(runtime: CliRuntime) -> int:
             print()
             runtime.message_store.flush_transcript()
             runtime.trace_recorder.flush()
+            if runtime.mcp_manager is not None:
+                await runtime.mcp_manager.close_all()
             return 0
         except KeyboardInterrupt:
             print("\nUse /exit to quit.")

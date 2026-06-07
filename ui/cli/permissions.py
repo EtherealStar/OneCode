@@ -78,6 +78,8 @@ def render_permission_panel(request: PermissionRequest) -> str:
         return _read_file_panel(request)
     if tool_name == "edit_file":
         return _edit_file_panel(request)
+    if tool_name == "write_file":
+        return _write_file_panel(request)
     if tool_name == "glob":
         return _glob_panel(request)
     if tool_name == "grep":
@@ -113,6 +115,22 @@ def _edit_file_panel(request: PermissionRequest) -> str:
             f"- old_string: {_preview(tool_input.get('old_string', ''))}",
             f"+ new_string: {_preview(tool_input.get('new_string', ''))}",
             _options_line("allow edits in this directory for this session"),
+        ]
+    )
+
+
+def _write_file_panel(request: PermissionRequest) -> str:
+    tool_input = request.tool_input
+    content = str(tool_input.get("content", ""))
+    return "\n".join(
+        [
+            "",
+            "Write file permission requested",
+            f"reason: {request.decision.reason}",
+            *_target_lines(request),
+            f"line_count: {_line_count(content)}",
+            f"content_preview: {_preview(content)}",
+            _options_line("allow writes in this directory for this session"),
         ]
     )
 
@@ -220,3 +238,9 @@ def _preview(value: object, *, limit: int = 240) -> str:
     if len(text) > limit:
         return f"{text[:limit]}..."
     return text
+
+
+def _line_count(content: str) -> int:
+    if content == "":
+        return 0
+    return len(content.splitlines())
