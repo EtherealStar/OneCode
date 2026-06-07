@@ -9,11 +9,13 @@ from typing import Any
 from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
+from core.stream_events import AgentEvent
 from core.transitions import TransitionReason
 from services.attachments.context_preparer import AttachmentContextPreparer
 from services.attachments.types import AttachmentMessage
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
+from services.model.retry import ModelRetryRunner, RetryPolicy
 from services.model.stream import ModelStreamEvent
 from services.model.types import LLMResponse, ModelUsage
 from services.model.types import ProviderError
@@ -81,6 +83,22 @@ class ContextLimitThenSuccessModel:
             assistant_message=assistant_message("recovered"),
             final_text="recovered",
         )
+
+
+@dataclass
+class ScriptedStreamingModel:
+    scripts: list[list[ModelStreamEvent | BaseException]]
+    snapshots: list[ContextSnapshot] = field(default_factory=list)
+
+    async def stream(self, snapshot: ContextSnapshot):
+        self.snapshots.append(snapshot)
+        if not self.scripts:
+            raise AssertionError("Scripted model received an unexpected call")
+        script = self.scripts.pop(0)
+        for item in script:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
 @dataclass
@@ -160,6 +178,17 @@ def run_to_final_text(
         return final_text
 
     return asyncio.run(run())
+
+
+def collect_events(loop: AgentLoop, prompt: str) -> list[AgentEvent]:
+    async def run() -> list[AgentEvent]:
+        return [event async for event in loop.stream(prompt)]
+
+    return asyncio.run(run())
+
+
+async def noop_sleep(_seconds: float) -> None:
+    return None
 
 
 def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
@@ -465,3 +494,249 @@ def test_loop_reactive_compacts_once_after_context_limit(tmp_path: Path) -> None
     assert state.has_attempted_reactive_compact is True
     assert state.metadata["reactive_compacted"] == "context_limit_exceeded"
     assert len(model_client.snapshots) == 2
+
+
+def test_loop_retries_retryable_provider_error_and_hides_partial_delta(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = ScriptedStreamingModel(
+        [
+            [
+                ModelStreamEvent.content_delta("partial"),
+                ProviderError(
+                    "rate limited",
+                    error_type="rate_limit_error",
+                    status_code=429,
+                    retryable=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.content_delta("final"),
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("final"),
+                    final_text="final",
+                ),
+            ],
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,  # type: ignore[arg-type]
+        tool_executor=FakeToolExecutor(),
+        model_retry_runner=ModelRetryRunner(
+            policy=RetryPolicy(max_retries=1, jitter_ratio=0),
+            sleep=noop_sleep,
+        ),
+    )
+
+    events = collect_events(loop, "recover")
+
+    assert [event.text for event in events if event.type == "assistant_delta"] == [
+        "final"
+    ]
+    assert "partial" not in json.dumps(message_store.current_messages())
+    assert any(
+        event.type == "transition"
+        and event.transition == TransitionReason.RATE_LIMIT_RETRY.value
+        for event in events
+    )
+    assert events[-1].type == "completed"
+    assert events[-1].text == "final"
+    assert len(model_client.snapshots) == 2
+
+
+def test_loop_escalates_max_output_tokens_before_persisting_truncated_output(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = ScriptedStreamingModel(
+        [
+            [
+                ModelStreamEvent.content_delta("cut"),
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut"),
+                    final_text="cut",
+                    stop_reason="length",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.content_delta("complete"),
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("complete"),
+                    final_text="complete",
+                ),
+            ],
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,  # type: ignore[arg-type]
+        tool_executor=FakeToolExecutor(),
+    )
+
+    events = collect_events(loop, "long answer")
+
+    assert [event.text for event in events if event.type == "assistant_delta"] == [
+        "complete"
+    ]
+    assert any(
+        event.type == "transition"
+        and event.transition == TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE.value
+        for event in events
+    )
+    assert state.has_escalated_max_output_tokens is True
+    assert model_client.snapshots[1].usage_hints["request_overrides"] == {
+        "max_output_tokens": 64000
+    }
+    assert [message["role"] for message in message_store.current_messages()] == [
+        "user",
+        "assistant",
+    ]
+    assert "cut" not in json.dumps(message_store.current_messages())
+    assert events[-1].text == "complete"
+
+
+def test_loop_continues_after_repeated_max_output_interruption(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = ScriptedStreamingModel(
+        [
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-1"),
+                    final_text="cut-1",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-2"),
+                    final_text="cut-2",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("done"),
+                    final_text="done",
+                ),
+            ],
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,  # type: ignore[arg-type]
+        tool_executor=FakeToolExecutor(),
+    )
+
+    events = collect_events(loop, "long answer")
+    messages = message_store.current_messages()
+
+    assert state.max_output_recovery_count == 1
+    assert any(
+        event.type == "transition"
+        and event.transition == TransitionReason.MAX_OUTPUT_TOKENS_RECOVERY.value
+        for event in events
+    )
+    assert [message["role"] for message in messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert messages[1] == assistant_message("cut-2")
+    assert "Output token limit hit. Resume directly" in messages[2]["content"]
+    assert messages[-1] == assistant_message("done")
+    assert events[-1].text == "done"
+
+
+def test_loop_stops_max_output_recovery_after_three_continuations(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = ScriptedStreamingModel(
+        [
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-1"),
+                    final_text="cut-1",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-2"),
+                    final_text="cut-2",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-3"),
+                    final_text="cut-3",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("cut-4"),
+                    final_text="cut-4",
+                    output_interrupted=True,
+                ),
+            ],
+            [
+                ModelStreamEvent.content_delta("partial-final"),
+                ModelStreamEvent.message_completed(
+                    assistant_message=assistant_message("partial-final"),
+                    final_text="partial-final",
+                    output_interrupted=True,
+                ),
+            ],
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,  # type: ignore[arg-type]
+        tool_executor=FakeToolExecutor(),
+    )
+
+    events = collect_events(loop, "long answer")
+
+    assert state.max_output_recovery_count == 3
+    assert events[-1].type == "completed"
+    assert events[-1].text == "partial-final"
+    assert [event.text for event in events if event.type == "assistant_delta"] == [
+        "partial-final"
+    ]
+    assert message_store.current_messages()[-1] == assistant_message("partial-final")

@@ -113,6 +113,7 @@ class OpenAICompatibleChatCompletionsClient:
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             usage=usage,
+            output_interrupted=_is_output_interrupted_stop_reason(stop_reason),
         )
 
     def _build_payload(self, snapshot: ContextSnapshot) -> dict[str, Any]:
@@ -128,6 +129,11 @@ class OpenAICompatibleChatCompletionsClient:
         }
         if snapshot.tool_schemas:
             payload["tools"] = list(snapshot.tool_schemas)
+        request_overrides = snapshot.usage_hints.get("request_overrides")
+        if isinstance(request_overrides, dict):
+            max_output_tokens = request_overrides.get("max_output_tokens")
+            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+                payload["max_tokens"] = max_output_tokens
         return payload
 
     def _headers(self) -> dict[str, str]:
@@ -328,3 +334,7 @@ def _string_or_none(value: Any) -> str | None:
 
 def _int_or_zero(value: Any) -> int:
     return value if isinstance(value, int) else 0
+
+
+def _is_output_interrupted_stop_reason(stop_reason: str | None) -> bool:
+    return stop_reason in {"length", "max_tokens", "max_output_tokens"}

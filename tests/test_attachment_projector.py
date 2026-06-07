@@ -45,3 +45,24 @@ def test_projector_drops_raw_attachment_role() -> None:
 
     assert projected
     assert all(message.get("role") != "attachment" for message in projected)
+
+
+def test_projects_background_task_notification_to_xml() -> None:
+    attachment = AttachmentMessage(
+        attachment={
+            "type": "background_task_notification",
+            "task_id": "b_1234",
+            "task_type": "local_bash",
+            "status": "completed",
+            "summary": "done",
+            "output_file": ".onecode/session/background-tasks/b_1234.output",
+        },
+        attachment_id="att_task",
+        source="runtime",
+    ).to_message()
+
+    projected = AttachmentProjector().project((attachment,), RuntimeState())
+
+    assert projected[0]["role"] == "user"
+    assert "<task_notification>" in projected[0]["content"]
+    assert "<task_id>b_1234</task_id>" in projected[0]["content"]

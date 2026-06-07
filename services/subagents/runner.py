@@ -69,6 +69,7 @@ class SubagentRunner:
         is_fork = request.subagent_type is None
         is_session_memory_extraction = _is_session_memory_extraction_request(request)
         is_long_term_memory_extraction = _is_long_term_memory_extraction_request(request)
+        is_background_agent = _is_background_agent_request(request)
         child_state = RuntimeState(
             max_turns=_request_max_turns(request) or definition.max_turns or 20
         )
@@ -115,7 +116,9 @@ class SubagentRunner:
             registry,
             guard=self._guard,
             permission_policy=self._permission_policy,
-            permission_prompter=self._permission_prompter,
+            permission_prompter=(
+                None if is_background_agent else self._permission_prompter
+            ),
             trace_recorder=self._trace_recorder,
         )
         loop = AgentLoop(
@@ -434,6 +437,13 @@ def _is_session_memory_extraction_request(request: SubagentRequest) -> bool:
 
 def _is_long_term_memory_extraction_request(request: SubagentRequest) -> bool:
     return request.metadata.get("purpose") == "long_term_memory_extraction"
+
+
+def _is_background_agent_request(request: SubagentRequest) -> bool:
+    return (
+        request.metadata.get("background_task_id") is not None
+        and request.metadata.get("purpose") != "long_term_memory_extraction"
+    )
 
 
 def _request_max_turns(request: SubagentRequest) -> int | None:

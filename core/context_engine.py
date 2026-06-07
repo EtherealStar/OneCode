@@ -87,6 +87,11 @@ class ContextEngine:
             transcript_refs = tuple(prepared.transcript_refs)
         else:
             prepared_messages = tuple(prepared)
+        request_overrides = _safe_request_overrides(
+            state.metadata.get("model_request_overrides")
+        )
+        if request_overrides:
+            usage_hints["request_overrides"] = request_overrides
         system_prompt = self._prompt_assembler.assemble(state)
         tool_schemas = tuple(self._tool_schema_provider.tool_schemas(state))
 
@@ -100,3 +105,13 @@ class ContextEngine:
                 state.last_transition.value if state.last_transition is not None else None
             ),
         )
+
+
+def _safe_request_overrides(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    overrides: dict[str, Any] = {}
+    max_output_tokens = value.get("max_output_tokens")
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        overrides["max_output_tokens"] = max_output_tokens
+    return overrides

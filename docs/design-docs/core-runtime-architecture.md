@@ -10,7 +10,7 @@
 
 `core/runtime_state.py` 定义 `RuntimeState`，保存单个会话的 usage、turn count、max turns、session id、last transition 和 metadata。
 
-`core/transitions.py` 定义 provider-neutral 的 transition reason。当前 loop 已消费 `tool_use`、`completed` 和 `max_turns`；rate limit、reactive compact、max output recovery 和 stop hook continue 仍是目标恢复能力。
+`core/transitions.py` 定义 provider-neutral 的 transition reason。当前 loop 已消费 `tool_use`、`completed`、`max_turns`、`rate_limit_retry`、`reactive_compact_retry`、`max_output_tokens_escalate` 和 `max_output_tokens_recovery`；stop hook continue 仍是目标恢复能力。
 
 `core/stream_events.py` 定义 loop 向 UI 或调用方输出的 `AgentEvent`，使 CLI 能消费 streaming assistant delta、工具事件、transition 和 completed 结果。
 
@@ -27,11 +27,12 @@
 1. 递增 `RuntimeState.turn_count`。
 2. 超过 `max_turns` 时设置 `TransitionReason.MAX_TURNS` 并返回停止文本。
 3. 调用 `ContextEngine.build_for_model(state)`。
-4. 调用 `ModelClient.stream(snapshot)` 并向外转发 assistant delta 和 tool call ready 事件。
+4. 通过 `ModelRetryRunner` 调用 `ModelClient.stream(snapshot)`；retryable provider error 会触发 `rate_limit_retry` transition 和指数退避，失败 attempt 的 partial streaming 事件不会外显。
 5. 等待 provider-neutral `message_completed` 事件。
-6. 累计 usage，追加 assistant message。
-7. 如果 `message_completed.metadata["tool_calls"]` 中存在实际工具调用，则执行工具并进入下一轮。
-8. 如果没有工具调用，则设置 `completed` transition 并返回 final text。
+6. 如果 provider 返回 `output_interrupted=True`，先走 max-output recovery：首次设置 `max_output_tokens=64000` 并重试同一消息链；后续最多 3 次追加截断 assistant 和 continuation prompt 后继续。
+7. 累计 usage，追加 assistant message。
+8. 如果 `message_completed.metadata["tool_calls"]` 中存在实际工具调用，则执行工具并进入下一轮。
+9. 如果没有工具调用，则设置 `completed` transition 并返回 final text。
 
 主循环判断是否继续时只看实际 tool calls，不依赖 provider 私有 `stop_reason`。
 
@@ -54,7 +55,8 @@ CLI 装配会显式传入 `DynamicPromptAssembler(workspace, tool_registry=regis
 - `usage`：累计模型 usage。
 - `turn_count` 与 `max_turns`：主循环轮次控制。
 - `has_attempted_reactive_compact`：目标 reactive compact 状态。
-- `max_output_recovery_count`：目标 max output recovery 状态。
+- `has_escalated_max_output_tokens`：当前 session 是否已经把模型请求的输出 token 预算提升到恢复值。
+- `max_output_recovery_count`：max output continuation recovery 次数。
 - `last_transition`：上一轮 transition。
 - `session_id`：当前会话 UUID。
 - `metadata`：运行期扩展事实。
@@ -81,7 +83,7 @@ CLI 装配会显式传入 `DynamicPromptAssembler(workspace, tool_registry=regis
 - `max_output_tokens_recovery`
 - `stop_hook_continue`
 
-恢复类 transition 已定义但尚未完整接入 loop。后续 provider retry、context limit、output interruption 和 stop hook 行为应映射为这些 transition，并通过 trace 和 tests 验证。
+恢复类 transition 现在已有第一版 loop 行为：retryable provider error 映射为 `rate_limit_retry`；context limit 由 loop 触发一次 reactive compact 并映射为 `reactive_compact_retry`；输出 token 中断先映射为 `max_output_tokens_escalate`，之后映射为 `max_output_tokens_recovery`。`stop_hook_continue` 仍是目标能力。
 
 ## Core 不负责的内容
 

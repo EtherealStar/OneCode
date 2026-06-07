@@ -11,6 +11,7 @@ from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
 from services.attachments import AttachmentCollector, AttachmentContextPreparer
+from services.background_tasks import BackgroundTaskManager
 from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
 from services.compaction import (
@@ -20,7 +21,7 @@ from services.compaction import (
     SessionMemoryUpdater,
     ToolResultStore,
 )
-from services.observability import TraceRecorder
+from services.observability import ErrorLogRecorder, TraceRecorder
 from services.mcp import McpConnectionManager
 from services.hooks import HookRegistry
 from services.memory import (
@@ -61,6 +62,9 @@ class CliRuntime:
     trace_recorder: TraceRecorder = field(
         default_factory=lambda: TraceRecorder.noop()
     )
+    error_log_recorder: ErrorLogRecorder = field(
+        default_factory=lambda: ErrorLogRecorder.noop()
+    )
     current_model_context: CurrentModelContext | None = None
     subagent_runner: SubagentRunner | None = None
     compaction_service: ContextCompactionService | None = None
@@ -77,6 +81,7 @@ class CliRuntime:
     long_term_memory_provider: LongTermMemoryPromptProvider | None = None
     memory_selector: RelevantMemorySelector | None = None
     task_store: TaskStore | None = None
+    background_task_manager: BackgroundTaskManager | None = None
 
     def with_session(
         self,
@@ -85,6 +90,7 @@ class CliRuntime:
         message_store: MessageStore,
     ) -> "CliRuntime":
         self.trace_recorder.switch_session(state.session_id)
+        self.error_log_recorder.switch_session(state.session_id)
         if self.current_model_context is not None:
             self.current_model_context.snapshot = None
         if self.subagent_runner is not None:
@@ -178,6 +184,7 @@ class CliRuntime:
             compaction_service=self.compaction_service,
             session_memory_extractor=session_memory_extractor,
             session_memory_updater=session_memory_updater,
+            error_log_recorder=self.error_log_recorder,
         )
         if self.permission_store is not None:
             self.permission_store.clear()
