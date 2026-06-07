@@ -34,6 +34,8 @@ def _project_attachment_message(message: dict[str, Any]) -> tuple[dict[str, Any]
     attachment_type = attachment.get("type")
     if attachment_type == "file":
         return _project_file(attachment, message)
+    if attachment_type == "skill":
+        return (_project_skill(attachment),)
     if attachment_type == "directory":
         return (_project_directory(attachment),)
     if attachment_type == "edited_text_file":
@@ -119,6 +121,29 @@ def _project_edited_text_file(attachment: dict[str, Any]) -> dict[str, Any]:
         "A previously read text file was edited outside the model-visible tool "
         f"call flow.\nPath: {attachment.get('path', '')}\nDiff:\n{attachment.get('diff', '')}"
     )
+
+
+def _project_skill(attachment: dict[str, Any]) -> dict[str, Any]:
+    """Project a loaded skill as runtime-provided user context."""
+
+    args = str(attachment.get("args", ""))
+    source = str(attachment.get("source", ""))
+    name = str(attachment.get("skill_name", "unknown"))
+    content = str(attachment.get("content", ""))
+    return {
+        "role": "user",
+        "content": (
+            f"[skill loaded: {name}]\n"
+            f"Arguments: {args}\n"
+            f"Source: {source}\n\n"
+            f"{content}"
+        ),
+        "metadata": {
+            "synthetic": True,
+            "source": "attachment",
+            "attachment_type": "skill",
+        },
+    }
 
 
 def _notice(content: str) -> dict[str, Any]:

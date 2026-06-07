@@ -130,6 +130,7 @@ def test_help_command_prints_available_commands(tmp_path: Path, capsys: Any) -> 
     assert result.should_exit is False
     assert "/tools" in output
     assert "/resume <target>" in output
+    assert "/permissions" not in output
 
 
 def test_tools_command_lists_fixed_file_tools(tmp_path: Path, capsys: Any) -> None:

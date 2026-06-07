@@ -22,6 +22,7 @@ from services.subagents.types import AgentDefinition, SubagentRequest, SubagentR
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolDescriptor
+from services.skills import SkillCommand
 
 
 class SubagentRunner:
@@ -126,6 +127,78 @@ class SubagentRunner:
             request,
             is_fork=is_fork,
             is_memory_extraction=is_memory_extraction,
+        )
+
+    async def run_skill(
+        self,
+        *,
+        skill: SkillCommand,
+        args: str,
+        parent_session_id: str,
+        parent_tool_call_id: str,
+    ) -> SubagentResult:
+        """Run a fork-context skill in a clean child runtime."""
+
+        for tool_name in skill.allowed_tools:
+            self._permission_policy.session_store.allow_tool(tool_name)
+        definition = AgentDefinition(
+            agent_type=f"skill:{skill.name}",
+            when_to_use=skill.when_to_use or skill.description,
+            system_prompt="You are a clean OneCode child agent running one loaded skill.",
+            tools=skill.allowed_tools or ("*",),
+            disallowed_tools=("agent", "skill"),
+            max_turns=20,
+            model=skill.model,
+        )
+        request = SubagentRequest(
+            prompt=_skill_child_prompt(skill, args),
+            subagent_type=definition.agent_type,
+            parent_session_id=parent_session_id,
+            parent_tool_call_id=parent_tool_call_id,
+            mode="clean",
+            metadata={"purpose": "skill", "skill_name": skill.name},
+        )
+        child_state = RuntimeState(max_turns=definition.max_turns or 20)
+        child_state.metadata["hidden_tools"] = {"agent", "skill"}
+        child_store = MessageStore(
+            transcript_root=self._transcript_root,
+            session_id=child_state.session_id,
+            cwd=self._workspace,
+        )
+        child_store.seed_messages(({"role": "user", "content": request.prompt},))
+
+        registry = ToolRegistry(
+            _child_descriptors(definition, self._base_descriptors),
+            permission_policy=self._permission_policy,
+        )
+        context_engine = ContextEngine(
+            child_store,
+            prompt_assembler=StaticPromptAssembler(definition.system_prompt),
+            tool_schema_provider=registry,
+        )
+        tool_executor = RegistryToolExecutor(
+            registry,
+            guard=self._guard,
+            permission_policy=self._permission_policy,
+            permission_prompter=self._permission_prompter,
+            trace_recorder=self._trace_recorder,
+        )
+        loop = AgentLoop(
+            state=child_state,
+            message_store=child_store,
+            context_engine=context_engine,
+            model_client=self._model_client,
+            tool_executor=tool_executor,
+            trace_recorder=self._trace_recorder,
+        )
+        return await self._drain_loop(
+            loop,
+            child_store,
+            child_state,
+            definition,
+            request,
+            is_fork=False,
+            is_memory_extraction=False,
         )
 
     def _configure_memory_extraction_child(
@@ -327,4 +400,22 @@ def _tool_result_count(message_store: MessageStore) -> int:
         1
         for message in message_store.current_messages()
         if message.get("role") == "tool_result"
+    )
+
+
+def _skill_child_prompt(skill: SkillCommand, args: str) -> str:
+    """Build the single clean-context user message for a fork skill."""
+
+    root = str(skill.root) if skill.root is not None else ""
+    content = skill.content
+    if root:
+        content = (
+            f"Base directory for this skill: {root}\n\n"
+            + content.replace("${ONECODE_SKILL_DIR}", root)
+        )
+    return (
+        f"[skill loaded: {skill.name}]\n"
+        f"Arguments: {args}\n"
+        f"Source: {skill.source}\n\n"
+        f"{content}"
     )

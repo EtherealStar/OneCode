@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import fnmatch
 import re
 from typing import Any
 
 from core.runtime_state import RuntimeState
 from infrastructure.filesystem.paths import resolve_path
 from services.guard import GuardPolicy
+from services.permissions.project_settings import ProjectPermissionSettingsStore
+from services.permissions.rules import PermissionBehavior, PermissionRule
 from services.permissions.session import SessionPermissionStore
 from services.permissions.types import (
     PermissionDecision,
@@ -44,9 +47,11 @@ class PermissionPolicy:
         self,
         session_store: SessionPermissionStore | None = None,
         *,
+        project_store: ProjectPermissionSettingsStore | None = None,
         protected_project_dirs: tuple[str, ...] = PROTECTED_PROJECT_DIRS,
     ) -> None:
         self.session_store = session_store or SessionPermissionStore()
+        self.project_store = project_store
         self.protected_project_dirs = tuple(protected_project_dirs)
 
     def evaluate(
@@ -84,6 +89,15 @@ class PermissionPolicy:
                 targets=classification.targets,
                 guard_policies=guard_policies,
             )
+        denied_skill = self._denied_skill_name(classification, state)
+        if descriptor.name == "skill" and denied_skill is not None:
+            return PermissionDecision(
+                action="deny",
+                reason=f"Skill is denied: {denied_skill}",
+                source="skill_policy",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
 
         for policy in guard_policies:
             if policy.action == "deny":
@@ -95,6 +109,22 @@ class PermissionPolicy:
                     guard_policies=guard_policies,
                     metadata={"guard_policy": policy.to_tool_error()},
                 )
+
+        project_deny = self._matching_project_rules(
+            "deny",
+            descriptor=descriptor,
+            classification=classification,
+            guard_policies=guard_policies,
+        )
+        if project_deny:
+            return PermissionDecision(
+                action="deny",
+                reason=_project_rule_reason("deny", project_deny),
+                source="project_settings",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+                metadata={"project_rules": _rule_strings(project_deny)},
+            )
 
         if state.metadata.get("memory_extraction_agent") is True:
             return self._memory_extraction_decision(
@@ -111,6 +141,19 @@ class PermissionPolicy:
             state=state,
         )
         if asks:
+            if self._project_allows_call(
+                descriptor=descriptor,
+                classification=classification,
+                guard_policies=guard_policies,
+            ):
+                return PermissionDecision(
+                    action="allow",
+                    reason="Allowed by project permission settings.",
+                    source="project_settings",
+                    targets=classification.targets,
+                    guard_policies=guard_policies,
+                    metadata={"ask_reasons": asks},
+                )
             if self._session_allows_all(
                 descriptor=descriptor,
                 guard_policies=guard_policies,
@@ -118,6 +161,15 @@ class PermissionPolicy:
                 return PermissionDecision(
                     action="allow",
                     reason="Allowed by a session permission grant.",
+                    source="session",
+                    targets=classification.targets,
+                    guard_policies=guard_policies,
+                    metadata={"ask_reasons": asks},
+                )
+            if self.session_store.is_tool_allowed(descriptor.name):
+                return PermissionDecision(
+                    action="allow",
+                    reason="Allowed by a session tool grant.",
                     source="session",
                     targets=classification.targets,
                     guard_policies=guard_policies,
@@ -246,6 +298,14 @@ class PermissionPolicy:
         request: PermissionRequest,
         response: PermissionResponse,
     ) -> None:
+        if response.action == "allow":
+            for update in response.permission_updates:
+                if update.destination == "projectSettings":
+                    if self.project_store is None:
+                        raise ValueError(
+                            "Project permission update requested but no project settings store is configured."
+                        )
+                    self.project_store.apply_update(update)
         if response.action != "allow" or response.scope != "session":
             return
         for policy in request.decision.guard_policies:
@@ -258,8 +318,10 @@ class PermissionPolicy:
             )
 
     def is_tool_denied(self, tool_name: str, state: RuntimeState) -> bool:
-        return self.session_store.is_tool_denied(tool_name) or tool_name in _names(
-            state.metadata.get("denied_tools")
+        return (
+            self.session_store.is_tool_denied(tool_name)
+            or self._is_project_tool_denied(tool_name)
+            or tool_name in _names(state.metadata.get("denied_tools"))
         )
 
     def is_tool_disabled(self, tool_name: str, state: RuntimeState) -> bool:
@@ -273,6 +335,20 @@ class PermissionPolicy:
             or self.is_tool_disabled(descriptor.name, state)
         )
 
+    def _denied_skill_name(
+        self,
+        classification: ToolCallClassification,
+        state: RuntimeState,
+    ) -> str | None:
+        denied = _names(state.metadata.get("denied_skills"))
+        for target in classification.targets:
+            if target.kind != "session_state" or target.operation != "skill_load":
+                continue
+            skill_name = target.value.lstrip("/")
+            if self.session_store.is_skill_denied(skill_name) or skill_name in denied:
+                return skill_name
+        return None
+
     def _ask_reasons(
         self,
         *,
@@ -282,6 +358,14 @@ class PermissionPolicy:
         state: RuntimeState,
     ) -> list[str]:
         reasons: list[str] = []
+        project_asks = self._matching_project_rules(
+            "ask",
+            descriptor=descriptor,
+            classification=classification,
+            guard_policies=guard_policies,
+        )
+        if project_asks:
+            reasons.append(_project_rule_reason("ask", project_asks))
         for target in classification.targets:
             if (
                 target.kind == "command"
@@ -307,6 +391,74 @@ class PermissionPolicy:
             if policy.action == "ask":
                 reasons.append(policy.reason)
         return _dedupe(reasons)
+
+    def _project_rules(self, behavior: PermissionBehavior) -> tuple[PermissionRule, ...]:
+        if self.project_store is None:
+            return ()
+        return tuple(
+            rule
+            for rule in self.project_store.load_rules()
+            if rule.behavior == behavior
+        )
+
+    def _is_project_tool_denied(self, tool_name: str) -> bool:
+        return any(
+            rule.value.tool_name == tool_name and rule.value.rule_content is None
+            for rule in self._project_rules("deny")
+        )
+
+    def _matching_project_rules(
+        self,
+        behavior: PermissionBehavior,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+    ) -> tuple[PermissionRule, ...]:
+        matches: list[PermissionRule] = []
+        for rule in self._project_rules(behavior):
+            if rule.value.tool_name != descriptor.name:
+                continue
+            if rule.value.rule_content is None:
+                matches.append(rule)
+                continue
+            if _rule_content_matches(
+                rule.value.rule_content,
+                classification=classification,
+                guard_policies=guard_policies,
+            ):
+                matches.append(rule)
+        return tuple(matches)
+
+    def _project_allows_call(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+    ) -> bool:
+        allow_rules = tuple(
+            rule
+            for rule in self._project_rules("allow")
+            if rule.value.tool_name == descriptor.name
+        )
+        if not allow_rules:
+            return False
+        if any(rule.value.rule_content is None for rule in allow_rules):
+            return True
+
+        patterns = tuple(
+            rule.value.rule_content
+            for rule in allow_rules
+            if rule.value.rule_content is not None
+        )
+        match_values = _rule_match_values(classification, guard_policies)
+        if not match_values:
+            return False
+        return all(
+            any(_rule_value_matches(value, pattern) for pattern in patterns)
+            for value in match_values
+        )
 
     def _session_allows_all(
         self,
@@ -405,3 +557,52 @@ def _dedupe(values: list[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def _rule_content_matches(
+    pattern: str,
+    *,
+    classification: ToolCallClassification,
+    guard_policies: tuple[GuardPolicy, ...],
+) -> bool:
+    return any(
+        _rule_value_matches(value, pattern)
+        for value in _rule_match_values(classification, guard_policies)
+    )
+
+
+def _rule_value_matches(value: str, pattern: str) -> bool:
+    if fnmatch.fnmatchcase(value, pattern):
+        return True
+    if pattern.endswith(":*"):
+        prefix = pattern[:-2]
+        return value == prefix or value.startswith(f"{prefix} ")
+    return False
+
+
+def _rule_match_values(
+    classification: ToolCallClassification,
+    guard_policies: tuple[GuardPolicy, ...],
+) -> tuple[str, ...]:
+    values: list[str] = []
+    for target in classification.targets:
+        values.append(target.value)
+        if target.normalized_value:
+            values.append(target.normalized_value)
+    for policy in guard_policies:
+        values.append(policy.original_path)
+        values.append(str(policy.normalized_path))
+    return tuple(_dedupe([value for value in values if value]))
+
+
+def _rule_strings(rules: tuple[PermissionRule, ...]) -> tuple[str, ...]:
+    from services.permissions.rules import permission_rule_value_to_string
+
+    return tuple(permission_rule_value_to_string(rule.value) for rule in rules)
+
+
+def _project_rule_reason(
+    behavior: PermissionBehavior,
+    rules: tuple[PermissionRule, ...],
+) -> str:
+    return f"Project permission settings matched {behavior}: {', '.join(_rule_strings(rules))}"

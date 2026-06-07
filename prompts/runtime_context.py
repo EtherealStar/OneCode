@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.runtime_state import RuntimeState
 from services.tools.types import ToolDescriptor
+
+if TYPE_CHECKING:
+    from services.skills import SkillCommand
 
 
 @dataclass(frozen=True)
@@ -20,5 +24,6 @@ class PromptRuntimeContext:
     state: RuntimeState
     cwd: Path
     visible_tools: tuple[ToolDescriptor, ...] = ()
+    visible_skills: tuple["SkillCommand", ...] = ()
     files_read: tuple[str, ...] = ()
     transition: str | None = None

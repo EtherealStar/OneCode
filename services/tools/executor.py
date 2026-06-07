@@ -392,6 +392,7 @@ class RegistryToolExecutor:
             content=outcome.result.content,
             is_error=outcome.result.is_error,
             metadata=outcome.result.metadata,
+            followup_messages=outcome.result.followup_messages,
         )
         if not final_result.is_error:
             final_result = self._apply_result_policy(
@@ -855,6 +856,7 @@ class RegistryToolExecutor:
                 ),
                 is_error=result.is_error,
                 metadata=metadata,
+                followup_messages=result.followup_messages,
             )
 
         payload = {
@@ -875,6 +877,7 @@ class RegistryToolExecutor:
             content=json.dumps(payload, ensure_ascii=False),
             is_error=result.is_error,
             metadata=metadata,
+            followup_messages=result.followup_messages,
         )
 
     def _apply_success_side_effects(
@@ -885,6 +888,15 @@ class RegistryToolExecutor:
         tool_input: dict[str, Any],
     ) -> None:
         """Apply executor-owned session state updates after successful results."""
+        allowed_tools = result.metadata.get("allowed_tools")
+        if (
+            result.tool_name == "skill"
+            and self._permission_policy is not None
+            and allowed_tools
+        ):
+            for tool_name in _tool_names(allowed_tools):
+                self._permission_policy.session_store.allow_tool(tool_name)
+
         if result.tool_name not in FILE_STATE_TOOL_NAMES:
             return
         path = result.metadata.get("path")
@@ -925,6 +937,7 @@ class RegistryToolExecutor:
             content=result.content,
             is_error=True,
             metadata=result.metadata,
+            followup_messages=(),
         )
         await self._hooks.run(
             HookEvent.TOOL_ERROR,
@@ -1148,3 +1161,19 @@ def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     return value if isinstance(value, int) else None
+
+
+def _tool_names(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw_values = value.split(",")
+    else:
+        try:
+            raw_values = tuple(value)  # type: ignore[arg-type]
+        except TypeError:
+            raw_values = (value,)
+    names: list[str] = []
+    for item in raw_values:
+        name = str(item).strip()
+        if name and name not in names:
+            names.append(name)
+    return tuple(names)

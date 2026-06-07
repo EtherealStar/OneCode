@@ -112,6 +112,8 @@ executor 会先做保守候选分类，再对批次内每个调用串行 preflig
 
 当前 executor 已消费 `max_result_size_chars`。超出预算时，若 `persist_when_exceeded=True` 且注入了 `ToolResultStore`，executor 会写入 durable result store 并返回模型可见引用；否则返回 JSON 预览 payload。metadata 会记录 `result_truncated`、`original_size_chars`、`max_result_size_chars` 和可用的 stored result 引用。
 
+`ToolExecutionResult.followup_messages` 用于工具成功后追加 durable internal messages。它不属于模型可见 tool result content，不参与 tool result 截断；主循环会先写入普通 `tool_result`，再把 successful result 的 follow-up messages 追加到 `MessageStore`。第一版由 `skill` 工具用来追加 `role="attachment"` 的 skill payload，错误结果不会保留 follow-up messages。
+
 ## Executor-Owned State Effects
 
 工具 handler 不应直接修改主循环状态。当前 executor 在成功结果后统一维护 `RuntimeState.metadata["files_read"]`，记录 `read_file` 和 `edit_file` 成功触达的路径。这让 read handler 可以保持并发安全，也让 `edit_file` 的 read-before-edit 规则有稳定状态来源。

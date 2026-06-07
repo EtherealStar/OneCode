@@ -25,6 +25,7 @@ class ToolExecutionResult:
     content: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    followup_messages: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

@@ -92,6 +92,30 @@ class FakeReactiveCompactor:
         state.metadata["reactive_compacted"] = error.error_type
 
 
+@dataclass
+class FollowupToolExecutor:
+    attachment: dict[str, Any]
+
+    async def execute(
+        self,
+        tool_calls: tuple[ToolCall, ...],
+        state: RuntimeState,
+    ):
+        del state
+        for tool_call in tool_calls:
+            yield ToolExecutionUpdate(
+                type="result",
+                result=ToolExecutionResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    content="Launching skill: code-review",
+                    followup_messages=(self.attachment,),
+                ),
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+            )
+
+
 def make_loop(
     responses: list[LLMResponse],
     *,
@@ -245,6 +269,66 @@ def test_loop_continues_when_tool_calls_present(tmp_path: Path) -> None:
         "metadata": {},
     }
     assert model_client.snapshots[1].messages == messages[:3]
+
+
+def test_loop_appends_successful_tool_followup_attachments(tmp_path: Path) -> None:
+    tool_call = ToolCall(id="call-1", name="skill", input={"skill": "code-review"})
+    attachment = AttachmentMessage(
+        attachment={
+            "type": "skill",
+            "skill_name": "code-review",
+            "content": "Follow this review checklist.",
+            "source": "project",
+        },
+        attachment_id="skill_att",
+        source="skill_tool",
+    ).to_message()
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = FakeModelClient(
+        [
+            LLMResponse(
+                assistant_message={"role": "assistant", "content": []},
+                final_text="",
+                tool_calls=(tool_call,),
+            ),
+            LLMResponse(
+                assistant_message=assistant_message("final"),
+                final_text="final",
+            ),
+        ]
+    )
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(
+            message_store,
+            context_preparer=AttachmentContextPreparer(),
+        ),
+        model_client=model_client,
+        tool_executor=FollowupToolExecutor(attachment),
+    )
+
+    result = run_to_final_text(loop, "use the skill")
+
+    assert result == "final"
+    stored = message_store.current_messages()
+    assert [message["role"] for message in stored[:4]] == [
+        "user",
+        "assistant",
+        "tool_result",
+        "attachment",
+    ]
+    assert stored[3]["attachment"]["type"] == "skill"
+    assert all(
+        message.get("role") != "attachment"
+        for message in model_client.snapshots[1].messages
+    )
+    assert "[skill loaded: code-review]" in model_client.snapshots[1].messages[-1]["content"]
 
 
 def test_loop_uses_tool_calls_not_stop_reason(tmp_path: Path) -> None:

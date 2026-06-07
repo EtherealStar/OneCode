@@ -12,6 +12,7 @@ from prompts.runtime_context import PromptRuntimeContext
 from prompts.sections import PromptSection, default_sections
 
 if TYPE_CHECKING:
+    from services.skills import SkillCatalogProvider
     from services.tools.registry import ToolRegistry
 
 
@@ -22,10 +23,12 @@ class DynamicPromptAssembler:
         self,
         cwd: Path | str | Callable[[], Path | str],
         tool_registry: "ToolRegistry | None" = None,
+        skill_provider: "SkillCatalogProvider | None" = None,
         section_cache: PromptSectionCache | None = None,
     ) -> None:
         self._cwd = cwd
         self._tool_registry = tool_registry
+        self._skill_provider = skill_provider
         self._section_cache = section_cache or PromptSectionCache()
 
     @property
@@ -46,10 +49,14 @@ class DynamicPromptAssembler:
         visible_tools = ()
         if self._tool_registry is not None:
             visible_tools = self._tool_registry.visible_descriptors(state)
+        visible_skills = ()
+        if self._skill_provider is not None:
+            visible_skills = tuple(self._skill_provider.visible_skills(state, cwd))
         return PromptRuntimeContext(
             state=state,
             cwd=cwd,
             visible_tools=visible_tools,
+            visible_skills=visible_skills,
             files_read=_files_read_from_state(state),
             transition=(
                 state.last_transition.value if state.last_transition is not None else None

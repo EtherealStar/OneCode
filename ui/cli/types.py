@@ -26,6 +26,7 @@ from services.permissions import (
     PermissionPrompter,
     SessionPermissionStore,
 )
+from services.skills import SkillCatalogProvider
 from services.subagents.runner import SubagentRunner
 from services.tools.executor import ToolExecutor
 from services.tools.file_state import FileStateCache
@@ -56,6 +57,7 @@ class CliRuntime:
     session_memory_extractor: SessionMemoryExtractionService | None = None
     session_memory_updater: SessionMemoryUpdater | None = None
     attachment_collector: AttachmentCollector | None = None
+    skill_provider: SkillCatalogProvider | None = None
 
     def with_session(
         self,
@@ -128,6 +130,7 @@ class CliRuntime:
             prompt_assembler=DynamicPromptAssembler(
                 self.workspace,
                 tool_registry=self.registry,
+                skill_provider=self.skill_provider,
             ),
             tool_schema_provider=self.registry,
             context_preparer=AttachmentContextPreparer(self.compaction_service),
