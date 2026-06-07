@@ -14,6 +14,7 @@ from services.observability import JsonlTraceSink, TraceRecorder
 from services.context.current_model_context import CurrentModelContext
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolExecutionResult
+from services.tasks import TaskStore
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from tools.write_file import descriptor as write_file_descriptor
@@ -163,6 +164,7 @@ def test_help_command_prints_available_commands(tmp_path: Path, capsys: Any) -> 
     output = capsys.readouterr().out
     assert result.should_exit is False
     assert "/tools" in output
+    assert "/tasks" in output
     assert "/mcp [tools]" in output
     assert "/resume <target>" in output
     assert "/permissions" not in output
@@ -354,3 +356,44 @@ def test_unknown_command_does_not_exit(tmp_path: Path, capsys: Any) -> None:
     output = capsys.readouterr().out
     assert result.should_exit is False
     assert "Unknown command" in output
+
+
+def test_tasks_command_renders_empty_task_list(tmp_path: Path, capsys: Any) -> None:
+    runtime = replace(make_runtime(tmp_path), task_store=TaskStore(tmp_path))
+
+    result = handle_command(runtime, "/tasks")
+
+    output = capsys.readouterr().out
+    assert result.should_exit is False
+    assert "No tasks found for task list session-cli." in output
+    assert runtime.state.metadata["task_list_id"] == "session-cli"
+
+
+def test_tasks_command_renders_existing_tasks(tmp_path: Path, capsys: Any) -> None:
+    task_store = TaskStore(tmp_path)
+    first = task_store.create_task("session-cli", subject="Schema", description="A")
+    second = task_store.create_task("session-cli", subject="API", description="B")
+    task_store.block_task("session-cli", first.id, second.id)
+    runtime = replace(make_runtime(tmp_path), task_store=task_store)
+
+    handle_command(runtime, "/tasks")
+
+    output = capsys.readouterr().out
+    assert "Tasks:" in output
+    assert "task list: session-cli" in output
+    assert ".onecode" in output
+    assert "#1 [pending] Schema" in output
+    assert "#2 [pending] API [blocked by #1]" in output
+
+
+def test_tasks_command_reports_store_errors(tmp_path: Path, capsys: Any) -> None:
+    task_store = TaskStore(tmp_path)
+    task_dir = task_store.tasks_dir("session-cli")
+    task_dir.mkdir(parents=True)
+    (task_dir / "1.json").write_text("{bad json", encoding="utf-8")
+    runtime = replace(make_runtime(tmp_path), task_store=task_store)
+
+    handle_command(runtime, "/tasks")
+
+    output = capsys.readouterr().out
+    assert "Error: Could not read task file" in output

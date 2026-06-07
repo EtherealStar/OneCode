@@ -55,6 +55,7 @@ def _handler_for(runner: SubagentRunner):
                 subagent_type=tool_input.get("subagent_type"),
                 parent_session_id=runtime.state.session_id,
                 parent_tool_call_id=runtime.tool_call_id,
+                metadata=_child_metadata(runtime),
             )
         )
         payload = {
@@ -85,6 +86,15 @@ def _handler_for(runner: SubagentRunner):
         )
 
     return handle
+
+
+def _child_metadata(runtime: ToolRuntime) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    task_list_id = runtime.state.metadata.get("task_list_id")
+    if isinstance(task_list_id, str) and task_list_id:
+        metadata["task_list_id"] = task_list_id
+        metadata["parent_task_list_id"] = task_list_id
+    return metadata
 
 
 def _validate(tool_input: dict[str, Any], runtime: ToolRuntime) -> ValidationResult:

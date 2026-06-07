@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
+from services.tasks import TaskRecord
 from ui.cli.types import CliRuntime
 
 PREVIEW_CHARS = 180
@@ -17,7 +18,7 @@ def render_banner(runtime: CliRuntime) -> str:
             f"cwd: {runtime.workspace}",
             f"session: {runtime.state.session_id}",
             f"model: {runtime.provider_label} / {runtime.model}",
-            "commands: /help /tools /mcp /status /history /trace /compact /resume /clear /exit",
+            "commands: /help /tools /tasks /mcp /status /history /trace /compact /resume /clear /exit",
         ]
     )
 
@@ -28,6 +29,7 @@ def render_help() -> str:
             "Commands:",
             "  /help              Show commands.",
             "  /tools             List enabled tools.",
+            "  /tasks             Show current durable task list.",
             "  /mcp [tools]       Show MCP server status and discovered tools.",
             "  /status            Show current runtime status.",
             "  /history [n]       Show recent message summaries.",
@@ -67,6 +69,38 @@ def render_tools(descriptors: Iterable[Any]) -> str:
     lines = ["Enabled tools:"]
     for descriptor in descriptors:
         lines.append(f"  {descriptor.name}: {descriptor.description}")
+    return "\n".join(lines)
+
+
+def render_tasks(
+    runtime: CliRuntime,
+    tasks: Iterable[TaskRecord],
+    *,
+    task_list_id: str,
+    tasks_dir: Path,
+) -> str:
+    items = [task for task in tasks if task.metadata.get("_internal") is not True]
+    if not items:
+        return f"No tasks found for task list {task_list_id}."
+    by_id = {task.id: task for task in items}
+    lines = [
+        "Tasks:",
+        f"  task list: {task_list_id}",
+        f"  path: {_display_path(tasks_dir, runtime.workspace)}",
+    ]
+    for task in items:
+        suffix = ""
+        unfinished_blockers = [
+            blocker_id
+            for blocker_id in task.blocked_by
+            if by_id.get(blocker_id) is not None
+            and by_id[blocker_id].status != "completed"
+        ]
+        if task.owner:
+            suffix += f" owner={task.owner}"
+        if unfinished_blockers:
+            suffix += " [blocked by " + ", ".join(f"#{item}" for item in unfinished_blockers) + "]"
+        lines.append(f"  #{task.id} [{task.status}] {task.subject}{suffix}")
     return "\n".join(lines)
 
 

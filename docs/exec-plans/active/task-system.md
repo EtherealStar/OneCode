@@ -17,12 +17,12 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 - [x] (2026-06-07 16:10+08:00) 阅读 `AGENTS.md`、`PLANS.md`、`architecture.md`、相关 design docs、active exec plans、tech debt tracker，以及 `docs/references/s12_task_system/` 中的 README、教学版 `code.py`、CC 参考工具和 `services/task/task/tasks.ts`。
 - [x] (2026-06-07 16:20+08:00) 与用户确认第一版产品范围：偏向 CC 源码；实现 CC 四工具；新增 `TaskCreated` 和 `TaskCompleted` hook；任务文件位于 `.onecode/tasks/{task_list_id}/{id}.json`；为未来 subagent 共享任务列表预留 task list id 机制；维护 `blocks` 与 `blockedBy` 双向依赖；采用原子写加进程内锁；第一版只做 `/tasks` 命令；不把任务列表每轮自动注入 prompt。
 - [x] (2026-06-07 16:35+08:00) 撰写本中文 ExecPlan，明确模块落点、接口、实现顺序、测试策略和验收方式。
-- [ ] 新增 `services/tasks/` 持久化服务，包含任务数据模型、task list id 解析、原子写、进程内锁、高水位 ID、CRUD、依赖维护和 claim 行为。
-- [ ] 扩展 `services/hooks/events.py`，新增 `TaskCreated` 和 `TaskCompleted`，并在 task 工具中运行现有 `HookRegistry`。
-- [ ] 新增四个任务工具目录并注册到 CLI runtime：`tools/task_create`、`tools/task_get`、`tools/task_update` 和 `tools/task_list`。
-- [ ] 为未来 subagent 共享预留 task list id 传播：主 runtime state、subagent child state、环境变量和 `/clear` / `/resume` 的行为需要一致。
-- [ ] 新增 CLI `/tasks` 命令和渲染函数，显示当前 task list id、任务路径和任务摘要。
-- [ ] 补充单元测试、工具集成测试、hook 测试、CLI 命令测试、compileall 和必要的全量 pytest 验证。
+- [x] (2026-06-07 17:20+08:00) 新增 `services/tasks/` 持久化服务，包含任务数据模型、task list id 解析、原子写、进程内锁、高水位 ID、CRUD、依赖维护、轻量 cycle 检测和 claim 行为。
+- [x] (2026-06-07 17:30+08:00) 扩展 `services/hooks/events.py`，新增 `TaskCreated` 和 `TaskCompleted`，并在 task 工具中运行现有 `HookRegistry`；创建 hook 阻断会回滚新任务，完成 hook 阻断会阻止 status 写入。
+- [x] (2026-06-07 17:45+08:00) 新增四个任务工具目录并注册到 CLI runtime：`tools/task_create`、`tools/task_get`、`tools/task_update` 和 `tools/task_list`。
+- [x] (2026-06-07 17:55+08:00) 为未来 subagent 共享预留 task list id 传播：`agent` 工具把父 state metadata 传入 `SubagentRequest.metadata`，`SubagentRunner` 将 `task_list_id` 和 `parent_task_list_id` 复制到 child state；环境变量仍由 `resolve_task_list_id()` 优先处理。
+- [x] (2026-06-07 18:00+08:00) 新增 CLI `/tasks` 命令和渲染函数，显示当前 task list id、任务路径和任务摘要，并更新 `/help` 与 banner。
+- [x] (2026-06-07 18:10+08:00) 补充单元测试、工具集成测试、hook 测试、CLI 命令测试、subagent metadata 传播测试、compileall 和全量 pytest 验证。
 
 ## Surprises & Discoveries
 
@@ -32,6 +32,10 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
   Evidence: `docs/design-docs/tools-runtime-architecture.md` 说明 `ToolDescriptor.name` 是 snake_case 工具名；现有工具如 `read_file`、`edit_file`、`grep` 都按此规则注册。
 - Observation: 现有 hook registry 是通用的，可以直接新增事件，而不需要创建 task-specific hook registry。
   Evidence: `services/hooks/events.py` 定义 `HookEvent`，`services/hooks/registry.py::HookRegistry` 对所有事件保存 callback 并返回 `HookResult(blocking_error, updated_input, metadata)`。工具 executor 已在 `PreToolUse`、`PostToolUse` 和 `ToolError` 上使用同一 registry。
+- Observation: `SubagentRunner` 构造 child runtime 时没有直接持有父 `RuntimeState`，因此 task list id 共享不能只改 runner 内部读取父 state。
+  Evidence: `services/subagents/runner.py::SubagentRunner.__init__()` 接收 parent message store、model client、base descriptors、guard、permission policy 等对象，但不接收父 `RuntimeState`。实现改为 `tools/agent/tool.py` 从 `runtime.state.metadata` 取 `task_list_id`，写入 `SubagentRequest.metadata`，再由 runner 复制到 child state。
+- Observation: 共享 JSON Schema 校验器只实现很小的结构子集，复杂字段语义仍需要工具级 pydantic validation 兜底。
+  Evidence: `services/tools/executor.py::_validate_property()` 只显式检查 string、boolean 和 integer；任务工具使用 pydantic `BaseModel` 在 `validate_input` 中校验 list、object、别名字段和 enum。
 
 ## Decision Log
 
@@ -71,9 +75,17 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
   Rationale: 用户明确只实现工具。任务列表可能增长，自动注入会污染 prompt；模型需要时可调用 `task_list` 或 `task_get`。
   Date/Author: 2026-06-07 / Codex
 
+- Decision: 第一版实现轻量 cycle detection，拒绝新增依赖边后从 blocked task 能沿 `blocks` 走回 blocker 的情况。
+  Rationale: 计划允许不实现完整 DAG cycle detection，但轻量检测成本低，可以避免最常见的任务图死循环，同时不引入额外图数据库或复杂重建逻辑。
+  Date/Author: 2026-06-07 / Codex
+
+- Decision: 四个任务工具都标记为 `concurrency_safe=True`，但写入由 `TaskStore` 的进程内 `RLock` 串行保护。
+  Rationale: 这贴近 CC 四工具的可并发语义，也符合计划推荐；实际文件更新仍通过 service 层锁和原子写保证同进程内一致性。
+  Date/Author: 2026-06-07 / Codex
+
 ## Outcomes & Retrospective
 
-尚未开始实现。本计划完成后，应记录实际新增模块、工具注册点、测试数量、手动 CLI 验证输出、哪些行为与 CC 参考实现一致、哪些行为因 OneCode 架构而不同，以及后续是否要进入 fs.watch UI、background task 或跨进程文件锁阶段。
+第一版主体实现已经落地。新增 `services/tasks/`、`tools/task_create`、`tools/task_get`、`tools/task_update`、`tools/task_list`，并在 `ui/cli/app.py::build_runtime()` 注册到 base descriptors。CLI 新增 `/tasks`，`HookEvent` 新增 `TaskCreated` 和 `TaskCompleted`，`agent` 工具和 `SubagentRunner` 支持把父 task list id 传给 child runtime。当前已通过 `tests/test_task_store.py`、`tests/test_task_tools.py`、`tests/test_hooks.py`、`tests/test_cli_commands.py`、`tests/test_subagent_runner.py`、compileall 和全量 `uv run python -m pytest tests -q`，全量结果为 `290 passed`。后续仍可按独立计划扩展 fs.watch UI、background task 或跨进程文件锁。
 
 ## Context and Orientation
 
@@ -352,3 +364,4 @@ CLI 验收要求：`/help` 和 banner 包含 `/tasks`；`/tasks` 能显示 task 
 ## Revision Notes
 
 - 2026-06-07 / Codex: 初始版本。根据用户确认的范围撰写完整中文 ExecPlan，选择 CC 四工具、workspace-local `.onecode/tasks/{task_list_id}/`、task list id 共享预留、双向依赖、进程内锁加原子写、`TaskCreated` / `TaskCompleted` hooks、CLI `/tasks`，并明确不实现 background task 和每轮自动任务注入。
+- 2026-06-07 / Codex: 实施第一版主体代码，记录 subagent metadata 传播、共享 JSON Schema 校验子集和轻量 cycle detection 的发现与决策；定向测试、compileall 和全量 pytest 均已通过。

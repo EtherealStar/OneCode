@@ -292,3 +292,23 @@ def test_hook_registry_records_hook_trace(tmp_path: Path) -> None:
     assert hook_end["attributes"]["blocking"] is False
     assert hook_end["attributes"]["updated_input"] is True
     assert hook_end["attributes"]["hook_error_count"] == 0
+
+
+def test_task_hook_events_can_register_and_run() -> None:
+    hooks = HookRegistry()
+    observed: list[str] = []
+    hooks.register(
+        HookEvent.TASK_CREATED,
+        lambda payload: observed.append(payload["task_list_id"]) or None,
+    )
+    hooks.register(
+        HookEvent.TASK_COMPLETED,
+        lambda payload: HookResult(blocking_error="blocked"),
+    )
+
+    created = asyncio.run(hooks.run(HookEvent.TASK_CREATED, {"task_list_id": "tasks"}))
+    completed = asyncio.run(hooks.run(HookEvent.TASK_COMPLETED, {"task_list_id": "tasks"}))
+
+    assert observed == ["tasks"]
+    assert created.blocking_error is None
+    assert completed.blocking_error == "blocked"

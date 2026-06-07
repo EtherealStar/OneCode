@@ -49,6 +49,7 @@ from services.permissions import (
 )
 from services.skills import LoaderSkillCatalogProvider
 from services.subagents.runner import SubagentRunner
+from services.tasks import TaskStore
 from services.tools.executor import RegistryToolExecutor
 from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
@@ -59,6 +60,10 @@ from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from tools.skill import descriptor as skill_descriptor
+from tools.task_create import descriptor as task_create_descriptor
+from tools.task_get import descriptor as task_get_descriptor
+from tools.task_list import descriptor as task_list_descriptor
+from tools.task_update import descriptor as task_update_descriptor
 from tools.write_file import descriptor as write_file_descriptor
 from ui.cli import renderer
 from ui.cli.commands import handle_command
@@ -100,6 +105,8 @@ def build_runtime(workspace: Path) -> CliRuntime:
     mcp_snapshot = mcp_manager.connect_all_blocking()
     state.metadata["mcp_server_instructions"] = mcp_snapshot.instructions
     mcp_descriptors = build_mcp_tool_descriptors(mcp_manager)
+    hooks = HookRegistry(trace_recorder=trace_recorder)
+    task_store = TaskStore(workspace)
     runner_ref: dict[str, SubagentRunner] = {}
     base_descriptors = (
         read_file_descriptor(),
@@ -113,12 +120,15 @@ def build_runtime(workspace: Path) -> CliRuntime:
             cwd=lambda: workspace,
             fork_runner=lambda: runner_ref.get("runner"),
         ),
+        task_create_descriptor(task_store, hooks),
+        task_get_descriptor(task_store),
+        task_update_descriptor(task_store, hooks),
+        task_list_descriptor(task_store),
         *mcp_descriptors,
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
     result_store = ToolResultStore(message_store.transcript_store.session_dir)
     session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
-    hooks = HookRegistry(trace_recorder=trace_recorder)
     long_term_memory_store = LongTermMemoryStore(workspace)
     instruction_memory_loader = InstructionMemoryLoader(
         workspace,
@@ -257,6 +267,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         instruction_memory_loader=instruction_memory_loader,
         long_term_memory_provider=long_term_memory_provider,
         memory_selector=memory_selector,
+        task_store=task_store,
     )
 
 

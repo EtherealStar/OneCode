@@ -72,6 +72,7 @@ class SubagentRunner:
         child_state = RuntimeState(
             max_turns=_request_max_turns(request) or definition.max_turns or 20
         )
+        _copy_shared_runtime_metadata(request, child_state)
         child_state.metadata["hidden_tools"] = {"agent"}
         if definition.read_only:
             child_state.metadata["read_only_agent"] = True
@@ -167,6 +168,7 @@ class SubagentRunner:
             metadata={"purpose": "skill", "skill_name": skill.name},
         )
         child_state = RuntimeState(max_turns=definition.max_turns or 20)
+        _copy_shared_runtime_metadata(request, child_state)
         child_state.metadata["hidden_tools"] = {"agent", "skill"}
         child_store = MessageStore(
             transcript_root=self._transcript_root,
@@ -441,6 +443,18 @@ def _request_max_turns(request: SubagentRequest) -> int | None:
     if isinstance(value, int) and value > 0:
         return value
     return None
+
+
+def _copy_shared_runtime_metadata(
+    request: SubagentRequest,
+    child_state: RuntimeState,
+) -> None:
+    """Carry parent-scoped runtime facts that child tools must share."""
+
+    for key in ("task_list_id", "parent_task_list_id"):
+        value = request.metadata.get(key)
+        if isinstance(value, str) and value:
+            child_state.metadata[key] = value
 
 
 def _tool_result_count(message_store: MessageStore) -> int:

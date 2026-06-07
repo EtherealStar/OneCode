@@ -17,6 +17,7 @@ from services.permissions import PermissionPolicy, SessionPermissionStore
 from services.context.current_model_context import CurrentModelContext
 from services.subagents.runner import SubagentRunner
 from services.subagents.types import SubagentRequest
+from services.tasks import resolve_task_list_id
 from services.tools.types import (
     ToolCall,
     ToolCallClassification,
@@ -316,6 +317,39 @@ def test_child_permission_ask_bubbles_to_shared_prompter_and_session_store(
     assert model.snapshots[1].messages[-1]["is_error"] is False
 
 
+def test_child_runtime_inherits_task_list_id_metadata(tmp_path: Path) -> None:
+    call = ToolCall(id="call-probe", name="task_list_probe", input={})
+    runner, model, _parent_store, _policy = make_runner(
+        tmp_path,
+        [
+            LLMResponse(
+                assistant_message={"role": "assistant", "content": []},
+                final_text="",
+                tool_calls=(call,),
+            ),
+            LLMResponse(assistant_message=assistant("done"), final_text="done"),
+        ],
+        base_descriptors=(task_list_probe_descriptor(),),
+    )
+
+    result = run(
+        runner.run(
+            SubagentRequest(
+                prompt="check task list",
+                subagent_type="general-purpose",
+                parent_session_id="parent-session",
+                parent_tool_call_id="call-agent",
+                metadata={"task_list_id": "shared-demo"},
+            )
+        )
+    )
+
+    assert result.final_text == "done"
+    tool_result = model.snapshots[1].messages[-1]
+    assert tool_result["role"] == "tool_result"
+    assert tool_result["content"] == "shared-demo"
+
+
 def dummy_descriptor(
     name: str,
     *,
@@ -383,6 +417,42 @@ def external_read_descriptor() -> ToolDescriptor:
             "type": "object",
             "properties": {"path": {"type": "string"}},
             "required": ["path"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        classify_input=classify,
+    )
+
+
+def task_list_probe_descriptor() -> ToolDescriptor:
+    def classify(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification:
+        task_list_id = resolve_task_list_id(runtime.state)
+        return ToolCallClassification(
+            read_only=True,
+            modifies_filesystem=False,
+            concurrency_safe=True,
+            targets=(ToolTarget(kind="session_state", operation="task_read", value=task_list_id),),
+        )
+
+    def handler(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            tool_call_id="",
+            tool_name="task_list_probe",
+            content=resolve_task_list_id(runtime.state),
+        )
+
+    return ToolDescriptor(
+        name="task_list_probe",
+        description="probe task list id",
+        input_schema={
+            "type": "object",
+            "properties": {},
             "additionalProperties": False,
         },
         handler=handler,
