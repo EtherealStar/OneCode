@@ -67,15 +67,20 @@ class SubagentRunner:
                 error="unknown_subagent",
             )
         is_fork = request.subagent_type is None
-        is_memory_extraction = _is_memory_extraction_request(request)
-        child_state = RuntimeState(max_turns=definition.max_turns or 20)
+        is_session_memory_extraction = _is_session_memory_extraction_request(request)
+        is_long_term_memory_extraction = _is_long_term_memory_extraction_request(request)
+        child_state = RuntimeState(
+            max_turns=_request_max_turns(request) or definition.max_turns or 20
+        )
         child_state.metadata["hidden_tools"] = {"agent"}
         if definition.read_only:
             child_state.metadata["read_only_agent"] = True
         if is_fork:
             child_state.metadata["is_fork_child"] = True
-        if is_memory_extraction:
+        if is_session_memory_extraction:
             self._configure_memory_extraction_child(child_state, request)
+        if is_long_term_memory_extraction:
+            self._configure_long_term_memory_extraction_child(child_state, request)
         child_store = MessageStore(
             transcript_root=self._transcript_root,
             session_id=child_state.session_id,
@@ -94,7 +99,8 @@ class SubagentRunner:
             _child_descriptors(
                 definition,
                 self._base_descriptors,
-                memory_extraction=is_memory_extraction,
+                session_memory_extraction=is_session_memory_extraction,
+                long_term_memory_extraction=is_long_term_memory_extraction,
             ),
             permission_policy=self._permission_policy,
         )
@@ -126,7 +132,9 @@ class SubagentRunner:
             definition,
             request,
             is_fork=is_fork,
-            is_memory_extraction=is_memory_extraction,
+            is_memory_extraction=(
+                is_session_memory_extraction or is_long_term_memory_extraction
+            ),
         )
 
     async def run_skill(
@@ -222,6 +230,25 @@ class SubagentRunner:
             "glob",
         }
         child_state.metadata["files_read"] = {normalized}
+
+    def _configure_long_term_memory_extraction_child(
+        self,
+        child_state: RuntimeState,
+        request: SubagentRequest,
+    ) -> None:
+        """Mark the child as an internal writer for workspace long-term memory."""
+
+        allowed_dir = request.metadata.get("allowed_memory_dir")
+        if not isinstance(allowed_dir, str) or not allowed_dir:
+            return
+        normalized = str(Path(allowed_dir).resolve())
+        child_state.metadata["long_term_memory_extraction_agent"] = True
+        child_state.metadata["allowed_memory_dir"] = normalized
+        child_state.metadata["hidden_tools"] = {
+            "agent",
+            "bash",
+            "skill",
+        }
 
     def _definition_for_request(
         self,
@@ -370,13 +397,21 @@ def _child_descriptors(
     definition: AgentDefinition,
     base_descriptors: tuple[ToolDescriptor, ...],
     *,
-    memory_extraction: bool = False,
+    session_memory_extraction: bool = False,
+    long_term_memory_extraction: bool = False,
 ) -> tuple[ToolDescriptor, ...]:
-    if memory_extraction:
+    if session_memory_extraction:
         return tuple(
             descriptor
             for descriptor in base_descriptors
             if descriptor.name == "edit_file"
+        )
+    if long_term_memory_extraction:
+        allowed = {"read_file", "grep", "glob", "write_file", "edit_file"}
+        return tuple(
+            descriptor
+            for descriptor in base_descriptors
+            if descriptor.name in allowed
         )
     allowed_names = set(definition.tools)
     disallowed = set(definition.disallowed_tools)
@@ -391,8 +426,21 @@ def _child_descriptors(
     return tuple(descriptors)
 
 
-def _is_memory_extraction_request(request: SubagentRequest) -> bool:
+def _is_session_memory_extraction_request(request: SubagentRequest) -> bool:
     return request.metadata.get("purpose") == "session_memory_extraction"
+
+
+def _is_long_term_memory_extraction_request(request: SubagentRequest) -> bool:
+    return request.metadata.get("purpose") == "long_term_memory_extraction"
+
+
+def _request_max_turns(request: SubagentRequest) -> int | None:
+    value = request.metadata.get("max_turns")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
 
 
 def _tool_result_count(message_store: MessageStore) -> int:

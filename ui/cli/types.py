@@ -22,6 +22,15 @@ from services.compaction import (
 )
 from services.observability import TraceRecorder
 from services.mcp import McpConnectionManager
+from services.hooks import HookRegistry
+from services.memory import (
+    InstructionMemoryLoader,
+    LongTermMemoryExtractionService,
+    LongTermMemoryPromptProvider,
+    LongTermMemoryStore,
+    RelevantMemoryContextPreparer,
+    RelevantMemorySelector,
+)
 from services.permissions import (
     PermissionPolicy,
     PermissionPrompter,
@@ -60,6 +69,12 @@ class CliRuntime:
     attachment_collector: AttachmentCollector | None = None
     skill_provider: SkillCatalogProvider | None = None
     mcp_manager: McpConnectionManager | None = None
+    hooks: HookRegistry | None = None
+    long_term_memory_store: LongTermMemoryStore | None = None
+    long_term_memory_extractor: LongTermMemoryExtractionService | None = None
+    instruction_memory_loader: InstructionMemoryLoader | None = None
+    long_term_memory_provider: LongTermMemoryPromptProvider | None = None
+    memory_selector: RelevantMemorySelector | None = None
 
     def with_session(
         self,
@@ -72,6 +87,7 @@ class CliRuntime:
             self.current_model_context.snapshot = None
         if self.subagent_runner is not None:
             self.subagent_runner.bind_parent_message_store(message_store)
+        state.metadata["workspace"] = str(self.workspace)
         state.metadata["session_memory_resume_needs_extraction"] = True
         try:
             resume_generation = int(
@@ -133,9 +149,20 @@ class CliRuntime:
                 self.workspace,
                 tool_registry=self.registry,
                 skill_provider=self.skill_provider,
+                instruction_memory_loader=self.instruction_memory_loader,
+                long_term_memory_provider=self.long_term_memory_provider,
             ),
             tool_schema_provider=self.registry,
-            context_preparer=AttachmentContextPreparer(self.compaction_service),
+            context_preparer=AttachmentContextPreparer(
+                RelevantMemoryContextPreparer(
+                    self.long_term_memory_store,
+                    self.memory_selector,
+                    inner=self.compaction_service,
+                )
+                if self.long_term_memory_store is not None
+                and self.memory_selector is not None
+                else self.compaction_service
+            ),
         )
         loop = AgentLoop(
             state=state,
@@ -145,6 +172,7 @@ class CliRuntime:
             tool_executor=self.tool_executor,
             trace_recorder=self.trace_recorder,
             current_model_context=self.current_model_context,
+            hooks=self.hooks,
             compaction_service=self.compaction_service,
             session_memory_extractor=session_memory_extractor,
             session_memory_updater=session_memory_updater,

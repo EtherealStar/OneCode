@@ -16,6 +16,7 @@ from services.tools.types import ToolCall, ToolRuntime
 from tools.bash import descriptor as bash_descriptor
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 
 
 def _decision(
@@ -246,3 +247,65 @@ def test_project_ask_rule_keeps_tool_visible_but_requests_permission(
     assert registry.visible_descriptors(state) == (descriptor,)
     assert decision.action == "ask"
     assert "Project permission settings" in decision.reason
+
+
+def test_memory_directory_write_does_not_ask_for_protected_onecode_dir(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ProjectPermissionSettingsStore(workspace / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=store)
+    state = RuntimeState()
+    descriptor = write_file_descriptor()
+    guard = SandboxGuard(SandboxBoundary(cwd=workspace))
+    runtime = ToolRuntime(state=state, guard=guard)
+    tool_input = {"file_path": ".onecode/memory/user.md", "content": "memory"}
+    classification = descriptor.classify_input(tool_input, runtime)
+
+    decision = policy.evaluate(
+        tool_call=ToolCall(id="call-1", name="write_file", input=tool_input),
+        descriptor=descriptor,
+        classification=classification,
+        guard_policies=(guard.check_write_target(tool_input["file_path"]),),
+        state=state,
+    )
+
+    assert decision.action == "allow"
+
+
+def test_long_term_memory_extraction_agent_can_only_write_memory_markdown(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    policy = PermissionPolicy()
+    state = RuntimeState()
+    state.metadata["long_term_memory_extraction_agent"] = True
+    state.metadata["allowed_memory_dir"] = str(
+        (workspace / ".onecode" / "memory").resolve()
+    )
+    descriptor = write_file_descriptor()
+    guard = SandboxGuard(SandboxBoundary(cwd=workspace))
+    runtime = ToolRuntime(state=state, guard=guard)
+
+    allowed_input = {"file_path": ".onecode/memory/topic.md", "content": "memory"}
+    allowed = policy.evaluate(
+        tool_call=ToolCall(id="call-1", name="write_file", input=allowed_input),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(allowed_input, runtime),
+        guard_policies=(guard.check_write_target(allowed_input["file_path"]),),
+        state=state,
+    )
+    denied_input = {"file_path": ".onecode/settings.json", "content": "{}"}
+    denied = policy.evaluate(
+        tool_call=ToolCall(id="call-2", name="write_file", input=denied_input),
+        descriptor=descriptor,
+        classification=descriptor.classify_input(denied_input, runtime),
+        guard_policies=(guard.check_write_target(denied_input["file_path"]),),
+        state=state,
+    )
+
+    assert allowed.action == "allow"
+    assert denied.action == "deny"
+    assert denied.source == "long_term_memory_extraction_agent"

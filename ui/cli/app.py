@@ -26,6 +26,15 @@ from services.context.current_model_context import CurrentModelContext
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.hooks import HookRegistry
+from services.hooks import HookEvent
+from services.memory import (
+    InstructionMemoryLoader,
+    LongTermMemoryExtractionService,
+    LongTermMemoryPromptProvider,
+    LongTermMemoryStore,
+    RelevantMemoryContextPreparer,
+    RelevantMemorySelector,
+)
 from services.model.types import ProviderError
 from services.mcp import (
     McpConnectionManager,
@@ -60,6 +69,7 @@ from ui.cli.types import CliRuntime
 def build_runtime(workspace: Path) -> CliRuntime:
     workspace = workspace.resolve()
     state = RuntimeState()
+    state.metadata["workspace"] = str(workspace)
     message_store = MessageStore(
         transcript_root=workspace / ".onecode",
         session_id=state.session_id,
@@ -106,26 +116,28 @@ def build_runtime(workspace: Path) -> CliRuntime:
         *mcp_descriptors,
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
+    result_store = ToolResultStore(message_store.transcript_store.session_dir)
+    session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
+    hooks = HookRegistry(trace_recorder=trace_recorder)
+    long_term_memory_store = LongTermMemoryStore(workspace)
+    instruction_memory_loader = InstructionMemoryLoader(
+        workspace,
+        trace_recorder=trace_recorder,
+    )
+    long_term_memory_provider = LongTermMemoryPromptProvider(long_term_memory_store)
     prompt_assembler = DynamicPromptAssembler(
         workspace,
         tool_registry=registry,
         skill_provider=skill_provider,
+        instruction_memory_loader=instruction_memory_loader,
+        long_term_memory_provider=long_term_memory_provider,
     )
-    result_store = ToolResultStore(message_store.transcript_store.session_dir)
-    session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
-    hooks = HookRegistry(trace_recorder=trace_recorder)
     compaction_service = ContextCompactionService(
         message_store=message_store,
         session_memory_store=session_memory_store,
         result_store=result_store,
         hooks=hooks,
         trace_recorder=trace_recorder,
-    )
-    context_engine = ContextEngine(
-        message_store,
-        prompt_assembler=prompt_assembler,
-        tool_schema_provider=registry,
-        context_preparer=AttachmentContextPreparer(compaction_service),
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
     permission_prompter = CliPermissionPrompter()
@@ -142,6 +154,22 @@ def build_runtime(workspace: Path) -> CliRuntime:
     )
     current_model_context = CurrentModelContext()
     model_client = create_model_client(workspace / ".env")
+    memory_selector = RelevantMemorySelector(
+        model_client=model_client,
+        trace_recorder=trace_recorder,
+    )
+    context_engine = ContextEngine(
+        message_store,
+        prompt_assembler=prompt_assembler,
+        tool_schema_provider=registry,
+        context_preparer=AttachmentContextPreparer(
+            RelevantMemoryContextPreparer(
+                long_term_memory_store,
+                memory_selector,
+                inner=compaction_service,
+            )
+        ),
+    )
     subagent_runner = SubagentRunner(
         workspace=workspace,
         transcript_root=workspace / ".onecode",
@@ -159,6 +187,21 @@ def build_runtime(workspace: Path) -> CliRuntime:
         session_memory_store,
         subagent_runner=subagent_runner,
         trace_recorder=trace_recorder,
+    )
+    long_term_memory_extractor = LongTermMemoryExtractionService(
+        long_term_memory_store,
+        subagent_runner=subagent_runner,
+        trace_recorder=trace_recorder,
+    )
+    hooks.register(
+        HookEvent.TURN_STOPPED,
+        lambda payload: long_term_memory_extractor.maybe_extract_after_model_response(
+            tuple(payload.get("messages", ())),
+            payload["state"],
+            assistant_message=payload.get("assistant_message") or {},
+            tool_calls=tuple(payload.get("tool_calls", ())),
+            usage=payload.get("usage"),
+        ),
     )
     compaction_service.bind_runtime(subagent_runner=subagent_runner)
     compaction_service.bind_runtime(session_memory_extractor=session_memory_extractor)
@@ -208,6 +251,12 @@ def build_runtime(workspace: Path) -> CliRuntime:
         attachment_collector=attachment_collector,
         skill_provider=skill_provider,
         mcp_manager=mcp_manager,
+        hooks=hooks,
+        long_term_memory_store=long_term_memory_store,
+        long_term_memory_extractor=long_term_memory_extractor,
+        instruction_memory_loader=instruction_memory_loader,
+        long_term_memory_provider=long_term_memory_provider,
+        memory_selector=memory_selector,
     )
 
 

@@ -12,6 +12,7 @@ from prompts.runtime_context import PromptRuntimeContext
 from prompts.sections import PromptSection, default_sections
 
 if TYPE_CHECKING:
+    from services.memory import InstructionMemoryLoader, LongTermMemoryPromptProvider
     from services.skills import SkillCatalogProvider
     from services.tools.registry import ToolRegistry
 
@@ -24,11 +25,15 @@ class DynamicPromptAssembler:
         cwd: Path | str | Callable[[], Path | str],
         tool_registry: "ToolRegistry | None" = None,
         skill_provider: "SkillCatalogProvider | None" = None,
+        instruction_memory_loader: "InstructionMemoryLoader | None" = None,
+        long_term_memory_provider: "LongTermMemoryPromptProvider | None" = None,
         section_cache: PromptSectionCache | None = None,
     ) -> None:
         self._cwd = cwd
         self._tool_registry = tool_registry
         self._skill_provider = skill_provider
+        self._instruction_memory_loader = instruction_memory_loader
+        self._long_term_memory_provider = long_term_memory_provider
         self._section_cache = section_cache or PromptSectionCache()
 
     @property
@@ -52,6 +57,21 @@ class DynamicPromptAssembler:
         visible_skills = ()
         if self._skill_provider is not None:
             visible_skills = tuple(self._skill_provider.visible_skills(state, cwd))
+        instruction_memory = ""
+        instruction_memory_fingerprint = ""
+        if self._instruction_memory_loader is not None:
+            result = self._instruction_memory_loader.load(
+                state,
+                cwd,
+                target_paths=tuple(Path(path) for path in _files_read_from_state(state)),
+            )
+            instruction_memory = result.rendered_text
+            instruction_memory_fingerprint = result.fingerprint
+        long_term_memory_prompt = ""
+        long_term_memory_fingerprint = ""
+        if self._long_term_memory_provider is not None:
+            long_term_memory_prompt = self._long_term_memory_provider.prompt_text()
+            long_term_memory_fingerprint = self._long_term_memory_provider.fingerprint()
         return PromptRuntimeContext(
             state=state,
             cwd=cwd,
@@ -62,6 +82,10 @@ class DynamicPromptAssembler:
                 state.last_transition.value if state.last_transition is not None else None
             ),
             mcp_server_instructions=_mcp_instructions_from_state(state),
+            instruction_memory=instruction_memory,
+            instruction_memory_fingerprint=instruction_memory_fingerprint,
+            long_term_memory_prompt=long_term_memory_prompt,
+            long_term_memory_fingerprint=long_term_memory_fingerprint,
         )
 
     def _resolve_cwd(self) -> Path:
