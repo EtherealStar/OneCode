@@ -1,6 +1,6 @@
 # OneCode Core Beliefs
 
-本文记录 OneCode 从 MVP 继续演化为完整 code agent 项目时应坚持的核心信念。
+本文记录 OneCode 作为完整 code agent runtime 持续演化时应坚持的核心信念。
 
 它不是功能清单，也不是短期路线图。它的用途是帮助我们在增加能力、重构模块、引入插件、扩展权限或上下文系统时，判断一个设计是否符合 OneCode 的方向。
 
@@ -12,19 +12,19 @@ OneCode 是一个小而清晰的 code-agent。
 
 OneCode 的完整性不来自把更多逻辑塞进主循环，而来自把能力拆成可注册、可组合、可治理的层，并让主循环只负责稳定编排。
 
-## MVP 已经验证的核心
+## 已经落地的核心结构
 
-当前 MVP 已经证明了一条可行路径：
+OneCode 已经把下列结构落地为可运行的运行时。后续演化应加强这些方向，而不是绕开它们：
 
-- 一个薄主循环可以驱动模型、工具调用、工具结果回填和最终停止。
-- 工具可以通过 registry 暴露 schema 和 handler，而不是硬编码在 loop 中。
-- system prompt 可以按运行时状态组装，而不是写成一个不断膨胀的静态字符串。
-- hook 可以承载权限、日志、压缩等横切逻辑，而不是把这些逻辑散落进主循环。
-- deny 可以在能力装配前裁剪工具，而不是只在执行时阻断工具。
-- compaction 是 agent runtime 的基础设施，不是后期清理功能。
-- 429、上下文超限、输出截断等错误可以被恢复流程吸收，而不是直接让任务崩溃。
-
-后续演化应加强这些方向，而不是绕开它们。
+- 一个薄主循环驱动流式模型调用、工具执行、工具结果回填和 transition 判定；续轮只看实际 tool calls，不依赖 provider 私有 `stop_reason`。
+- 工具通过 `ToolRegistry` 暴露 schema 和 handler，由 descriptor、classifier 和 executor 接入，而不是硬编码在 loop 中。
+- system prompt 由 `PromptAssembler` 按运行时状态组装成可组合 section，而不是写成不断膨胀的静态字符串。
+- hook 承载权限、审计、压缩前后处理、session/long-term memory 提取等横切逻辑，挂在稳定生命周期事件上，而不是散落进主循环。
+- deny 在能力装配前（`ToolRegistry` 可见性）就裁剪工具，并在执行入口（guard + permission policy）重复校验。
+- compaction、session memory、long-term memory、attachment 投影由 `ContextEngine` 与 context preparer 链编排，是运行时基础设施，不是后期清理功能。
+- 429、上下文超限、输出截断等错误被归类为明确 transition，由恢复流程吸收，而不是直接让任务崩溃。
+- 模型 provider 隔离在 `infrastructure/`，core 与 services 只依赖 provider-neutral 的 `ModelClient` 协议和 `ModelStreamEvent`。
+- trace 与 error log 作为分离的结构化可观测性基础设施记录，供 CLI、测试和未来 UI 共享。
 
 ## 核心信念
 
@@ -95,17 +95,14 @@ hook 是扩展点，不是第二个主循环。
 
 权限检查、工具日志、工具结果审计、压缩前后处理、未来记忆抽取、任务同步、外部通知等横切逻辑，都应优先挂在显式事件上，而不是直接写入 `AgentLoop`。
 
-MVP 中最重要的事件点是：
+当前的稳定事件点按阶段分组：
 
-- `UserPromptSubmit`
-- `PreToolUse`
-- `PostToolUse`
-- `ToolError`
-- `PreCompact`
-- `PostCompact`
-- `Stop`
+- 交互与生命周期：`UserPromptSubmit`、`AssistantMessageCompleted`、`TurnStopped`
+- 工具执行：`PreToolUse`、`PostToolUse`、`ToolError`
+- 压缩：`PreCompact`、`PostCompact`、`CompactFailed`
+- 任务：`TaskCreated`、`TaskCompleted`
 
-这些事件应保持稳定、语义清晰、数量克制。新增 hook 事件需要回答两个问题：
+其中只有 `PreToolUse` 的 `blocking_error` 能阻止工具执行，`TaskCreated`/`TaskCompleted` 能阻断对应任务操作；其余事件为观察或补充上下文。这些事件应保持稳定、语义清晰、数量克制。新增 hook 事件需要回答两个问题：
 
 - 这个事件是否代表 agent 生命周期中的稳定节点？
 - 没有这个事件时，扩展是否会被迫侵入主流程？
@@ -125,7 +122,7 @@ hook 可以阻断、记录、补充上下文或调整输入，但不应绕过更
 - 结果大小预算。
 - 超时策略。
 
-MVP 可以串行执行所有工具，但接口不能把未来锁死在串行模型里。
+工具执行可以从串行起步，但接口不能把系统锁死在串行模型里；当前 executor 已基于 classification 的并发安全性对工具分批执行。
 
 未来的并发执行、权限判断、工具选择、结果压缩、审计日志和 UI 展示，都应优先消费工具元数据，而不是写散落的 `if tool_name == ...` 分支。
 
@@ -204,15 +201,16 @@ OneCode 的文件边界判断应建立在规范化后的路径上：
 
 API 错误、上下文超限、输出截断、连接中断和工具失败，都是 agent runtime 的正常路径。
 
-OneCode 不应只把它们视为异常文本，而应把它们归类为明确的 transition：
+OneCode 不应只把它们视为异常文本，而应把它们归类为明确的 transition（`TransitionReason` 枚举）：
 
+- `tool_use`
+- `completed`
+- `max_turns`
 - `rate_limit_retry`
+- `reactive_compact_retry`
 - `max_output_tokens_escalate`
 - `max_output_tokens_recovery`
-- `reactive_compact_retry`
-- `tool_use`
-- `stop_hook_continue`
-- `max_turns`
+- `stop_hook_continue`（已在枚举中定义，作为目标恢复能力，loop 当前未消费）
 
 transition 应服务于三件事：
 
@@ -226,9 +224,9 @@ transition 应服务于三件事：
 
 OneCode 不应把核心 runtime 绑定到某个模型 SDK。
 
-模型客户端应负责把 provider 的协议、字段、错误和 usage 信息归一化为 OneCode 内部结构。主循环只依赖内部的 `LLMResponse`、`ToolCall` 和错误类型。
+模型客户端应负责把 provider 的协议、字段、错误和 usage 信息归一化为 OneCode 内部结构。主循环只依赖 provider-neutral 的 `ModelClient.stream(snapshot)` 协议、`ModelStreamEvent` 流式事件和 `ProviderError` 错误类型；续轮判定只看 `message_completed.metadata["tool_calls"]`，不读 provider 私有字段。
 
-这使 OneCode 可以支持不同 Chat Completions 兼容服务、未来的流式协议、fallback model 和 provider-specific recovery，而不污染 agent 核心。
+这使 OneCode 可以支持不同 OpenAI 兼容服务、流式解析、fallback model 和 provider-specific recovery，而不污染 agent 核心。
 
 ### 11. 可观测性是产品能力，不只是 debug
 
@@ -243,7 +241,7 @@ Code agent 做了很多不可见决策：为什么调用某个工具，为什么
 - transition reason。
 - transcript 和大结果路径。
 
-CLI 可以先用Jsonl记录事件。未来 UI、JSONL trace、debug mode 或测试 harness 都应复用JsonL记录，而不是各自解析文本。
+OneCode 用结构化 trace（`TraceRecorder` → `.onecode/<session>/trace.jsonl`）记录短小 runtime 事实，用独立 error log（`ErrorLogRecorder` → `errors.jsonl`）记录未恢复失败的调试证据，两者分离且统一脱敏。UI、debug mode 和测试 harness 都应复用这套结构化记录，而不是各自解析文本日志。
 
 ### 12. 简洁是演化速度的保护层
 
@@ -269,7 +267,7 @@ OneCode 可以逐步拥有复杂能力，但每一层都应保持局部简单。
 - 新上下文能力应明确自己属于 active context、transcript、tool result store、session memory 还是 long-term memory。
 - 新 provider 支持应进入 model client adapter，不应改变 loop 对响应的理解。
 - 新恢复路径应有 transition reason，并配套测试。
-- MVP 可以先串行、同步、保守，但接口应为并发、流式和插件化留出清楚入口。
+- 接口应为并发、流式和插件化留出清楚入口；当前已落地流式模型、基于元数据的并发分批和 registry/hook 插件接入。
 
 ## 明确反模式
 
@@ -287,9 +285,9 @@ OneCode 可以逐步拥有复杂能力，但每一层都应保持局部简单。
 - 用字符串日志作为唯一事实来源，缺少结构化状态。
 - 为短期功能破坏 registry、hook、prompt section、transition 等长期边界。
 
-## 从 MVP 到完整项目的演化方向
+## 各层的演化方向
 
-MVP 之后的演化可以分层推进。
+下列分层能力大多已经落地（详见 `architecture.md` 的模块文档索引与各 `*-architecture.md`）。这里记录每一层应持续坚持的方向和仍待加强的部分，而不是从零开始的路线图。
 
 ### 更完整的工具运行时
 
