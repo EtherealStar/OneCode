@@ -215,6 +215,81 @@ def test_child_registry_hides_agent_even_when_base_descriptors_include_it(
     assert json.loads(tool_result["content"])["error"] == "unknown_tool"
 
 
+def test_compact_fork_child_has_no_tools_and_never_prompts(tmp_path: Path) -> None:
+    ran = False
+
+    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        nonlocal ran
+        ran = True
+        return ToolExecutionResult(tool_call_id="", tool_name="edit_file", content="ran")
+
+    parent_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id="parent-session",
+        flush_interval_seconds=60,
+    )
+    parent_store.append_user("parent context")
+    parent_store.append_assistant(
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "compact-x", "name": "agent"}],
+        }
+    )
+    current_context = CurrentModelContext(
+        ContextSnapshot(system_prompt="PARENT_PROMPT", messages=())
+    )
+    prompter = FakePrompter()
+    edit_call = ToolCall(id="call-edit", name="edit_file", input={"call_id": "call-edit"})
+    runner, model, _parent_store, _policy = make_runner(
+        tmp_path,
+        [
+            LLMResponse(
+                assistant_message={"role": "assistant", "content": []},
+                final_text="",
+                tool_calls=(edit_call,),
+            ),
+            LLMResponse(
+                assistant_message=assistant("<summary>done</summary>"),
+                final_text="<summary>done</summary>",
+            ),
+        ],
+        parent_store=parent_store,
+        current_context=current_context,
+        base_descriptors=(
+            dummy_descriptor(
+                "edit_file",
+                handler=handler,
+                classification=ToolCallClassification(
+                    read_only=False,
+                    modifies_filesystem=True,
+                    concurrency_safe=False,
+                ),
+            ),
+        ),
+        permission_prompter=prompter,
+    )
+
+    result = run(
+        runner.run(
+            SubagentRequest(
+                prompt="Compact the current session into a concise summary.",
+                subagent_type=None,
+                parent_session_id="parent-session",
+                parent_tool_call_id="compact-x",
+                metadata={"query_source": "compact", "trigger": "manual"},
+            )
+        )
+    )
+
+    assert result.final_text == "<summary>done</summary>"
+    assert ran is False
+    assert prompter.requests == []
+    assert model.snapshots[0].tool_schemas == ()
+    tool_result = model.snapshots[1].messages[-1]
+    assert tool_result["role"] == "tool_result"
+    assert json.loads(tool_result["content"])["error"] == "unknown_tool"
+
+
 def test_read_only_subagent_denies_state_changing_tool_calls(tmp_path: Path) -> None:
     ran = False
 

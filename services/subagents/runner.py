@@ -67,6 +67,7 @@ class SubagentRunner:
                 error="unknown_subagent",
             )
         is_fork = request.subagent_type is None
+        is_compact = _is_compact_request(request)
         is_session_memory_extraction = _is_session_memory_extraction_request(request)
         is_long_term_memory_extraction = _is_long_term_memory_extraction_request(request)
         is_background_agent = _is_background_agent_request(request)
@@ -75,10 +76,12 @@ class SubagentRunner:
         )
         _copy_shared_runtime_metadata(request, child_state)
         child_state.metadata["hidden_tools"] = {"agent"}
-        if definition.read_only:
+        if definition.read_only or is_compact:
             child_state.metadata["read_only_agent"] = True
         if is_fork:
             child_state.metadata["is_fork_child"] = True
+        if is_compact:
+            child_state.metadata["compact_child"] = True
         if is_session_memory_extraction:
             self._configure_memory_extraction_child(child_state, request)
         if is_long_term_memory_extraction:
@@ -103,6 +106,7 @@ class SubagentRunner:
                 self._base_descriptors,
                 session_memory_extraction=is_session_memory_extraction,
                 long_term_memory_extraction=is_long_term_memory_extraction,
+                compact=is_compact,
             ),
             permission_policy=self._permission_policy,
         )
@@ -117,7 +121,9 @@ class SubagentRunner:
             guard=self._guard,
             permission_policy=self._permission_policy,
             permission_prompter=(
-                None if is_background_agent else self._permission_prompter
+                None
+                if (is_background_agent or is_compact)
+                else self._permission_prompter
             ),
             trace_recorder=self._trace_recorder,
         )
@@ -404,7 +410,13 @@ def _child_descriptors(
     *,
     session_memory_extraction: bool = False,
     long_term_memory_extraction: bool = False,
+    compact: bool = False,
 ) -> tuple[ToolDescriptor, ...]:
+    if compact:
+        # Internal compaction is a pure summarization task; expose no tools so the
+        # model literally cannot call read/edit/bash. Capability is enforced by the
+        # empty registry rather than prompt text.
+        return ()
     if session_memory_extraction:
         return tuple(
             descriptor
@@ -429,6 +441,10 @@ def _child_descriptors(
             continue
         descriptors.append(descriptor)
     return tuple(descriptors)
+
+
+def _is_compact_request(request: SubagentRequest) -> bool:
+    return request.metadata.get("query_source") == "compact"
 
 
 def _is_session_memory_extraction_request(request: SubagentRequest) -> bool:
