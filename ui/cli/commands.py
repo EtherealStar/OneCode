@@ -28,6 +28,9 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
     if command == "/tools":
         print(renderer.render_tools(runtime.registry.descriptors()))
         return CommandResult()
+    if command == "/mcp":
+        print(renderer.render_mcp_status(runtime, show_tools=args[:1] == ["tools"]))
+        return CommandResult()
     if command == "/status":
         print(renderer.render_status(runtime))
         return CommandResult()
@@ -50,6 +53,8 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
     if command in {"/exit", "/quit"}:
         runtime.message_store.flush_transcript()
         runtime.trace_recorder.flush()
+        if runtime.mcp_manager is not None:
+            _run_async_blocking(runtime.mcp_manager.close_all())
         return CommandResult(should_exit=True)
 
     print(renderer.render_error(f"Unknown command: {command}. Use /help."))

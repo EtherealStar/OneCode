@@ -159,3 +159,17 @@ def test_bash_descriptor_projects_schema_and_prompt() -> None:
     assert schemas[0]["function"]["name"] == "bash"
     assert "command" in schemas[0]["function"]["parameters"]["properties"]
     assert "Git Bash" in prompts[0]
+
+
+def test_dynamic_prompt_includes_mcp_server_instructions(tmp_path: Path) -> None:
+    state = RuntimeState()
+    state.metadata["mcp_server_instructions"] = {
+        "docs": "Use docs search for project documentation.",
+    }
+    assembler = DynamicPromptAssembler(tmp_path)
+
+    prompt = assembler.assemble(state)
+
+    assert "# MCP Server Instructions" in prompt
+    assert "## docs" in prompt
+    assert "Use docs search for project documentation." in prompt

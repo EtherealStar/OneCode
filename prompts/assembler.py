@@ -61,6 +61,7 @@ class DynamicPromptAssembler:
             transition=(
                 state.last_transition.value if state.last_transition is not None else None
             ),
+            mcp_server_instructions=_mcp_instructions_from_state(state),
         )
 
     def _resolve_cwd(self) -> Path:
@@ -90,3 +91,17 @@ def _files_read_from_state(state: RuntimeState) -> tuple[str, ...]:
         except TypeError:
             values = (raw,)
     return tuple(sorted({str(value) for value in values if str(value).strip()}))
+
+
+def _mcp_instructions_from_state(state: RuntimeState) -> dict[str, str]:
+    raw = state.metadata.get("mcp_server_instructions")
+    if not isinstance(raw, dict):
+        return {}
+    instructions: dict[str, str] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text:
+            instructions[name] = text
+    return instructions

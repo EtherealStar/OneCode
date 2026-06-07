@@ -123,6 +123,30 @@ def available_skills_section(context: PromptRuntimeContext) -> PromptSection:
     )
 
 
+def mcp_server_instructions_section(context: PromptRuntimeContext) -> PromptSection:
+    instructions = context.mcp_server_instructions or {}
+    if not instructions:
+        body = ""
+    else:
+        lines: list[str] = []
+        for server_name in sorted(instructions):
+            text = instructions[server_name].strip()[:2048]
+            if not text:
+                continue
+            lines.append(f"## {server_name}")
+            lines.append(text)
+    fingerprint = _fingerprint(
+        "mcp_server_instructions",
+        "\n".join(f"{name}:{instructions[name]}" for name in sorted(instructions)),
+    )
+    return PromptSection(
+        key="mcp_server_instructions",
+        title="MCP Server Instructions",
+        body="\n".join(lines) if instructions else body,
+        fingerprint=fingerprint,
+    )
+
+
 def _skill_listing_body(
     context: PromptRuntimeContext,
     *,
@@ -172,6 +196,7 @@ def default_sections(context: PromptRuntimeContext) -> tuple[PromptSection, ...]
         workspace_state_section(context),
         available_tools_section(context),
         available_skills_section(context),
+        mcp_server_instructions_section(context),
         *tool_prompt_sections(context),
     )
 

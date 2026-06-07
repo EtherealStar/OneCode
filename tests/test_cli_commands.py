@@ -16,8 +16,10 @@ from services.tools.registry import ToolRegistry
 from services.tools.types import ToolExecutionResult
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from tools.write_file import descriptor as write_file_descriptor
 from ui.cli.commands import handle_command
 from ui.cli.types import CliRuntime
+from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool, McpServerStatus
 
 
 class FakeModelClient:
@@ -98,6 +100,36 @@ class FakeSubagentRunner:
         self.parent_message_store = message_store
 
 
+class FakeMcpManager:
+    def snapshot(self) -> McpConnectionSnapshot:
+        return McpConnectionSnapshot(
+            statuses=(
+                McpServerStatus(
+                    name="docs",
+                    transport="stdio",
+                    state="connected",
+                    tool_count=1,
+                    instructions_present=True,
+                ),
+            ),
+            tools=(
+                McpDiscoveredTool(
+                    server_name="docs",
+                    normalized_server_name="docs",
+                    tool_name="search.docs",
+                    normalized_tool_name="search_docs",
+                    descriptor_name="mcp__docs__search_docs",
+                    description="Search docs.",
+                    input_schema={"type": "object", "properties": {}},
+                ),
+            ),
+            instructions={"docs": "Use docs."},
+        )
+
+    async def close_all(self) -> None:
+        return None
+
+
 def make_runtime(tmp_path: Path) -> CliRuntime:
     state = RuntimeState(session_id="session-cli")
     message_store = MessageStore(
@@ -106,7 +138,9 @@ def make_runtime(tmp_path: Path) -> CliRuntime:
         cwd=tmp_path,
         flush_interval_seconds=60,
     )
-    registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
+    registry = ToolRegistry(
+        [read_file_descriptor(), edit_file_descriptor(), write_file_descriptor()]
+    )
     executor = FakeToolExecutor()
     return CliRuntime(
         workspace=tmp_path,
@@ -129,6 +163,7 @@ def test_help_command_prints_available_commands(tmp_path: Path, capsys: Any) -> 
     output = capsys.readouterr().out
     assert result.should_exit is False
     assert "/tools" in output
+    assert "/mcp [tools]" in output
     assert "/resume <target>" in output
     assert "/permissions" not in output
 
@@ -141,6 +176,7 @@ def test_tools_command_lists_fixed_file_tools(tmp_path: Path, capsys: Any) -> No
     output = capsys.readouterr().out
     assert "edit_file" in output
     assert "read_file" in output
+    assert "write_file" in output
 
 
 def test_status_command_shows_session_and_model(tmp_path: Path, capsys: Any) -> None:
@@ -153,6 +189,20 @@ def test_status_command_shows_session_and_model(tmp_path: Path, capsys: Any) -> 
     assert "TestProvider" in output
     assert "test-model" in output
     assert ".onecode" in output
+
+
+def test_mcp_command_renders_server_status_and_tools(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    runtime = replace(make_runtime(tmp_path), mcp_manager=FakeMcpManager())  # type: ignore[arg-type]
+
+    handle_command(runtime, "/mcp tools")
+
+    output = capsys.readouterr().out
+    assert "MCP servers:" in output
+    assert "docs [stdio] connected tools=1 instructions=yes" in output
+    assert "mcp__docs__search_docs: docs/search.docs" in output
 
 
 def test_compact_command_triggers_manual_compact(tmp_path: Path, capsys: Any) -> None:

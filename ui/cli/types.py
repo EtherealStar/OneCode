@@ -21,6 +21,7 @@ from services.compaction import (
     ToolResultStore,
 )
 from services.observability import TraceRecorder
+from services.mcp import McpConnectionManager
 from services.permissions import (
     PermissionPolicy,
     PermissionPrompter,
@@ -58,6 +59,7 @@ class CliRuntime:
     session_memory_updater: SessionMemoryUpdater | None = None
     attachment_collector: AttachmentCollector | None = None
     skill_provider: SkillCatalogProvider | None = None
+    mcp_manager: McpConnectionManager | None = None
 
     def with_session(
         self,
@@ -149,6 +151,8 @@ class CliRuntime:
         )
         if self.permission_store is not None:
             self.permission_store.clear()
+        if self.mcp_manager is not None:
+            state.metadata["mcp_server_instructions"] = self.mcp_manager.snapshot().instructions
         return replace(
             self,
             state=state,

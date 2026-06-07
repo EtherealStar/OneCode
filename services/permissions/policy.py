@@ -375,6 +375,14 @@ class PermissionPolicy:
                 reasons.append(
                     "Command may modify system state or has unknown side effects."
                 )
+            if (
+                target.kind == "external_service"
+                and target.operation == "call"
+                and not classification.read_only
+            ):
+                reasons.append(
+                    "MCP tool may change external service state or has unknown side effects."
+                )
         for policy in guard_policies:
             protected = _protected_project_dir(
                 policy.normalized_path,
