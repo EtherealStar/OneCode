@@ -369,6 +369,25 @@ def test_chat_completions_omits_empty_tools() -> None:
     assert "tools" not in transport.post_calls[0][2]
 
 
+def test_chat_completions_applies_max_output_token_override() -> None:
+    transport = FakeTransport(
+        post_response={"choices": [{"message": {"content": "ok"}}]},
+    )
+    client = OpenAICompatibleChatCompletionsClient(
+        resolved_config(default_params={"max_tokens": 8000}),
+        async_transport=transport,
+    )
+    snapshot = ContextSnapshot(
+        system_prompt="",
+        messages=(),
+        usage_hints={"request_overrides": {"max_output_tokens": 64000}},
+    )
+
+    collect_stream(client, snapshot)
+
+    assert transport.post_calls[0][2]["max_tokens"] == 64000
+
+
 def test_chat_completions_parses_text_response() -> None:
     transport = FakeTransport(
         post_response={

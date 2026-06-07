@@ -23,6 +23,8 @@
 
 JSONL trace 写入 `.onecode/<session_id>/trace.jsonl`。
 
+错误日志与 trace 分离。`services/observability/error_log.py` 提供 `ErrorLogRecorder`、`JsonlErrorLogSink` 和 noop sink，默认写入 `.onecode/<session_id>/errors.jsonl`。错误日志保存经过清洗的错误类别、类型、message、safe_message、短 stack 和属性，用于排查不可恢复错误；trace 继续保存短小 runtime 事实，不承载完整 stack 或 debug 文本。
+
 ## 当前 Trace 事件
 
 loop 发布：
@@ -73,6 +75,8 @@ CLI 是 UI，不是 runtime。它负责应用装配、交互输入、命令处�
 - `PermissionPolicy`
 - `JsonlTraceSink`
 - `TraceRecorder`
+- `JsonlErrorLogSink`
+- `ErrorLogRecorder`
 - base descriptors：`read_file`、`edit_file`、`glob`、`grep`、`bash`
 - `ToolRegistry`
 - `DynamicPromptAssembler`
@@ -107,6 +111,8 @@ CLI 是 UI，不是 runtime。它负责应用装配、交互输入、命令处�
 
 `/clear` 会 flush 当前 transcript，开启新 session，清空消息链、trace session 和 session permission grants。
 
+`/clear` 和 `/resume` 也会切换 error log session。`/status` 展示当前 `errors.jsonl` 路径；CLI 主循环捕获普通异常时会先写入 error log，再向用户渲染简短错误。
+
 ## Rendering And Permissions
 
 `ui/cli/renderer.py` 负责把 banner、状态、工具列表、历史摘要、trace 摘要、assistant delta、工具结果摘要和错误渲染为终端文本。
@@ -117,7 +123,7 @@ CLI 是 UI，不是 runtime。它负责应用装配、交互输入、命令处�
 
 CLI 当前已经支持 streaming token 渲染、工具结果摘要、async 权限交互、JSONL transcript 恢复和 trace 查看，但仍缺少：
 
-- provider recovery UI。
+- 更细粒度的 provider recovery UI。
 - context compact 状态展示。
 - `/compact`。
 - provider connect/model selection flow。

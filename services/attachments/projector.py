@@ -46,6 +46,8 @@ def _project_attachment_message(message: dict[str, Any]) -> tuple[dict[str, Any]
                 f"[queued command from coordinator]\n{attachment.get('content', '')}"
             ),
         )
+    if attachment_type == "background_task_notification":
+        return (_notice(_background_task_notification_content(attachment)),)
     if attachment_type in {"relevant_memories", "nested_memory"}:
         return (_notice(_memory_content(attachment)),)
     if attachment_type == "plan_mode":
@@ -158,6 +160,20 @@ def _memory_content(attachment: dict[str, Any]) -> str:
     return (
         f"[memory attachment]\nPath: {attachment.get('path', '')}\n"
         f"{attachment.get('content', '')}"
+    )
+
+
+def _background_task_notification_content(attachment: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "<task_notification>",
+            f"<task_id>{attachment.get('task_id', '')}</task_id>",
+            f"<task_type>{attachment.get('task_type', '')}</task_type>",
+            f"<output_file>{attachment.get('output_file', '')}</output_file>",
+            f"<status>{attachment.get('status', '')}</status>",
+            f"<summary>{attachment.get('summary', '')}</summary>",
+            "</task_notification>",
+        ]
     )
 
 

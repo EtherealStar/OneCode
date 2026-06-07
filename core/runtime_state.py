@@ -16,6 +16,7 @@ class RuntimeState:
     turn_count: int = 0
     max_turns: int = 20
     has_attempted_reactive_compact: bool = False
+    has_escalated_max_output_tokens: bool = False
     max_output_recovery_count: int = 0
     last_transition: TransitionReason | None = None
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -39,6 +40,7 @@ class RuntimeState:
         self.usage = ModelUsage()
         self.turn_count = 0
         self.has_attempted_reactive_compact = False
+        self.has_escalated_max_output_tokens = False
         self.max_output_recovery_count = 0
         self.last_transition = None
         self.metadata.clear()

@@ -92,6 +92,28 @@ def test_chat_completions_streams_text_deltas_and_final_message() -> None:
     assert transport.calls[0][2]["stream"] is True
 
 
+def test_chat_completions_marks_length_finish_as_output_interrupted() -> None:
+    transport = FakeAsyncTransport(
+        [
+            {"choices": [{"delta": {"content": "cut"}, "finish_reason": "length"}]},
+        ]
+    )
+    client = OpenAICompatibleChatCompletionsClient(
+        resolved_config(),
+        async_transport=transport,
+    )
+
+    async def run() -> list:
+        return [event async for event in client.stream(ContextSnapshot("", ()))]
+
+    events = asyncio.run(run())
+
+    completed = events[-1]
+    assert completed.type == "message_completed"
+    assert completed.stop_reason == "length"
+    assert completed.output_interrupted is True
+
+
 def test_chat_completions_stream_accumulates_tool_call_arguments() -> None:
     transport = FakeAsyncTransport(
         [

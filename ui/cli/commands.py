@@ -32,6 +32,9 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
     if command == "/tasks":
         print(_tasks(runtime))
         return CommandResult()
+    if command == "/background-tasks":
+        print(_background_tasks(runtime))
+        return CommandResult()
     if command == "/mcp":
         print(renderer.render_mcp_status(runtime, show_tools=args[:1] == ["tools"]))
         return CommandResult()
@@ -57,6 +60,7 @@ def handle_command(runtime: CliRuntime, line: str) -> CommandResult:
     if command in {"/exit", "/quit"}:
         runtime.message_store.flush_transcript()
         runtime.trace_recorder.flush()
+        runtime.error_log_recorder.flush()
         if runtime.mcp_manager is not None:
             _run_async_blocking(runtime.mcp_manager.close_all())
         return CommandResult(should_exit=True)
@@ -205,6 +209,15 @@ def _tasks(runtime: CliRuntime) -> str:
         tasks,
         task_list_id=task_list_id,
         tasks_dir=runtime.task_store.tasks_dir(task_list_id),
+    )
+
+
+def _background_tasks(runtime: CliRuntime) -> str:
+    if runtime.background_task_manager is None:
+        return renderer.render_error("Background tasks are not enabled for this runtime.")
+    return renderer.render_background_tasks(
+        runtime,
+        runtime.background_task_manager.list_tasks(),
     )
 
 

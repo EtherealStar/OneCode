@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from services.background_tasks import BackgroundTaskManager
 from services.compaction import SessionMemoryStore
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
@@ -165,6 +167,7 @@ def test_help_command_prints_available_commands(tmp_path: Path, capsys: Any) -> 
     assert result.should_exit is False
     assert "/tools" in output
     assert "/tasks" in output
+    assert "/background-tasks" in output
     assert "/mcp [tools]" in output
     assert "/resume <target>" in output
     assert "/permissions" not in output
@@ -397,3 +400,23 @@ def test_tasks_command_reports_store_errors(tmp_path: Path, capsys: Any) -> None
 
     output = capsys.readouterr().out
     assert "Error: Could not read task file" in output
+
+
+def test_background_tasks_command_renders_tasks(tmp_path: Path, capsys: Any) -> None:
+    async def start_task(manager: BackgroundTaskManager, state: RuntimeState) -> None:
+        async def work(task_id: str) -> dict[str, object]:
+            return {"summary": "done"}
+
+        manager.start_agent(description="agent work", state=state, run=work)
+        await asyncio.sleep(0)
+
+    runtime = make_runtime(tmp_path)
+    manager = BackgroundTaskManager(workspace=tmp_path)
+    asyncio.run(start_task(manager, runtime.state))
+    runtime = replace(runtime, background_task_manager=manager)
+
+    handle_command(runtime, "/background-tasks")
+
+    output = capsys.readouterr().out
+    assert "Background tasks:" in output
+    assert "local_agent completed" in output

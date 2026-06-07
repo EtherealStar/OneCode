@@ -146,3 +146,27 @@ def test_context_preparer_can_return_snapshot_metadata(tmp_path: Path) -> None:
         "compaction_trigger": "micro",
     }
     assert snapshot.transcript_refs == ("tool-results/call-1.txt",)
+
+
+def test_context_engine_projects_safe_model_request_overrides(tmp_path: Path) -> None:
+    state = RuntimeState(
+        metadata={
+            "model_request_overrides": {
+                "max_output_tokens": 64000,
+                "unsafe_provider_field": "ignored",
+            }
+        }
+    )
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    message_store.append_user("original")
+    engine = ContextEngine(message_store)
+
+    snapshot = asyncio.run(engine.build_for_model(state))
+
+    assert snapshot.usage_hints["request_overrides"] == {
+        "max_output_tokens": 64000
+    }

@@ -16,6 +16,10 @@ from services.attachments import (
     AttachmentContextPreparer,
     AttachmentFileReader,
 )
+from services.background_tasks import (
+    BackgroundTaskManager,
+    BackgroundTaskNotificationSource,
+)
 from services.compaction import (
     ContextCompactionService,
     SessionMemoryExtractionService,
@@ -41,7 +45,12 @@ from services.mcp import (
     build_mcp_tool_descriptors,
     load_project_mcp_config,
 )
-from services.observability import JsonlTraceSink, TraceRecorder
+from services.observability import (
+    ErrorLogRecorder,
+    JsonlErrorLogSink,
+    JsonlTraceSink,
+    TraceRecorder,
+)
 from services.permissions import (
     PermissionPolicy,
     ProjectPermissionSettingsStore,
@@ -55,6 +64,7 @@ from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from tools.agent import descriptor as agent_descriptor
 from tools.bash import descriptor as bash_descriptor
+from tools.background_task_stop import descriptor as background_task_stop_descriptor
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
@@ -96,17 +106,33 @@ def build_runtime(workspace: Path) -> CliRuntime:
         workspace=workspace,
         sink=trace_sink,
     )
-    mcp_config = load_project_mcp_config(workspace)
+    error_log_sink = JsonlErrorLogSink(workspace / ".onecode", state.session_id)
+    error_log_recorder = ErrorLogRecorder(
+        session_id=state.session_id,
+        workspace=workspace,
+        sink=error_log_sink,
+    )
+    try:
+        mcp_config = load_project_mcp_config(workspace)
+    except Exception as exc:
+        error_log_recorder.record_error(exc, source="mcp_config")
+        error_log_recorder.flush()
+        raise
     mcp_manager = McpConnectionManager(
         workspace,
         mcp_config,
         trace_recorder=trace_recorder,
+        error_log_recorder=error_log_recorder,
     )
     mcp_snapshot = mcp_manager.connect_all_blocking()
     state.metadata["mcp_server_instructions"] = mcp_snapshot.instructions
     mcp_descriptors = build_mcp_tool_descriptors(mcp_manager)
     hooks = HookRegistry(trace_recorder=trace_recorder)
     task_store = TaskStore(workspace)
+    background_task_manager = BackgroundTaskManager(
+        workspace=workspace,
+        trace_recorder=trace_recorder,
+    )
     runner_ref: dict[str, SubagentRunner] = {}
     base_descriptors = (
         read_file_descriptor(),
@@ -114,7 +140,8 @@ def build_runtime(workspace: Path) -> CliRuntime:
         write_file_descriptor(),
         glob_descriptor(),
         grep_descriptor(),
-        bash_descriptor(),
+        bash_descriptor(background_task_manager),
+        background_task_stop_descriptor(background_task_manager),
         skill_descriptor(
             skill_provider=skill_provider,
             cwd=lambda: workspace,
@@ -161,6 +188,9 @@ def build_runtime(workspace: Path) -> CliRuntime:
         workspace=workspace,
         reader=attachment_reader,
         file_state_cache=file_state_cache,
+        shared_sources=(
+            BackgroundTaskNotificationSource(background_task_manager),
+        ),
     )
     current_model_context = CurrentModelContext()
     model_client = create_model_client(workspace / ".env")
@@ -205,17 +235,15 @@ def build_runtime(workspace: Path) -> CliRuntime:
     )
     hooks.register(
         HookEvent.TURN_STOPPED,
-        lambda payload: long_term_memory_extractor.maybe_extract_after_model_response(
-            tuple(payload.get("messages", ())),
-            payload["state"],
-            assistant_message=payload.get("assistant_message") or {},
-            tool_calls=tuple(payload.get("tool_calls", ())),
-            usage=payload.get("usage"),
+        lambda payload: _start_long_term_memory_dream(
+            payload,
+            long_term_memory_extractor=long_term_memory_extractor,
+            background_task_manager=background_task_manager,
         ),
     )
     compaction_service.bind_runtime(subagent_runner=subagent_runner)
     compaction_service.bind_runtime(session_memory_extractor=session_memory_extractor)
-    registry.register(agent_descriptor(subagent_runner))
+    registry.register(agent_descriptor(subagent_runner, background_task_manager))
     tool_executor = RegistryToolExecutor(
         registry,
         guard=guard,
@@ -223,6 +251,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_policy=permission_policy,
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
+        error_log_recorder=error_log_recorder,
         result_store=result_store,
         file_state_cache=file_state_cache,
     )
@@ -237,6 +266,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         hooks=hooks,
         compaction_service=compaction_service,
         session_memory_extractor=session_memory_extractor,
+        error_log_recorder=error_log_recorder,
     )
     config = model_client.config
     return CliRuntime(
@@ -253,6 +283,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         permission_policy=permission_policy,
         permission_prompter=permission_prompter,
         trace_recorder=trace_recorder,
+        error_log_recorder=error_log_recorder,
         current_model_context=current_model_context,
         subagent_runner=subagent_runner,
         compaction_service=compaction_service,
@@ -268,6 +299,56 @@ def build_runtime(workspace: Path) -> CliRuntime:
         long_term_memory_provider=long_term_memory_provider,
         memory_selector=memory_selector,
         task_store=task_store,
+        background_task_manager=background_task_manager,
+    )
+
+
+async def _start_long_term_memory_dream(
+    payload: dict,
+    *,
+    long_term_memory_extractor: LongTermMemoryExtractionService,
+    background_task_manager: BackgroundTaskManager,
+) -> None:
+    state = payload["state"]
+    job = long_term_memory_extractor.prepare_extraction_job(
+        tuple(payload.get("messages", ())),
+        state,
+        tool_calls=tuple(payload.get("tool_calls", ())),
+    )
+    if job is None:
+        return
+
+    async def run(task_id: str) -> dict[str, object]:
+        task = background_task_manager.get(task_id)
+        output_path = (
+            Path(str(task.metadata.get("output_path_abs", "")))
+            if task is not None
+            else None
+        )
+        if output_path is not None:
+            with output_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write("dream: updating long-term memory\n")
+                handle.write(f"parent_session_id: {job.parent_session_id}\n")
+        await long_term_memory_extractor.run_extraction_job(job, state)
+        metadata = state.metadata.get("long_term_memory_extraction")
+        result_session_id = None
+        if isinstance(metadata, dict):
+            result_session_id = metadata.get("last_result_session_id")
+        if output_path is not None:
+            with output_path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write("dream: completed\n")
+                if result_session_id:
+                    handle.write(f"child_session_id: {result_session_id}\n")
+        return {
+            "summary": "Long-term memory dream completed.",
+            "result_session_id": result_session_id,
+        }
+
+    background_task_manager.start_dream(
+        description="updating long-term memory",
+        state=state,
+        run=run,
+        metadata={"memory_dir": str(long_term_memory_extractor.store.memory_dir)},
     )
 
 
@@ -281,6 +362,7 @@ async def main_loop_async(runtime: CliRuntime) -> int:
             print()
             runtime.message_store.flush_transcript()
             runtime.trace_recorder.flush()
+            runtime.error_log_recorder.flush()
             if runtime.mcp_manager is not None:
                 await runtime.mcp_manager.close_all()
             return 0
@@ -327,6 +409,12 @@ async def main_loop_async(runtime: CliRuntime) -> int:
         except KeyboardInterrupt:
             print("\nInterrupted. Use /exit to quit.")
         except Exception as exc:
+            runtime.error_log_recorder.record_error(
+                exc,
+                source="cli_main_loop",
+                attributes={"turn_count": runtime.state.turn_count},
+            )
+            runtime.error_log_recorder.flush()
             print(renderer.render_error(str(exc)))
 
 

@@ -2,7 +2,10 @@
 
 from services.memory.auto_store import LongTermMemoryStore
 from services.memory.context_preparer import RelevantMemoryContextPreparer
-from services.memory.extraction import LongTermMemoryExtractionService
+from services.memory.extraction import (
+    LongTermMemoryExtractionJob,
+    LongTermMemoryExtractionService,
+)
 from services.memory.instruction_loader import InstructionMemoryLoader
 from services.memory.paths import (
     is_auto_memory_markdown_path,
@@ -23,6 +26,7 @@ __all__ = [
     "InstructionMemoryLoader",
     "InstructionMemoryResult",
     "LongTermMemoryExtractionService",
+    "LongTermMemoryExtractionJob",
     "LongTermMemoryFile",
     "LongTermMemoryPromptProvider",
     "LongTermMemoryStore",

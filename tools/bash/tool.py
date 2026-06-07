@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -23,8 +23,17 @@ from tools.bash.parser import parse_bash
 from tools.bash.paths import targets_for_analysis
 from tools.bash.prompt import PROMPT
 from tools.bash.readonly import classify_readonly
-from tools.bash.runner import DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, BashRunner, GitBashRunner
+from tools.bash.runner import (
+    DEFAULT_TIMEOUT_MS,
+    MAX_TIMEOUT_MS,
+    BashRunner,
+    GitBashRunner,
+    find_git_bash,
+)
 from tools.bash.semantics import check_semantics, effective_command_name, interpret_exit
+
+if TYPE_CHECKING:
+    from services.background_tasks import BackgroundTaskManager
 
 
 RESULT_POLICY = ToolResultPolicy(
@@ -49,6 +58,7 @@ class BashInput(BaseModel):
     command: str
     timeout_ms: int | None = Field(default=None, ge=1, le=MAX_TIMEOUT_MS)
     description: str | None = None
+    run_in_background: bool = False
 
     @field_validator("command", "description")
     @classmethod
@@ -64,12 +74,14 @@ class BashInput(BaseModel):
 INPUT_SCHEMA: dict[str, Any] = BashInput.model_json_schema()
 
 
-def descriptor() -> ToolDescriptor:
+def descriptor(
+    background_task_manager: BackgroundTaskManager | None = None,
+) -> ToolDescriptor:
     return ToolDescriptor(
         name="bash",
         description="Execute a Git Bash command with AST-based classification and sandbox-aware permissions.",
         input_schema=INPUT_SCHEMA,
-        handler=_handle,
+        handler=_handler_for(background_task_manager),
         prompt=PROMPT,
         search_hint="execute git bash commands",
         validate_input=_validate,
@@ -112,14 +124,39 @@ def _handle(
     return _handle_with_runner(tool_input, runtime, GitBashRunner())
 
 
+def _handler_for(background_task_manager: BackgroundTaskManager | None = None):
+    def handle(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolExecutionResult:
+        return _handle_with_runner(
+            tool_input,
+            runtime,
+            GitBashRunner(),
+            background_task_manager=background_task_manager,
+        )
+
+    return handle
+
+
 def _handle_with_runner(
     tool_input: dict[str, Any],
     runtime: ToolRuntime,
     runner: BashRunner,
+    *,
+    background_task_manager: BackgroundTaskManager | None = None,
 ) -> ToolExecutionResult:
     parsed = _parse_input(tool_input)
     plan = _build_plan(parsed.command)
     cwd = runtime.guard.boundary.cwd if runtime.guard is not None else Path.cwd()
+    if parsed.run_in_background:
+        return _start_background_bash(
+            parsed,
+            runtime,
+            plan,
+            cwd=cwd,
+            background_task_manager=background_task_manager,
+        )
     timeout_ms = parsed.timeout_ms or DEFAULT_TIMEOUT_MS
     try:
         result = runner.run(parsed.command, cwd=cwd, timeout_ms=timeout_ms)
@@ -167,6 +204,69 @@ def _handle_with_runner(
             "stdout_chars": len(result.stdout),
             "stderr_chars": len(result.stderr),
             "command_name": command_name,
+        },
+    )
+
+
+def _start_background_bash(
+    parsed: BashInput,
+    runtime: ToolRuntime,
+    plan: BashPlan,
+    *,
+    cwd: Path,
+    background_task_manager: BackgroundTaskManager | None,
+) -> ToolExecutionResult:
+    if background_task_manager is None:
+        return _error_result(
+            "background_tasks_not_enabled",
+            "Background task execution is not enabled for this runtime.",
+            {"read_only": plan.read_only, "command_count": _command_count(plan)},
+        )
+    bash = find_git_bash()
+    if bash is None:
+        return _error_result(
+            "git_bash_not_found",
+            "Git Bash was not found. Install Git for Windows or add bash.exe to PATH.",
+            {"read_only": plan.read_only, "command_count": _command_count(plan)},
+        )
+    try:
+        task = background_task_manager.start_bash(
+            command=parsed.command,
+            description=parsed.description or _subject_prefix(parsed.command),
+            state=runtime.state,
+            cwd=cwd,
+            bash_exe=bash,
+            tool_use_id=runtime.tool_call_id,
+            timeout_ms=parsed.timeout_ms,
+        )
+    except Exception as exc:
+        return _error_result(
+            "background_bash_start_failed",
+            str(exc),
+            {"read_only": plan.read_only, "command_count": _command_count(plan)},
+        )
+    content = "\n".join(
+        [
+            "Background task started.",
+            f"task_id: {task.id}",
+            f"task_type: {task.type}",
+            f"status: {task.status}",
+            f"command: {parsed.command}",
+            f"output_file: {task.output_file}",
+        ]
+    )
+    return ToolExecutionResult(
+        tool_call_id="",
+        tool_name="bash",
+        content=content,
+        metadata={
+            "task_id": task.id,
+            "task_type": task.type,
+            "status": task.status,
+            "output_file": task.output_file,
+            "read_only": plan.read_only,
+            "command_count": _command_count(plan),
+            "background": True,
         },
     )
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from services.guard import GuardPolicy, SandboxGuard
 from services.hooks import HookEvent, HookRegistry
 from services.compaction.result_store import ToolResultStore
-from services.observability import TraceRecorder
+from services.observability import ErrorLogRecorder, TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
 from services.tools.file_state import FileStateCache
@@ -101,6 +101,7 @@ class RegistryToolExecutor:
         permission_prompter: PermissionPrompter | None = None,
         max_tool_concurrency: int | None = None,
         trace_recorder: TraceRecorder | None = None,
+        error_log_recorder: ErrorLogRecorder | None = None,
         result_store: ToolResultStore | None = None,
         file_state_cache: FileStateCache | None = None,
     ) -> None:
@@ -113,6 +114,7 @@ class RegistryToolExecutor:
             max_tool_concurrency
         )
         self._trace_recorder = trace_recorder or TraceRecorder.noop()
+        self._error_log_recorder = error_log_recorder or ErrorLogRecorder.noop()
         self._result_store = result_store
         self._file_state_cache = file_state_cache or FileStateCache()
 
@@ -343,6 +345,12 @@ class RegistryToolExecutor:
                     )
                     return _HandlerOutcome(ready=ready, result=result)
                 except Exception as exc:
+                    self._record_unexpected_tool_error(
+                        exc,
+                        tool_call=ready.tool_call,
+                        descriptor=ready.descriptor,
+                        stage="handler",
+                    )
                     return _HandlerOutcome(ready=ready, exception=exc)
         return await asyncio.to_thread(self._run_handler, ready)
 
@@ -362,6 +370,12 @@ class RegistryToolExecutor:
                     result=ready.descriptor.handler(ready.tool_input, ready.runtime),
                 )
             except Exception as exc:
+                self._record_unexpected_tool_error(
+                    exc,
+                    tool_call=ready.tool_call,
+                    descriptor=ready.descriptor,
+                    stage="handler",
+                )
                 return _HandlerOutcome(ready=ready, exception=exc)
 
     async def _finalize_outcome(
@@ -538,13 +552,24 @@ class RegistryToolExecutor:
         tool_input: dict[str, Any],
         runtime: ToolRuntime,
     ) -> _PreparedInput | _PreparedInputError:
-        validation_result = self._validate_input(descriptor, tool_input, runtime)
+        validation_result = self._validate_input(
+            descriptor,
+            tool_input,
+            runtime,
+            tool_call=tool_call,
+        )
         if validation_result is not None:
             return _PreparedInputError(validation_result)
 
         try:
             classification = descriptor.classify_input(tool_input, runtime)
         except Exception as exc:
+            self._record_unexpected_tool_error(
+                exc,
+                tool_call=tool_call,
+                descriptor=descriptor,
+                stage="classification",
+            )
             return _PreparedInputError(
                 _error_result(tool_call, "tool_classification_error", str(exc))
             )
@@ -552,6 +577,12 @@ class RegistryToolExecutor:
         try:
             guard_policies = self._check_guard(classification)
         except Exception as exc:
+            self._record_unexpected_tool_error(
+                exc,
+                tool_call=tool_call,
+                descriptor=descriptor,
+                stage="guard",
+            )
             return _PreparedInputError(
                 _error_result(tool_call, "tool_guard_error", str(exc))
             )
@@ -582,6 +613,8 @@ class RegistryToolExecutor:
         descriptor: ToolDescriptor,
         tool_input: dict[str, Any],
         runtime: ToolRuntime,
+        *,
+        tool_call: ToolCall | None = None,
     ) -> ToolExecutionResult | None:
         validation = _validate_input_schema(tool_input, descriptor.input_schema)
         if not validation.ok:
@@ -595,6 +628,12 @@ class RegistryToolExecutor:
         try:
             validation = descriptor.validate_input(tool_input, runtime)
         except Exception as exc:
+            self._record_unexpected_tool_error(
+                exc,
+                tool_call=tool_call,
+                descriptor=descriptor,
+                stage="validation",
+            )
             return _error_result(
                 ToolCall(id="", name=descriptor.name, input=tool_input),
                 "tool_validation_error",
@@ -824,6 +863,28 @@ class RegistryToolExecutor:
                 "result_stored": result.metadata.get("result_stored") is True,
             },
             parent_span_id=parent_span_id,
+        )
+
+    def _record_unexpected_tool_error(
+        self,
+        error: Exception,
+        *,
+        tool_call: ToolCall | None,
+        descriptor: ToolDescriptor | None,
+        stage: str,
+    ) -> None:
+        self._error_log_recorder.record_error(
+            error,
+            source="tool_executor",
+            attributes={
+                "tool_name": (
+                    descriptor.name
+                    if descriptor is not None
+                    else tool_call.name if tool_call is not None else "unknown_tool"
+                ),
+                "tool_call_id": tool_call.id if tool_call is not None else "",
+                "stage": stage,
+            },
         )
 
     def _apply_result_policy(

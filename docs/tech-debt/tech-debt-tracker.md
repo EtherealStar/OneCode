@@ -8,41 +8,12 @@
 
 | 债务 ID | 标题 | 类型 | 区域 | 优先级 | 状态 |
 |:---|:---|:---|:---|:---|:---|
-| TD-004 | 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程 | 架构 / 测试 | `core/loop.py`, `core/transitions.py`, `core/runtime_state.py` | 中 | 已识别 |
 | TD-007 | CLI 主界面已落地 streaming，但缺少恢复 UI 和实时 trace 订阅 | UI / 架构 | `ui/cli/`, `services/observability/`, `core/loop.py` | 中 | 部分缓解 |
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-010 | Subagent 第一版缺少 background、worktree 和自定义 agent 加载 | 架构 / 测试 | `services/subagents/`, `tools/agent/`, `ui/cli/app.py` | 中 | 已识别 |
 | TD-014 | Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用 | 架构 / 安全 | `services/compaction/service.py`, `services/subagents/definitions.py`, `services/subagents/runner.py` | 高 | 已识别 |
 | TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
-
----
-
-### TD-004: 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程
-
-- **类型：** 架构 / 测试
-- **区域：** `core/loop.py`, `core/transitions.py`, `core/runtime_state.py`
-- **优先级：** 中
-- **状态：** 已识别
-- **影响：** 可重试 provider failure、context limit failure、max-output interruption 和工具执行错误目前可能直接逃出 loop，而不是变成可观测的 transition 并进入受控恢复流程。
-
-**描述：**
-`TransitionReason` 已包含恢复状态，`RuntimeState` 也包含 reactive compact 和 max-output recovery 计数器。`AgentLoop.stream()` 会递增 turn 并消费 `model_client.stream(snapshot)`，但没有捕获 provider-neutral error、分类 retryability、调用 compaction，或把模型 streaming error 映射为受控恢复 transition。
-
-**引入原因：**
-第一版 loop 实现聚焦 happy path：模型调用、工具调用、工具结果回填和最终停止。Transition enum 先于恢复行为被加入。
-
-**修复方向：**
-在 loop 或独立 recovery service 中加入显式错误处理，将 `ProviderError` 和 output interruption 状态映射为 transition。补充 rate-limit retry、network retry exhaustion、context-limit reactive compaction、max-output recovery 和 tool error result continuation 的测试。
-
-**关联代码：**
-- `core/loop.py:L41` - model call 没有恢复处理。
-- `core/transitions.py:L10` - 已存在恢复类 transition 名称。
-- `core/runtime_state.py:L17` - 已存在恢复状态字段，但 loop 未消费。
-- `infrastructure/providers/http.py:L112` - provider HTTP error 已暴露 retryable metadata。
-
-**架构约束：**
-错误应成为 runtime state transition 和可观测事件，而不是 uncaught exception 或 core 中的 provider-specific 分支。
 
 ---
 
@@ -226,6 +197,10 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 ---
 
 ## 已解决条目归档
+
+### TD-004: 恢复类 transition 已定义，但 provider 和工具错误仍会绕过 loop 恢复流程
+
+- **解决方式：** 新增 `services/errors.py`、`services/observability/error_log.py` 和 `services/model/retry.py`，让 provider retry、retry exhaustion、context-limit reactive compact、max-output escalation/continuation 和不可恢复错误日志进入统一恢复流程。`core/loop.py` 现在通过 `ModelRetryRunner` 缓冲 streaming attempt，失败或截断 attempt 不会污染 UI 或 message store；CLI、MCP manager 和 tool executor 已接入 `.onecode/<session_id>/errors.jsonl`。补充错误、retry、loop、provider、CLI、MCP 和工具 executor 测试，并通过全量 `uv run python -m pytest tests -q`。
 
 ### TD-001: 工具结果消息 provider 投影
 

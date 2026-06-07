@@ -28,7 +28,7 @@ from services.mcp.types import (
     McpServerStatus,
     McpToolCallResult,
 )
-from services.observability import TraceRecorder
+from services.observability import ErrorLogRecorder, TraceRecorder
 
 STDIO_STDERR_LIMIT_CHARS = 1_000_000
 SERVER_INSTRUCTIONS_LIMIT_CHARS = 2_048
@@ -54,6 +54,7 @@ class McpConnectionManager:
         max_stdio_concurrency: int = 3,
         max_remote_concurrency: int = 20,
         trace_recorder: TraceRecorder | None = None,
+        error_log_recorder: ErrorLogRecorder | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.configs = configs.servers if isinstance(configs, McpConfigSet) else dict(configs)
@@ -61,6 +62,7 @@ class McpConnectionManager:
         self.max_stdio_concurrency = max(1, max_stdio_concurrency)
         self.max_remote_concurrency = max(1, max_remote_concurrency)
         self.trace_recorder = trace_recorder or TraceRecorder.noop()
+        self.error_log_recorder = error_log_recorder or ErrorLogRecorder.noop()
         self._connections: dict[str, ConnectedMcpServer] = {}
         self._statuses: dict[str, McpServerStatus] = {
             name: McpServerStatus(
@@ -148,6 +150,15 @@ class McpConnectionManager:
                 connected = await self.ensure_connected(server_name)
                 result = await connected.session.call_tool(tool_name, arguments or {})
             except Exception as exc:
+                self.error_log_recorder.record_mcp_error(
+                    server_name,
+                    exc,
+                    attributes={
+                        "tool": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "stage": "call_tool",
+                    },
+                )
                 self._record_tool_call(
                     server_name,
                     tool_name,
@@ -260,6 +271,14 @@ class McpConnectionManager:
                 return connected
             except Exception as exc:
                 await exit_stack.aclose()
+                self.error_log_recorder.record_mcp_error(
+                    config.name,
+                    exc,
+                    attributes={
+                        "transport": config.transport,
+                        "stage": "connect",
+                    },
+                )
                 self._statuses[config.name] = McpServerStatus(
                     name=config.name,
                     transport=config.transport,
@@ -315,7 +334,12 @@ class McpConnectionManager:
             return
         try:
             await connected.exit_stack.aclose()
-        except Exception:
+        except Exception as exc:
+            self.error_log_recorder.record_mcp_error(
+                server_name,
+                exc,
+                attributes={"stage": "close"},
+            )
             return
 
     def _record_tool_call(

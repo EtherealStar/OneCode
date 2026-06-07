@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
+from services.background_tasks import BackgroundTaskState
 from services.tasks import TaskRecord
 from ui.cli.types import CliRuntime
 
@@ -18,7 +19,7 @@ def render_banner(runtime: CliRuntime) -> str:
             f"cwd: {runtime.workspace}",
             f"session: {runtime.state.session_id}",
             f"model: {runtime.provider_label} / {runtime.model}",
-            "commands: /help /tools /tasks /mcp /status /history /trace /compact /resume /clear /exit",
+            "commands: /help /tools /tasks /background-tasks /mcp /status /history /trace /compact /resume /clear /exit",
         ]
     )
 
@@ -30,6 +31,7 @@ def render_help() -> str:
             "  /help              Show commands.",
             "  /tools             List enabled tools.",
             "  /tasks             Show current durable task list.",
+            "  /background-tasks  Show in-process background execution tasks.",
             "  /mcp [tools]       Show MCP server status and discovered tools.",
             "  /status            Show current runtime status.",
             "  /history [n]       Show recent message summaries.",
@@ -104,6 +106,23 @@ def render_tasks(
     return "\n".join(lines)
 
 
+def render_background_tasks(
+    runtime: CliRuntime,
+    tasks: Iterable[BackgroundTaskState],
+) -> str:
+    items = list(tasks)
+    if not items:
+        return "Background tasks: none"
+    lines = ["Background tasks:"]
+    for task in items[-20:]:
+        lines.append(f"  {task.id} [{task.type} {task.status}] {task.description}")
+        lines.append(f"    output: {_display_path(Path(task.output_file), runtime.workspace)}")
+        detail = _background_task_detail(task)
+        if detail:
+            lines.append(f"    {detail}")
+    return "\n".join(lines)
+
+
 def render_status(runtime: CliRuntime) -> str:
     usage = runtime.state.usage
     transition = (
@@ -118,10 +137,17 @@ def render_status(runtime: CliRuntime) -> str:
         if trace_path is not None
         else "disabled"
     )
+    error_log_path = runtime.error_log_recorder.error_log_path
+    error_log_display = (
+        _display_path(error_log_path, runtime.workspace)
+        if error_log_path is not None
+        else "disabled"
+    )
     compaction = runtime.state.metadata.get("last_compaction")
     compact_lines = _compact_status_lines(runtime, compaction)
     memory_lines = _long_term_memory_status_lines(runtime)
     mcp_lines = _mcp_status_lines(runtime)
+    background_lines = _background_task_status_lines(runtime)
     return "\n".join(
         [
             "Status:",
@@ -139,7 +165,9 @@ def render_status(runtime: CliRuntime) -> str:
             ),
             f"  transcript: {_display_path(transcript_path, runtime.workspace)}",
             f"  trace: {trace_display}",
+            f"  errors: {error_log_display}",
             *mcp_lines,
+            *background_lines,
             *memory_lines,
             *compact_lines,
         ]
@@ -391,6 +419,41 @@ def _long_term_memory_status_lines(runtime: CliRuntime) -> list[str]:
     if isinstance(surfaced, list) and surfaced:
         lines.append(f"  relevant memories surfaced: {', '.join(str(item) for item in surfaced[:5])}")
     return lines
+
+
+def _background_task_status_lines(runtime: CliRuntime) -> list[str]:
+    manager = runtime.background_task_manager
+    if manager is None:
+        return ["  background tasks: disabled"]
+    tasks = manager.list_tasks()
+    running = sum(1 for task in tasks if task.status == "running")
+    completed = sum(1 for task in tasks if task.status == "completed")
+    failed = sum(1 for task in tasks if task.status == "failed")
+    killed = sum(1 for task in tasks if task.status == "killed")
+    return [
+        (
+            "  background tasks: "
+            f"total={len(tasks)} running={running} completed={completed} "
+            f"failed={failed} killed={killed}"
+        )
+    ]
+
+
+def _background_task_detail(task: BackgroundTaskState) -> str:
+    if task.type == "local_bash":
+        parts = []
+        if "exit_code" in task.metadata:
+            parts.append(f"exit_code={task.metadata.get('exit_code')}")
+        if task.metadata.get("timed_out") is True:
+            parts.append("timed_out=true")
+        return " ".join(parts)
+    if task.type == "local_agent":
+        child = task.metadata.get("child_session_id")
+        return f"child_session_id={child}" if child else ""
+    if task.type == "dream":
+        child = task.metadata.get("result_session_id")
+        return f"result_session_id={child}" if child else ""
+    return ""
 
 
 def _display_path(path: Path, workspace: Path) -> str:

@@ -13,11 +13,20 @@ from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
 from services.hooks import HookEvent, HookRegistry
 from services.model.client import ModelClient
+from services.model.retry import ModelRetryRunner, RetryDecision
 from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
-from services.observability import TraceRecorder
+from services.observability import ErrorLogRecorder, TraceRecorder
 from services.tools.executor import ToolExecutor
 from services.tools.types import ToolExecutionResult
+
+ESCALATED_MAX_OUTPUT_TOKENS = 64000
+MAX_OUTPUT_RECOVERY_RETRIES = 3
+CONTINUATION_PROMPT = (
+    "Output token limit hit. Resume directly; no apology, no recap of what you "
+    "were doing. Pick up mid-thought if that is where the cut happened. Break "
+    "remaining work into smaller pieces."
+)
 
 
 class ReactiveCompactor(Protocol):
@@ -67,6 +76,8 @@ class AgentLoop:
         compaction_service: ReactiveCompactor | None = None,
         session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
         session_memory_updater: SessionMemoryUpdaterProtocol | None = None,
+        model_retry_runner: ModelRetryRunner | None = None,
+        error_log_recorder: ErrorLogRecorder | None = None,
     ) -> None:
         self.state = state
         self.message_store = message_store
@@ -76,6 +87,13 @@ class AgentLoop:
         self.tool_executor = tool_executor
         self.trace_recorder = trace_recorder or TraceRecorder.noop(
             self.state.session_id
+        )
+        self.error_log_recorder = error_log_recorder or ErrorLogRecorder.noop(
+            self.state.session_id
+        )
+        self.model_retry_runner = model_retry_runner or ModelRetryRunner(
+            trace_recorder=self.trace_recorder,
+            error_log_recorder=self.error_log_recorder,
         )
         self.current_model_context = current_model_context
         self.hooks = hooks or HookRegistry()
@@ -153,26 +171,39 @@ class AgentLoop:
             model_attributes = self._model_attributes()
             model_attributes["turn_count"] = self.state.turn_count
             completed_message: ModelStreamEvent | None = None
+            model_events: list[ModelStreamEvent] = []
+            pending_retry_events: list[AgentEvent] = []
+
+            async def on_retry(
+                error: ProviderError,
+                decision: RetryDecision,
+            ) -> None:
+                self.state.set_transition(TransitionReason.RATE_LIMIT_RETRY)
+                self._record_transition(TransitionReason.RATE_LIMIT_RETRY)
+                pending_retry_events.append(
+                    AgentEvent(
+                        type="transition",
+                        transition=TransitionReason.RATE_LIMIT_RETRY.value,
+                        metadata={
+                            "attempt": decision.attempt,
+                            "max_retries": decision.max_retries,
+                            "delay_seconds": decision.delay_seconds,
+                            "error_type": error.error_type,
+                        },
+                    )
+                )
+
             try:
                 with self.trace_recorder.span(
                     "model_call",
                     model_attributes,
                 ) as model_span:
-                    async for model_event in self.model_client.stream(snapshot):
-                        if model_event.type == "content_delta":
-                            yield AgentEvent(
-                                type="assistant_delta",
-                                text=model_event.text,
-                                metadata=model_event.metadata,
-                            )
-                        elif model_event.type == "tool_call_completed":
-                            yield AgentEvent(
-                                type="tool_call_ready",
-                                metadata={
-                                    "tool_call": model_event.tool_call,
-                                },
-                            )
-                        elif model_event.type == "message_completed":
+                    async for model_event in self.model_retry_runner.stream(
+                        lambda: self.model_client.stream(snapshot),
+                        on_retry=on_retry,
+                    ):
+                        model_events.append(model_event)
+                        if model_event.type == "message_completed":
                             completed_message = model_event
                             tool_calls = self._event_tool_calls(model_event)
                             end_attributes = {
@@ -210,16 +241,62 @@ class AgentLoop:
                         transition=TransitionReason.REACTIVE_COMPACT_RETRY.value,
                     )
                     continue
+                self.error_log_recorder.record_error(
+                    exc,
+                    source="agent_loop_model_call",
+                    attributes={"turn_count": self.state.turn_count},
+                )
+                raise
+            except Exception as exc:
+                self.error_log_recorder.record_error(
+                    exc,
+                    source="agent_loop_model_call",
+                    attributes={"turn_count": self.state.turn_count},
+                )
                 raise
 
             if completed_message is None or completed_message.assistant_message is None:
-                raise ProviderError(
+                error = ProviderError(
                     "Provider stream did not complete a message.",
                     error_type="invalid_response",
                 )
+                self.error_log_recorder.record_error(
+                    error,
+                    source="agent_loop_model_call",
+                    attributes={"turn_count": self.state.turn_count},
+                )
+                raise error
 
             if completed_message.usage is not None:
                 self.state.add_usage(completed_message.usage)
+
+            for retry_event in pending_retry_events:
+                yield retry_event
+
+            output_recovery = self._prepare_output_interruption_recovery(
+                completed_message
+            )
+            if output_recovery is not None:
+                yield AgentEvent(
+                    type="transition",
+                    transition=output_recovery.value,
+                )
+                continue
+
+            for model_event in model_events:
+                if model_event.type == "content_delta":
+                    yield AgentEvent(
+                        type="assistant_delta",
+                        text=model_event.text,
+                        metadata=model_event.metadata,
+                    )
+                elif model_event.type == "tool_call_completed":
+                    yield AgentEvent(
+                        type="tool_call_ready",
+                        metadata={
+                            "tool_call": model_event.tool_call,
+                        },
+                    )
 
             self.message_store.append_assistant(completed_message.assistant_message)
             tool_calls = self._event_tool_calls(completed_message)
@@ -341,6 +418,60 @@ class AgentLoop:
         )
         await self.compaction_service.reactive_compact(self.state, error=error)
         return True
+
+    def _prepare_output_interruption_recovery(
+        self,
+        completed_message: ModelStreamEvent,
+    ) -> TransitionReason | None:
+        if not completed_message.output_interrupted:
+            return None
+
+        if not self.state.has_escalated_max_output_tokens:
+            self.state.has_escalated_max_output_tokens = True
+            overrides = dict(self.state.metadata.get("model_request_overrides") or {})
+            overrides["max_output_tokens"] = ESCALATED_MAX_OUTPUT_TOKENS
+            self.state.metadata["model_request_overrides"] = overrides
+            self.state.set_transition(TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE)
+            self._record_transition(TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE)
+            self.trace_recorder.event(
+                "max_output_tokens_escalate",
+                {
+                    "max_output_tokens": ESCALATED_MAX_OUTPUT_TOKENS,
+                    "turn_count": self.state.turn_count,
+                    "stop_reason": completed_message.stop_reason,
+                },
+            )
+            return TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE
+
+        if self.state.max_output_recovery_count < MAX_OUTPUT_RECOVERY_RETRIES:
+            # Continuation recovery intentionally persists the truncated assistant
+            # and follows it with a terse user prompt so the model can resume.
+            self.message_store.append_assistant(completed_message.assistant_message)
+            self.message_store.append_user(CONTINUATION_PROMPT)
+            self.state.max_output_recovery_count += 1
+            self.state.set_transition(TransitionReason.MAX_OUTPUT_TOKENS_RECOVERY)
+            self._record_transition(TransitionReason.MAX_OUTPUT_TOKENS_RECOVERY)
+            self.trace_recorder.event(
+                "max_output_tokens_recovery",
+                {
+                    "recovery_count": self.state.max_output_recovery_count,
+                    "max_retries": MAX_OUTPUT_RECOVERY_RETRIES,
+                    "turn_count": self.state.turn_count,
+                    "stop_reason": completed_message.stop_reason,
+                },
+            )
+            return TransitionReason.MAX_OUTPUT_TOKENS_RECOVERY
+
+        self.trace_recorder.event(
+            "max_output_tokens_recovery_exhausted",
+            {
+                "recovery_count": self.state.max_output_recovery_count,
+                "max_retries": MAX_OUTPUT_RECOVERY_RETRIES,
+                "turn_count": self.state.turn_count,
+                "stop_reason": completed_message.stop_reason,
+            },
+        )
+        return None
 
     async def _after_assistant_message_completed(
         self,

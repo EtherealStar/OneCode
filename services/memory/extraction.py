@@ -22,6 +22,16 @@ class LongTermMemoryExtractionPolicy:
     max_turns: int = 5
 
 
+@dataclass(frozen=True)
+class LongTermMemoryExtractionJob:
+    messages: tuple[dict[str, Any], ...]
+    parent_session_id: str
+    parent_tool_call_id: str
+    allowed_memory_dir: str
+    max_turns: int
+    prompt: str
+
+
 class LongTermMemorySubagentRunner(Protocol):
     async def run(self, request: SubagentRequest) -> SubagentResult: ...
 
@@ -55,6 +65,22 @@ class LongTermMemoryExtractionService:
         usage: Any | None = None,
     ) -> None:
         _ = assistant_message, usage
+        job = self.prepare_extraction_job(
+            messages,
+            state,
+            tool_calls=tool_calls,
+        )
+        if job is None:
+            return
+        await self.run_extraction_job(job, state)
+
+    def prepare_extraction_job(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+        *,
+        tool_calls: tuple[Any, ...],
+    ) -> LongTermMemoryExtractionJob | None:
         decision = should_extract_long_term_memory(
             messages,
             state,
@@ -76,10 +102,24 @@ class LongTermMemoryExtractionService:
             )
             if decision == "main_agent_memory_write":
                 _advance_cursor(messages, state)
-            return
+            return None
         if self._lock.locked():
             _merge_metadata(state, {"last_status": "skipped_running", "running": True})
-            return
+            return None
+        return LongTermMemoryExtractionJob(
+            messages=messages,
+            parent_session_id=state.session_id,
+            parent_tool_call_id=f"long-term-memory-{state.turn_count}",
+            allowed_memory_dir=str(self.store.memory_dir.resolve()),
+            max_turns=self._policy.max_turns,
+            prompt=_extraction_prompt(self.store, messages, state),
+        )
+
+    async def run_extraction_job(
+        self,
+        job: LongTermMemoryExtractionJob,
+        state: RuntimeState,
+    ) -> None:
         async with self._lock:
             _merge_metadata(
                 state,
@@ -92,20 +132,20 @@ class LongTermMemoryExtractionService:
             try:
                 self.store.ensure_exists()
                 request = SubagentRequest(
-                    prompt=_extraction_prompt(self.store, messages, state),
+                    prompt=job.prompt,
                     subagent_type=None,
-                    parent_session_id=state.session_id,
-                    parent_tool_call_id=f"long-term-memory-{state.turn_count}",
+                    parent_session_id=job.parent_session_id,
+                    parent_tool_call_id=job.parent_tool_call_id,
                     metadata={
                         "purpose": "long_term_memory_extraction",
-                        "allowed_memory_dir": str(self.store.memory_dir.resolve()),
-                        "max_turns": self._policy.max_turns,
+                        "allowed_memory_dir": job.allowed_memory_dir,
+                        "max_turns": job.max_turns,
                     },
                 )
                 result = await self._subagent_runner.run(request)
                 if result.is_error:
                     raise RuntimeError(result.final_text)
-                _advance_cursor(messages, state)
+                _advance_cursor(job.messages, state)
                 _merge_metadata(
                     state,
                     {
@@ -123,6 +163,20 @@ class LongTermMemoryExtractionService:
                         "child_session_id": result.session_id,
                     },
                 )
+            except asyncio.CancelledError:
+                _merge_metadata(
+                    state,
+                    {
+                        "last_status": "killed",
+                        "last_completed_at": _now(),
+                        "running": False,
+                    },
+                )
+                self._trace_recorder.event(
+                    "long_term_memory_extraction_cancelled",
+                    {"memory_dir": self.store.memory_dir},
+                )
+                raise
             except Exception as exc:
                 _merge_metadata(
                     state,

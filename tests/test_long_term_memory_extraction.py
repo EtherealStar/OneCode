@@ -64,3 +64,25 @@ def test_extraction_runs_restricted_subagent(tmp_path):
         "allowed_memory_dir"
     ].endswith(".onecode/memory")
     assert state.metadata["long_term_memory_extraction"]["last_status"] == "success"
+
+
+def test_prepare_extraction_job_does_not_run_subagent(tmp_path):
+    store = LongTermMemoryStore(tmp_path / "repo")
+    runner = FakeRunner()
+    state = RuntimeState()
+    state.turn_count = 1
+    service = LongTermMemoryExtractionService(store, subagent_runner=runner)
+
+    job = service.prepare_extraction_job(
+        (
+            {"role": "user", "content": "remember this later"},
+            {"role": "assistant", "content": "ok"},
+        ),
+        state,
+        tool_calls=(),
+    )
+
+    assert job is not None
+    assert runner.requests == []
+    assert job.parent_tool_call_id == "long-term-memory-1"
+    assert state.metadata["long_term_memory_extraction"]["last_decision"] == "extract"

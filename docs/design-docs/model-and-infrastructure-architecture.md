@@ -25,7 +25,9 @@ stream(snapshot) -> AsyncIterator[ModelStreamEvent]
 - `LLMResponse`
 - `ProviderError`
 
-`ProviderError` 携带 provider id、status code、error type 和 retryable 标记。当前 loop 会记录 provider error trace 后重新抛出；完整恢复流程仍是目标能力。
+`ProviderError` 携带 provider id、status code、error type、retryable 标记和可选 retry-after 秒数。它继承 `services/errors.py::OneCodeError`，因此可被统一错误日志和 helper 分类。
+
+`services/model/retry.py` 是 provider-neutral retry engine。`ModelRetryRunner` 只根据 `ProviderError.retryable` 和 `error_type` 决定是否重试，不读取 HTTP 状态或 provider 私有字段。它对每次 streaming attempt 做本地缓冲：失败 attempt 的 content delta、tool call delta 和 completed event 不会释放给 CLI、message store 或 transcript；只有 attempt 完整成功后才按原顺序交回主循环。context limit 不在 retry runner 内处理，仍交给 `core/loop.py` 和 compaction service 做 reactive compact。
 
 ## Provider Adapter
 
@@ -50,7 +52,7 @@ OneCode 内部 `role="tool_result"` 会在 provider adapter 中投影为 Chat Co
 
 `infrastructure/providers/http.py` 提供小型 JSON HTTP transport，支持普通 JSON 请求和 streaming JSON lines。它把 HTTP、URL、timeout、invalid JSON 等错误转换为 provider-neutral `ProviderError`。
 
-429 和 5xx 会标记为 retryable，但主循环的 rate-limit retry 和 retry exhaustion 仍是后续目标。
+429 和 5xx 会标记为 retryable，并由 `ModelRetryRunner` 执行指数退避重试。默认策略为最多 10 次 retry，基础延迟 0.5 秒，上限 32 秒，jitter 为基础延迟的 0 到 25%；provider 提供 retry-after 秒数时优先尊重该值。
 
 ## Provider Catalog
 
