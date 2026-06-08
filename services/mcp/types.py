@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 
 McpTransport = Literal["stdio", "sse", "http"]
-McpServerState = Literal["pending", "connected", "failed", "disabled"]
+McpServerState = Literal["pending", "connected", "failed", "disabled", "untrusted"]
 
 
 @dataclass(frozen=True)

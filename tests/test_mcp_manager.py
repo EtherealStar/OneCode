@@ -13,6 +13,7 @@ from typing import Any, Iterator
 import uvicorn
 
 from services.mcp.manager import McpConnectionManager
+from services.mcp.trust import McpTrustPolicy
 from services.mcp.types import McpConfigSet, McpServerConfig
 
 
@@ -46,6 +47,7 @@ def test_mcp_connection_manager_discovers_and_calls_stdio_tools(tmp_path: Path) 
             }
         ),
         timeout_seconds=10,
+        trust_policy=McpTrustPolicy.trust_all_servers(),
     )
 
     async def scenario() -> None:
@@ -108,6 +110,111 @@ def test_mcp_connection_manager_discovers_and_calls_sse_tools(tmp_path: Path) ->
             await manager.close_all()
 
         asyncio.run(scenario())
+
+
+def test_mcp_connection_manager_leaves_untrusted_stdio_pending(
+    tmp_path: Path,
+) -> None:
+    manager = _OpeningTrackingMcpConnectionManager(
+        tmp_path,
+        McpConfigSet(
+            {
+                "docs": McpServerConfig(
+                    name="docs",
+                    transport="stdio",
+                    command=sys.executable,
+                )
+            }
+        ),
+        trust_policy=McpTrustPolicy(),
+    )
+
+    async def scenario() -> None:
+        snapshot = await manager.connect_all()
+        assert snapshot.statuses[0].state == "untrusted"
+        assert snapshot.tools == ()
+        assert manager.open_attempts == 0
+
+    asyncio.run(scenario())
+
+
+def test_mcp_connection_manager_does_not_lazy_connect_untrusted_stdio(
+    tmp_path: Path,
+) -> None:
+    manager = _OpeningTrackingMcpConnectionManager(
+        tmp_path,
+        McpConfigSet(
+            {
+                "docs": McpServerConfig(
+                    name="docs",
+                    transport="stdio",
+                    command=sys.executable,
+                )
+            }
+        ),
+        trust_policy=McpTrustPolicy(),
+    )
+
+    async def scenario() -> None:
+        try:
+            await manager.ensure_connected("docs")
+        except ValueError as exc:
+            assert "untrusted" in str(exc)
+        else:
+            raise AssertionError("untrusted stdio server should not connect")
+        assert manager.snapshot().statuses[0].state == "untrusted"
+        assert manager.open_attempts == 0
+
+    asyncio.run(scenario())
+
+
+def test_mcp_stdio_env_uses_allowlist_and_explicit_env(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "parent-secret")
+    server_path = tmp_path / "env_mcp_server.py"
+    server_path.write_text(
+        "\n".join(
+            [
+                "import os",
+                "from mcp.server.fastmcp import FastMCP",
+                "mcp = FastMCP('env')",
+                "@mcp.tool(name='env.check')",
+                "def env_check() -> str:",
+                "    secret = os.environ.get('OPENAI_API_KEY', 'missing')",
+                "    explicit = os.environ.get('ONECODE_EXPLICIT', 'missing')",
+                "    return secret + '|' + explicit",
+                "if __name__ == '__main__':",
+                "    mcp.run('stdio')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manager = McpConnectionManager(
+        tmp_path,
+        McpConfigSet(
+            {
+                "env": McpServerConfig(
+                    name="env",
+                    transport="stdio",
+                    command=sys.executable,
+                    args=(str(server_path),),
+                    env={"ONECODE_EXPLICIT": "explicit-value"},
+                )
+            }
+        ),
+        timeout_seconds=10,
+        trust_policy=McpTrustPolicy.trust_all_servers(),
+    )
+
+    async def scenario() -> None:
+        await manager.connect_all()
+        result = await manager.call_tool("env", "env.check", {}, "call-env")
+        assert result.content == "missing|explicit-value"
+        await manager.close_all()
+
+    asyncio.run(scenario())
 
 
 def test_mcp_connection_manager_discovers_and_calls_streamable_http_tools(
@@ -237,6 +344,23 @@ class _RetryingMcpConnectionManager(McpConnectionManager):
 
     async def _disconnect(self, server_name: str) -> None:
         self.disconnects.append(server_name)
+
+
+class _OpeningTrackingMcpConnectionManager(McpConnectionManager):
+    def __init__(
+        self,
+        workspace: Path,
+        configs: McpConfigSet,
+        *,
+        trust_policy: McpTrustPolicy,
+    ) -> None:
+        super().__init__(workspace, configs, trust_policy=trust_policy)
+        self.open_attempts = 0
+
+    async def _open_streams(self, config: McpServerConfig, exit_stack: Any) -> tuple[Any, ...]:
+        del config, exit_stack
+        self.open_attempts += 1
+        raise AssertionError("untrusted stdio server should not open streams")
 
 
 class _FailingSession:
