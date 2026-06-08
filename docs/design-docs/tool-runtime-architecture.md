@@ -94,10 +94,11 @@ executor 的 JSON Schema 子集校验 → 工具级 `validate_input` → 文件�
 
 工具 handler 不直接改主循环状态。成功后 executor 统一维护：
 
-- `skill` 成功 + `metadata.allowed_tools` → 逐个 `session_store.allow_tool()`。
 - `read_file`/`edit_file`/`write_file`（及兼容别名 `filewrite`）成功 + `metadata.path` → 追加 `state.metadata["files_read"]`。
 - `edit_file`/`write_file` → 追加 `files_changed`；命中 `.onecode/memory/*.md` → 记录 `long_term_memory_writes`。
 - 文件工具成功 → `file_state_cache.snapshot_path()`（partial read 标记 offset/limit）。
+
+`skill` 工具结果中的 `metadata.allowed_tools` 不由 executor 写入共享 session grant；fork skill 的临时授权由 child-local permission policy 处理，inline skill 只加载内容。
 
 ### followup_messages
 

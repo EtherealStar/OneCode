@@ -157,8 +157,6 @@ class SubagentRunner:
     ) -> SubagentResult:
         """Run a fork-context skill in a clean child runtime."""
 
-        for tool_name in skill.allowed_tools:
-            self._permission_policy.session_store.allow_tool(tool_name)
         definition = AgentDefinition(
             agent_type=f"skill:{skill.name}",
             when_to_use=skill.when_to_use or skill.description,
@@ -186,9 +184,12 @@ class SubagentRunner:
         )
         child_store.seed_messages(({"role": "user", "content": request.prompt},))
 
+        permission_policy = self._permission_policy.with_scoped_allowed_tools(
+            skill.allowed_tools
+        )
         registry = ToolRegistry(
             _child_descriptors(definition, self._base_descriptors),
-            permission_policy=self._permission_policy,
+            permission_policy=permission_policy,
         )
         context_engine = ContextEngine(
             child_store,
@@ -198,7 +199,7 @@ class SubagentRunner:
         tool_executor = RegistryToolExecutor(
             registry,
             guard=self._guard,
-            permission_policy=self._permission_policy,
+            permission_policy=permission_policy,
             permission_prompter=self._permission_prompter,
             trace_recorder=self._trace_recorder,
         )

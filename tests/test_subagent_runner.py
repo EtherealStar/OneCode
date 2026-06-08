@@ -15,6 +15,7 @@ from services.model.types import LLMResponse, ModelUsage
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, SessionPermissionStore
 from services.context.current_model_context import CurrentModelContext
+from services.skills import SkillCommand
 from services.subagents.runner import SubagentRunner
 from services.subagents.types import SubagentRequest
 from services.tasks import resolve_task_list_id
@@ -392,6 +393,61 @@ def test_child_permission_ask_bubbles_to_shared_prompter_and_session_store(
     assert model.snapshots[1].messages[-1]["is_error"] is False
 
 
+def test_fork_skill_allowed_tools_are_scoped_to_child_policy(tmp_path: Path) -> None:
+    ran = False
+    store = SessionPermissionStore()
+    policy = PermissionPolicy(store)
+    call = ToolCall(id="call-bash", name="bash", input={})
+
+    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        nonlocal ran
+        ran = True
+        return ToolExecutionResult(
+            tool_call_id=runtime.tool_call_id,
+            tool_name="bash",
+            content="ran",
+        )
+
+    runner, model, _parent_store, _policy = make_runner(
+        tmp_path,
+        [
+            LLMResponse(
+                assistant_message={"role": "assistant", "content": []},
+                final_text="",
+                tool_calls=(call,),
+            ),
+            LLMResponse(
+                assistant_message=assistant("skill done"),
+                final_text="skill done",
+            ),
+        ],
+        base_descriptors=(command_descriptor("bash", handler=handler),),
+        permission_policy=policy,
+        permission_prompter=None,
+    )
+
+    result = run(
+        runner.run_skill(
+            skill=SkillCommand(
+                name="test-skill",
+                description="Test skill",
+                content="Use bash.",
+                source="project",
+                allowed_tools=("bash",),
+                context="fork",
+            ),
+            args="",
+            parent_session_id="parent-session",
+            parent_tool_call_id="call-skill",
+        )
+    )
+
+    assert result.final_text == "skill done"
+    assert ran is True
+    assert store.is_tool_allowed("bash") is False
+    assert model.snapshots[1].messages[-1]["is_error"] is False
+
+
 def test_child_runtime_inherits_task_list_id_metadata(tmp_path: Path) -> None:
     call = ToolCall(id="call-probe", name="task_list_probe", input={})
     runner, model, _parent_store, _policy = make_runner(
@@ -423,6 +479,47 @@ def test_child_runtime_inherits_task_list_id_metadata(tmp_path: Path) -> None:
     tool_result = model.snapshots[1].messages[-1]
     assert tool_result["role"] == "tool_result"
     assert tool_result["content"] == "shared-demo"
+
+
+def command_descriptor(
+    name: str,
+    *,
+    handler=None,
+) -> ToolDescriptor:
+    def default_handler(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            tool_call_id=runtime.tool_call_id,
+            tool_name=name,
+            content="ran",
+        )
+
+    def classify(
+        tool_input: dict[str, Any],
+        runtime: ToolRuntime,
+    ) -> ToolCallClassification:
+        return ToolCallClassification(
+            read_only=False,
+            modifies_filesystem=False,
+            concurrency_safe=False,
+            targets=(
+                ToolTarget(kind="command", operation="execute", value=f"{name} test"),
+            ),
+        )
+
+    return ToolDescriptor(
+        name=name,
+        description=f"{name} description",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+        handler=handler or default_handler,
+        classify_input=classify,
+    )
 
 
 def dummy_descriptor(

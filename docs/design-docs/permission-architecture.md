@@ -25,7 +25,7 @@
 
 ### SessionPermissionStore
 
-`allow_directory`/`is_allowed`（按工具+操作授权目录，`contains_path` 语义）、`allow_tool`/`is_tool_allowed`、`deny_tool`/`is_tool_denied`、`disable_tool`/`is_tool_disabled`、`allow_skill`/`is_skill_allowed`（已实现但未接入 evaluate）、`deny_skill`/`is_skill_denied`、`clear()`。session grant 只能把 ask 升为 allow，永不覆盖 deny。
+`allow_directory`/`is_allowed`（按工具+操作授权目录，`contains_path` 语义）、`allow_tool`/`is_tool_allowed`、`deny_tool`/`is_tool_denied`、`disable_tool`/`is_tool_disabled`、`allow_skill`/`is_skill_allowed`（已实现但未接入 evaluate）、`deny_skill`/`is_skill_denied`、`clear()`。session grant 只能把 ask 升为 allow，永不覆盖 deny。`PermissionPolicy(scoped_allowed_tools=...)` 提供 runtime-local 工具授权，供 fork skill 等 child runtime 使用，不写入 `SessionPermissionStore`。
 
 ### 规则字符串与 project settings
 
@@ -68,12 +68,12 @@ flowchart TD
   B2 -->|否| C1["收集 _ask_reasons"]
   C1 --> C2{"asks 为空?"}
   C2 -->|是| Allow["ALLOW (默认)"]
-  C2 -->|否| C3{"project allow / session allow-all / tool allowed?"}
+  C2 -->|否| C3{"project allow / session allow-all / session tool / scoped tool allowed?"}
   C3 -->|是| Allow2["ALLOW (升级 ask)"]
   C3 -->|否| Ask["ASK"]
 ```
 
-阶段 A（硬拒绝，首个命中即返回 deny）按顺序为：`read_only_agent` → 工具级 deny（session deny + project 整工具 deny + `metadata.denied_tools`）→ 工具 disable → skill deny → guard deny → project 内容 deny。阶段 B 为特殊 agent 短路。阶段 C 收集 ask 原因并尝试升级为 allow，否则 ask；无 ask 时默认 allow。
+阶段 A（硬拒绝，首个命中即返回 deny）按顺序为：`read_only_agent` → 工具级 deny（session deny + project 整工具 deny + `metadata.denied_tools`）→ 工具 disable → skill deny → guard deny → project 内容 deny。阶段 B 为特殊 agent 短路。阶段 C 收集 ask 原因并尝试通过 project allow、session directory grant、session tool grant 或 scoped tool grant 升级为 allow，否则 ask；无 ask 时默认 allow。
 
 ## 关键机制
 
