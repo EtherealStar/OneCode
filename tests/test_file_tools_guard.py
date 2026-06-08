@@ -65,52 +65,63 @@ def execute_results(
     return asyncio.run(collect())
 
 
-def test_read_file_descriptor_classifies_input() -> None:
-    classification = read_file_descriptor().classify_input(
-        {"file_path": "a.txt"},
-        ToolRuntime(state=RuntimeState()),
-    )
+def test_file_tool_descriptors_classify_input() -> None:
+    cases = [
+        (
+            read_file_descriptor,
+            {"file_path": "a.txt"},
+            True,
+            False,
+            True,
+            "read",
+            math.inf,
+            "read_file:a.txt",
+        ),
+        (
+            edit_file_descriptor,
+            {"file_path": "a.txt", "old_string": "old", "new_string": "new"},
+            False,
+            True,
+            False,
+            "write",
+            50_000,
+            "edit_file:a.txt",
+        ),
+        (
+            write_file_descriptor,
+            {"file_path": "a.txt", "content": "new"},
+            False,
+            True,
+            False,
+            "write",
+            50_000,
+            "write_file:a.txt",
+        ),
+    ]
 
-    assert classification.read_only is True
-    assert classification.modifies_filesystem is False
-    assert classification.concurrency_safe is True
-    assert classification.targets[0].kind == "file"
-    assert classification.targets[0].operation == "read"
-    assert classification.targets[0].value == "a.txt"
-    assert math.isinf(classification.result_policy.max_result_size_chars)
-    assert classification.permission_subject == "read_file:a.txt"
+    for (
+        descriptor_factory,
+        tool_input,
+        read_only,
+        modifies_filesystem,
+        concurrency_safe,
+        operation,
+        max_result_size_chars,
+        permission_subject,
+    ) in cases:
+        classification = descriptor_factory().classify_input(
+            tool_input,
+            ToolRuntime(state=RuntimeState()),
+        )
 
-
-def test_edit_file_descriptor_classifies_input() -> None:
-    classification = edit_file_descriptor().classify_input(
-        {"file_path": "a.txt", "old_string": "old", "new_string": "new"},
-        ToolRuntime(state=RuntimeState()),
-    )
-
-    assert classification.read_only is False
-    assert classification.modifies_filesystem is True
-    assert classification.concurrency_safe is False
-    assert classification.targets[0].kind == "file"
-    assert classification.targets[0].operation == "write"
-    assert classification.targets[0].value == "a.txt"
-    assert classification.result_policy.max_result_size_chars == 50_000
-    assert classification.permission_subject == "edit_file:a.txt"
-
-
-def test_write_file_descriptor_classifies_input() -> None:
-    classification = write_file_descriptor().classify_input(
-        {"file_path": "a.txt", "content": "new"},
-        ToolRuntime(state=RuntimeState()),
-    )
-
-    assert classification.read_only is False
-    assert classification.modifies_filesystem is True
-    assert classification.concurrency_safe is False
-    assert classification.targets[0].kind == "file"
-    assert classification.targets[0].operation == "write"
-    assert classification.targets[0].value == "a.txt"
-    assert classification.result_policy.max_result_size_chars == 50_000
-    assert classification.permission_subject == "write_file:a.txt"
+        assert classification.read_only is read_only
+        assert classification.modifies_filesystem is modifies_filesystem
+        assert classification.concurrency_safe is concurrency_safe
+        assert classification.targets[0].kind == "file"
+        assert classification.targets[0].operation == operation
+        assert classification.targets[0].value == "a.txt"
+        assert classification.result_policy.max_result_size_chars == max_result_size_chars
+        assert classification.permission_subject == permission_subject
 
 
 def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> None:

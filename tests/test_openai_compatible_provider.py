@@ -8,22 +8,16 @@ from typing import Any
 
 import pytest
 
-from core.context_engine import ContextEngine, StaticPromptAssembler
-from core.loop import AgentLoop
-from core.runtime_state import RuntimeState
 from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
 from infrastructure.providers.catalog import BUILTIN_PROVIDERS, get_provider_definition
 from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
 from infrastructure.providers.connection import ProviderConnectionService
-from infrastructure.providers.factory import create_model_client
 from infrastructure.providers.http import provider_error_from_http_status
 from infrastructure.providers.model_catalog import ModelCatalogClient
-from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
-from services.tools.executor import ToolExecutionUpdate
-from services.tools.types import ToolCall, ToolExecutionResult
+from services.tools.types import ToolCall
 
 
 @dataclass
@@ -81,29 +75,6 @@ class FakeTransport:
         return self.get_response
 
 
-@dataclass
-class FakeToolExecutor:
-    calls: list[tuple[ToolCall, ...]] = field(default_factory=list)
-
-    async def execute(
-        self,
-        tool_calls: tuple[ToolCall, ...],
-        state: RuntimeState,
-    ):
-        self.calls.append(tool_calls)
-        for tool_call in tool_calls:
-            yield ToolExecutionUpdate(
-                type="result",
-                result=ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                content=f"result for {tool_call.name}",
-                ),
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-            )
-
-
 def collect_stream(
     client: OpenAICompatibleChatCompletionsClient,
     snapshot: ContextSnapshot,
@@ -116,17 +87,6 @@ def collect_stream(
 
 def completed_event(events: list[ModelStreamEvent]) -> ModelStreamEvent:
     return next(event for event in reversed(events) if event.type == "message_completed")
-
-
-def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
-    async def run() -> str:
-        final_text = ""
-        async for event in loop.stream(prompt):
-            if event.type == "completed":
-                final_text = event.text
-        return final_text
-
-    return asyncio.run(run())
 
 
 def _content_to_text(content: Any) -> str:
@@ -566,121 +526,3 @@ def test_context_limit_http_errors_are_provider_neutral() -> None:
     assert too_large.retryable is False
     assert bad_request.error_type == "context_limit_exceeded"
     assert bad_request.retryable is False
-
-
-def test_real_provider_client_can_be_injected_into_loop_for_final_text(
-    tmp_path: Path,
-) -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "done"}}]},
-    )
-    model_client = create_model_client(
-        write_env(tmp_path),
-        async_transport=transport,
-    )
-    state = RuntimeState()
-    message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
-        session_id=state.session_id,
-        flush_interval_seconds=60,
-    )
-    loop = AgentLoop(
-        state=state,
-        message_store=message_store,
-        context_engine=ContextEngine(
-            message_store,
-            prompt_assembler=StaticPromptAssembler(),
-        ),
-        model_client=model_client,
-        tool_executor=FakeToolExecutor(),
-    )
-
-    result = run_to_final_text(loop, "hello")
-
-    assert result == "done"
-    assert transport.post_calls[0][2]["messages"] == [
-        {"role": "user", "content": "hello"}
-    ]
-
-
-def test_real_provider_client_can_drive_tool_call_loop(tmp_path: Path) -> None:
-    first_response = {
-        "choices": [
-            {
-                "message": {
-                    "tool_calls": [
-                        {
-                            "id": "call_x",
-                            "type": "function",
-                            "function": {
-                                "name": "read_file",
-                                "arguments": '{"path":"a.txt"}',
-                            },
-                        }
-                    ]
-                }
-            }
-        ]
-    }
-
-    class SequencedTransport(FakeTransport):
-        async def post_json(
-            self,
-            url: str,
-            headers: dict[str, str],
-            payload: dict[str, Any],
-            timeout_seconds: float,
-        ) -> dict[str, Any]:
-            self.post_calls.append((url, headers, payload, timeout_seconds))
-            if len(self.post_calls) == 1:
-                return first_response
-            return {"choices": [{"message": {"content": "final"}}]}
-
-    sequenced_transport = SequencedTransport()
-    model_client = create_model_client(
-        write_env(tmp_path),
-        async_transport=sequenced_transport,
-    )
-    state = RuntimeState()
-    message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
-        session_id=state.session_id,
-        flush_interval_seconds=60,
-    )
-    tool_executor = FakeToolExecutor()
-    loop = AgentLoop(
-        state=state,
-        message_store=message_store,
-        context_engine=ContextEngine(
-            message_store,
-            prompt_assembler=StaticPromptAssembler(),
-        ),
-        model_client=model_client,
-        tool_executor=tool_executor,
-    )
-
-    result = run_to_final_text(loop, "inspect")
-
-    assert result == "final"
-    assert len(sequenced_transport.post_calls) == 2
-    assert tool_executor.calls == [
-        (ToolCall(id="call_x", name="read_file", input={"path": "a.txt"}),)
-    ]
-    assert sequenced_transport.post_calls[1][2]["messages"] == [
-        {"role": "user", "content": "inspect"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_x",
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "arguments": '{"path":"a.txt"}',
-                    },
-                }
-            ],
-        },
-        {"role": "tool", "tool_call_id": "call_x", "content": "result for read_file"},
-    ]

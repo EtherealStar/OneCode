@@ -131,6 +131,7 @@ class CommandSpec:
    - 把 `handle_command()` 的 if/elif 分支迁移到 `CommandSpec` registry。
    - renderer/banner/preview 从 registry 读取可见命令。
    - 删除 `/quit`、`/help`、`/tools`、`/trace`、`/background-tasks` 和 `/mcp tools`。
+   - 同步删除或改写 `tests/test_cli_commands.py` 中固定旧用户命令的测试：删除 `/help`、`/tools`、`/trace`、`/background-tasks` 的用户可见预期；把 `/mcp tools` 测试改为 `/mcp` 概览测试；把 `/background-tasks` 的覆盖迁移到 `/tasks` 合并视图测试；把未知命令提示从 `Use /help` 改为新的命令预览/错误文案。
 
 2. 引入 `rich`。
    - `renderer.py` 逐步从字符串返回改为 Rich renderable 或 `Console` 输出。
@@ -157,6 +158,7 @@ class CommandSpec:
    - 更新 `docs/design-docs/cli-architecture.md`。
    - 更新 CLI command tests。
    - 若删除命令影响旧测试，测试应跟随新用户界面，不保留兼容别名。
+   - 保留 runtime/service 层测试：删除 slash 命令入口测试不等于删除 `TraceRecorder`、`ToolRegistry`、`BackgroundTaskManager`、MCP descriptor 或 renderer helper 的底层覆盖。
 
 ## 代码触点
 
