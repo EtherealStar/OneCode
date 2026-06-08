@@ -24,7 +24,6 @@ from services.compaction import (
     ContextCompactionService,
     SessionMemoryExtractionService,
     SessionMemoryStore,
-    ToolResultStore,
 )
 from services.context.current_model_context import CurrentModelContext
 from services.context.message_store import MessageStore
@@ -79,6 +78,7 @@ from ui.cli import renderer
 from ui.cli.commands import handle_command
 from ui.cli.permissions import CliPermissionPrompter
 from ui.cli.types import CliRuntime
+from utils.toolResultStorage import ToolResultStorage
 
 
 def build_runtime(workspace: Path) -> CliRuntime:
@@ -154,7 +154,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         *mcp_descriptors,
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
-    result_store = ToolResultStore(message_store.transcript_store.session_dir)
+    result_store = ToolResultStorage(message_store.transcript_store.session_dir)
     session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
     long_term_memory_store = LongTermMemoryStore(workspace)
     instruction_memory_loader = InstructionMemoryLoader(

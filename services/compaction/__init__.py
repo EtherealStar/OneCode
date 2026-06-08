@@ -1,6 +1,5 @@
 """Context compaction helpers and service types."""
 
-from services.compaction.result_store import StoredResultRef, ToolResultStore
 from services.compaction.service import ContextCompactionService
 from services.compaction.session_memory import (
     SessionMemory,
@@ -36,8 +35,6 @@ __all__ = [
     "SessionMemoryExtractionService",
     "SessionMemoryStore",
     "SessionMemoryUpdater",
-    "StoredResultRef",
-    "ToolResultStore",
     "count_tool_calls",
     "estimate_message_tokens",
     "estimate_messages_tokens",

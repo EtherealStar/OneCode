@@ -19,7 +19,6 @@ from services.compaction import (
     SessionMemoryExtractionService,
     SessionMemoryStore,
     SessionMemoryUpdater,
-    ToolResultStore,
 )
 from services.observability import ErrorLogRecorder, TraceRecorder
 from services.mcp import McpConnectionManager
@@ -43,6 +42,7 @@ from services.tasks import TaskStore
 from services.tools.executor import ToolExecutor
 from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
+from utils.toolResultStorage import ToolResultStorage
 
 
 @dataclass
@@ -105,7 +105,7 @@ class CliRuntime:
             resume_generation = 0
         state.metadata["session_memory_resume_generation"] = resume_generation + 1
         session_memory_store = None
-        result_store = ToolResultStore(message_store.transcript_store.session_dir)
+        result_store = ToolResultStorage(message_store.transcript_store.session_dir)
         if self.session_memory_store is not None:
             session_memory_store = SessionMemoryStore(
                 message_store.transcript_store.session_dir

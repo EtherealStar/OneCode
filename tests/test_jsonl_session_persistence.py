@@ -109,6 +109,90 @@ def test_large_tool_result_is_externalized_and_restored(tmp_path: Path) -> None:
     assert restored_store.current_messages()[0]["content"] == large_content
 
 
+def test_duplicate_tool_call_id_externalized_results_do_not_overwrite(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState(session_id="session-duplicate")
+    message_store = make_store(tmp_path, state)
+    first_content = "a" * (50 * 1024 + 1)
+    second_content = "b" * (50 * 1024 + 1)
+
+    message_store.append_tool_results(
+        [
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="grep",
+                content=first_content,
+            ),
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="grep",
+                content=second_content,
+            ),
+        ]
+    )
+    message_store.flush_transcript()
+
+    session_dir = tmp_path / ".onecode" / state.session_id
+    records = read_jsonl(session_dir / "messages.jsonl")
+    first_path = records[0]["message"]["metadata"]["tool_result_path"]
+    second_path = records[1]["message"]["metadata"]["tool_result_path"]
+
+    assert first_path == "tool-results/call-1.txt"
+    assert second_path.startswith("tool-results/call-1-")
+    assert first_path != second_path
+    assert (session_dir / first_path).read_text(encoding="utf-8") == first_content
+    assert (session_dir / second_path).read_text(encoding="utf-8") == second_content
+
+    restored_state = RuntimeState()
+    transcript_store = JsonlTranscriptStore(
+        tmp_path / ".onecode",
+        state.session_id,
+        cwd=tmp_path,
+        flush_interval_seconds=60,
+    )
+    restored_store = MessageStore.from_transcript(transcript_store, restored_state)
+
+    assert [message["content"] for message in restored_store.current_messages()] == [
+        first_content,
+        second_content,
+    ]
+
+
+def test_duplicate_tool_call_id_same_content_reuses_externalized_result(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState(session_id="session-duplicate-same")
+    message_store = make_store(tmp_path, state)
+    content = "x" * (50 * 1024 + 1)
+
+    message_store.append_tool_results(
+        [
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="grep",
+                content=content,
+            ),
+            ToolExecutionResult(
+                tool_call_id="call-1",
+                tool_name="grep",
+                content=content,
+            ),
+        ]
+    )
+    message_store.flush_transcript()
+
+    session_dir = tmp_path / ".onecode" / state.session_id
+    records = read_jsonl(session_dir / "messages.jsonl")
+    first_path = records[0]["message"]["metadata"]["tool_result_path"]
+    second_path = records[1]["message"]["metadata"]["tool_result_path"]
+
+    assert first_path == second_path == "tool-results/call-1.txt"
+    assert sorted(path.name for path in (session_dir / "tool-results").iterdir()) == [
+        "call-1.txt"
+    ]
+
+
 def test_clear_starts_new_session_without_deleting_old_transcript(
     tmp_path: Path,
 ) -> None:

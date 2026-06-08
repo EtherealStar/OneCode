@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from core.runtime_state import RuntimeState
-from services.compaction.result_store import ToolResultStore
+from utils.toolResultStorage import ToolResultStorage
 from services.guard import SandboxBoundary, SandboxGuard
 from services.permissions import PermissionPolicy
 from services.tools.executor import RegistryToolExecutor
@@ -35,7 +35,7 @@ def _execute_results(
 
 
 def test_result_store_persists_content_and_formats_reference(tmp_path) -> None:
-    store = ToolResultStore(tmp_path / ".onecode" / "session-1")
+    store = ToolResultStorage(tmp_path / ".onecode" / "session-1")
 
     ref = store.persist_tool_result(
         tool_call_id="call/1",
@@ -52,7 +52,7 @@ def test_result_store_persists_content_and_formats_reference(tmp_path) -> None:
 
 
 def test_result_store_reuses_same_reference_for_same_content(tmp_path) -> None:
-    store = ToolResultStore(tmp_path / ".onecode" / "session-1")
+    store = ToolResultStorage(tmp_path / ".onecode" / "session-1")
 
     first = store.persist_tool_result(
         tool_call_id="call-1",
@@ -70,7 +70,7 @@ def test_result_store_reuses_same_reference_for_same_content(tmp_path) -> None:
 
 
 def test_result_store_uses_stable_hash_suffix_for_changed_content(tmp_path) -> None:
-    store = ToolResultStore(tmp_path / ".onecode" / "session-1")
+    store = ToolResultStorage(tmp_path / ".onecode" / "session-1")
 
     first = store.persist_tool_result(
         tool_call_id="call-1",
@@ -96,7 +96,7 @@ def test_result_store_uses_stable_hash_suffix_for_changed_content(tmp_path) -> N
 
 def test_executor_persists_oversized_result_when_store_is_injected(tmp_path) -> None:
     state = RuntimeState(session_id="session-store")
-    result_store = ToolResultStore(tmp_path / ".onecode" / state.session_id)
+    result_store = ToolResultStorage(tmp_path / ".onecode" / state.session_id)
 
     def handler(
         tool_input: dict,

@@ -71,9 +71,9 @@ flowchart TD
 
 ### Tool result 外置
 
-仅对 `role="tool_result"` 且 UTF-8 内容 > 50KB（`TOOL_RESULT_EXTERNALIZE_THRESHOLD_BYTES`）触发：写入 `tool-results/<safe_tool_call_id>.txt`，JSONL content 替换为 `[tool result externalized: ...]` + 前 4000 字符预览，metadata 增加 `tool_result_externalized`、`tool_result_path`、`original_tool_call_id`、`original_size_bytes`、`preview_chars`。恢复（`load_messages` / `from_transcript`）时尝试读回完整 content。
+仅对 `role="tool_result"` 且 UTF-8 内容 > 50KB（`TOOL_RESULT_EXTERNALIZE_THRESHOLD_BYTES`）触发：通过 `utils/toolResultStorage` 写入 `tool-results/<result_id>.txt`，JSONL content 替换为 `[tool result externalized: ...]` + 前 4000 字符预览，metadata 增加 `tool_result_externalized`、`tool_result_path`、`tool_result_id`、`original_tool_call_id`、`original_size_bytes`、`original_size_chars`、`preview_chars`。同一 `tool_call_id` 且内容相同会复用同一文件；同一 ID 但内容不同会使用稳定内容 hash 后缀。恢复（`load_messages` / `from_transcript`）时尝试读回完整 content，缺失时保留预览并标记 `missing_external_tool_result`。
 
-> 该外置与 compaction 层的 result store（200K 字符阈值，模型只见引用）独立运作，metadata 字段不同，详见 `compaction-architecture.md`。
+> transcript 外置、compaction 结果预算和 executor 结果预算共享同一个 `ToolResultStorage` 命名、去重和读取实现；不同上下文只决定模型或 JSONL 中展示的引用文本。
 
 ### 压缩消息替换契约
 

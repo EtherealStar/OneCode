@@ -8,7 +8,6 @@ import uuid
 from typing import TYPE_CHECKING, Any, Protocol
 
 from core.runtime_state import RuntimeState
-from services.compaction.result_store import ToolResultStore
 from services.compaction.session_memory import SessionMemoryStore
 from services.compaction.token_estimator import estimate_messages_tokens
 from services.compaction.types import (
@@ -23,6 +22,7 @@ from services.hooks import HookEvent, HookRegistry
 from services.model.types import ProviderError
 from services.observability import TraceRecorder
 from services.subagents.types import SubagentRequest
+from utils.toolResultStorage import ToolResultStorage
 
 if TYPE_CHECKING:
     from services.subagents.runner import SubagentRunner
@@ -49,7 +49,7 @@ class ContextCompactionService:
         message_store: MessageStore | None = None,
         session_memory_store: SessionMemoryStore | None = None,
         session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
-        result_store: ToolResultStore | None = None,
+        result_store: ToolResultStorage | None = None,
         subagent_runner: SubagentRunnerProtocol | None = None,
         hooks: HookRegistry | None = None,
         trace_recorder: TraceRecorder | None = None,
@@ -69,7 +69,7 @@ class ContextCompactionService:
         message_store: MessageStore | None = None,
         session_memory_store: SessionMemoryStore | None = None,
         session_memory_extractor: SessionMemoryExtractorProtocol | None = None,
-        result_store: ToolResultStore | None = None,
+        result_store: ToolResultStorage | None = None,
         subagent_runner: SubagentRunnerProtocol | None = None,
     ) -> None:
         if message_store is not None:
@@ -569,12 +569,10 @@ class ContextCompactionService:
                     preview=preview,
                 )
                 metadata.update(
-                    {
-                        "result_stored": True,
-                        "stored_result_id": ref.result_id,
-                        "stored_result_path": str(ref.absolute_path),
-                        "stored_result_relative_path": ref.relative_path,
-                    }
+                    self._result_store.stored_result_metadata(
+                        ref,
+                        max_result_size_chars=self.config.tool_result_budget_chars,
+                    )
                 )
                 stored_count += 1
             else:

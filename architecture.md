@@ -131,6 +131,9 @@ OneCode/
     observability/           # trace 与 error log
     errors.py                # provider-neutral 错误分类
 
+  utils/                     # 跨 service 共享的小型基础设施
+    toolResultStorage/       # 工具结果 artifact 命名、去重、持久化和引用文本
+
   tools/                     # 内置工具
     read_file/ edit_file/ write_file/ glob/ grep/ bash/
     agent/ skill/

@@ -1,6 +1,6 @@
 # Tech Debt Tracker
 
-最近审阅日期：2026-06-07
+最近审阅日期：2026-06-08
 
 本台账记录当前已实现的 OneCode runtime 骨架中可由代码证据支持的技术债。条目依据 `architecture.md`、`docs/design-docs/core-beliefs.md`、`docs/exec-plans/active/` 和当前代码边界整理。
 
@@ -12,6 +12,9 @@
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
+| TD-017 | Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量 | 安全 / 架构 | `ui/cli/app.py`, `services/mcp/config.py`, `services/mcp/manager.py` | 高 | 已识别 |
+| TD-018 | Skill `allowed_tools` 会转成共享 session 级工具授权 | 安全 / 权限 / 架构 | `tools/skill/`, `services/subagents/runner.py`, `services/tools/executor.py`, `services/permissions/` | 高 | 已识别 |
+| TD-020 | 文件、附件和搜索工具会先整文件读取或整目录扫描，再分页/截断 | 性能 / 可用性 | `tools/read_file/`, `tools/grep/`, `tools/glob/`, `services/attachments/` | 中 | 已识别 |
 
 ---
 
@@ -133,7 +136,104 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 
 ---
 
+### TD-017: Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量
+
+- **类型：** 安全 / 架构
+- **区域：** `ui/cli/app.py`, `services/mcp/config.py`, `services/mcp/manager.py`
+- **优先级：** 高
+- **状态：** 已识别
+- **影响：** 仓库级 MCP 配置一旦存在，CLI runtime 初始化时会自动连接 enabled server；stdio server 子进程继承完整父进程环境变量，扩大了本地配置被滥用时的命令执行和 secret 暴露面。
+
+**描述：**
+`build_runtime()` 会在 CLI 启动装配阶段调用 `mcp_manager.connect_all_blocking()`。MCP server 配置的 `enabled` 默认值为 `True`，因此项目配置中新增 stdio server 后，除非显式禁用，否则会在启动时执行对应 command。`StdioMcpClient` 启动子进程时先复制 `os.environ`，再叠加配置里的 `env`，导致模型 provider key、系统凭据或其他本地 secret 可能被传给仓库配置声明的 MCP 子进程。
+
+**引入原因：**
+MCP 第一版优先保证 CLI 启动后可直接发现并使用项目 MCP 工具，简化了连接流程和环境传递；尚未引入 project MCP trust gate、按 server 授权、环境变量 allowlist 或启动前审计 UI。
+
+**修复方向：**
+为项目 MCP 配置增加显式 trust/allow 流程，stdio server 首次执行前应显示 command、args、cwd 和 env 摘要并要求授权。子进程环境应默认最小化，只传递 allowlisted 变量和配置显式声明的变量；敏感变量需要 redact trace/log。自动连接可保留给已信任 server，未信任 server 应停留在 pending/disabled 状态。
+
+**关联代码：**
+- `ui/cli/app.py:L127` - CLI runtime 装配阶段自动调用 `connect_all_blocking()`。
+- `services/mcp/config.py:L67` - MCP server `enabled` 默认值为 `True`。
+- `services/mcp/manager.py:L76` - `connect_all_blocking()` 会连接所有 enabled server。
+- `services/mcp/manager.py:L297` - stdio 子进程环境由 `dict(os.environ)` 初始化。
+
+**架构约束：**
+MCP trust 和 env policy 应属于 services/mcp 或 permissions 边界，CLI 只负责展示和收集确认；不得由 prompt 或模型请求绕过。deny 或未信任状态必须在工具 descriptor 暴露和执行入口同时生效。
+
+---
+
+### TD-018: Skill `allowed_tools` 会转成共享 session 级工具授权
+
+- **类型：** 安全 / 权限 / 架构
+- **区域：** `tools/skill/`, `services/subagents/runner.py`, `services/tools/executor.py`, `services/permissions/`
+- **优先级：** 高
+- **状态：** 已识别
+- **影响：** skill 执行或 skill 子代理声明的 `allowed_tools` 会写入 session permission grants，后续同一 runtime session 中的其他上下文也可能复用该授权，导致原本应该局限在 skill 范围内的能力扩大。
+
+**描述：**
+`SubagentRunner` 会遍历 `skill.allowed_tools` 并调用 session grant；`RegistryToolExecutor` 也会从 skill 工具结果 metadata 读取 `allowed_tools` 并写入 session grant。`PermissionPolicy` 之后会把 session tool grant 作为 allow 来源之一。当前测试 `tests/test_skill_permissions.py::test_allowed_tools_session_grant_turns_command_ask_into_allow` 已把这种行为固化为预期，但从权限边界看，skill 的工具授权更像 scoped execution capability，不应默认提升为整个会话共享的长期授权。
+
+**引入原因：**
+Skill 第一版为了让 skill 能声明它运行所需的工具能力，复用了已有 session permission grant 机制；该机制原本更适合用户确认后的临时授权，而不是 skill-local capability。
+
+**修复方向：**
+将 skill `allowed_tools` 改为 scoped grant：只在当前 skill 或当前 subagent run 的 tool registry / permission policy context 内生效。执行结束后自动撤销，或通过 child runtime 独立 session 隔离。现有 session grant 仍可保留给用户显式确认，但 skill metadata 不应直接写入共享 session allow。
+
+**关联代码：**
+- `services/subagents/runner.py:L160` - skill 子代理把 `skill.allowed_tools` 写入 session grant。
+- `services/tools/executor.py:L957` - skill 工具结果 metadata 中的 `allowed_tools` 写入 session grant。
+- `services/permissions/session.py:L15` - session 内保存共享 `_allowed_tools`。
+- `services/permissions/policy.py:L177` - session tool grant 会把 permission decision 转成 allow。
+- `tests/test_skill_permissions.py:L61` - 当前测试把该行为固定为预期。
+
+**架构约束：**
+权限能力必须遵循 deny-first；skill-local allow 不能覆盖 guard deny、项目 deny 或 tool disallowed 列表。修复时应保持 tool registry 可见性裁剪、执行入口权限检查和 subagent 工具隔离一致。
+
+---
+
+### TD-020: 文件、附件和搜索工具会先整文件读取或整目录扫描，再分页/截断
+
+- **类型：** 性能 / 可用性
+- **区域：** `tools/read_file/`, `tools/grep/`, `tools/glob/`, `services/attachments/`
+- **优先级：** 中
+- **状态：** 已识别
+- **影响：** 大文件、大目录或超大仓库会导致不必要的内存占用、长时间扫描和 UI 等待；分页、limit 或 token budget 主要发生在读取/扫描之后，不能阻止最重的 IO 和遍历成本。
+
+**描述：**
+`read_file` 和 attachment collector 使用 `Path.read_text()` 一次性读取文件，再做行范围或内容截断。附件目录摘要会先 `iterdir()` 并排序全部子项。`glob` 使用 `root.rglob("*")` 全量遍历后再匹配、过滤和限制结果。`grep` 已使用 ripgrep，但当前实现会等待进程完成并收集完整 stdout/stderr，再解析、排序和截断；在匹配极多或输出很大时仍会积累较高成本。attachment resolver 的路径搜索也会遍历 workspace。
+
+**引入原因：**
+第一版文件和附件能力优先实现简单、确定、易测试的行为；在没有统一 streaming reader、bounded traversal 和 search budget 之前，采用了标准库整读和整目录遍历。
+
+**修复方向：**
+引入 bounded IO 策略：文件读取按行或按字节 streaming，并在达到请求范围/预算后停止；目录和 glob 使用 bounded traversal、早停和最大访问节点数；grep 增加 ripgrep 的输出上限、超时和逐行解析，避免完整 stdout 聚合。附件 resolver 应避免对 workspace 做无界 `rglob("*")`，改为索引、候选路径启发式或明确 limit。
+
+**关联代码：**
+- `tools/read_file/tool.py:L120` - `read_file` 一次性 `read_text()`。
+- `services/attachments/collector.py:L98` - attachment file collector 一次性 `read_text()`。
+- `services/attachments/collector.py:L132` - attachment directory collector 读取并排序全部子项名称。
+- `tools/glob/tool.py:L151` - glob 对 root 执行 `rglob("*")` 全量遍历。
+- `tools/grep/tool.py:L204` - grep 构建 ripgrep 搜索并在后续流程中聚合输出。
+- `services/attachments/resolver.py:L64` - attachment 路径 resolver 遍历 workspace。
+
+**架构约束：**
+性能优化不能绕过 sandbox guard 和 permission policy；bounded traversal 仍必须对每个最终访问路径保持 guard 约束。工具结果截断和持久化应继续通过 tool metadata/result policy 进入统一结果预算。
+
+---
+
 ## 已解决条目归档
+
+### TD-021: 工具结果持久化逻辑分散在 transcript 和 compaction result store
+
+- **解决方式：** 新增 `utils/toolResultStorage` 作为唯一共享工具结果存储模块，提供 `ToolResultStorage`、`StoredToolResultRef`、幂等持久化、内容 hash 冲突分流、读取、transcript 外置文本、模型引用文本和统一 metadata helper。`services/compaction/result_store.py` 已删除；`JsonlTranscriptStore`、`ContextCompactionService`、`RegistryToolExecutor` 和 CLI session 装配均改为直接使用共享 storage。
+- **验证：** 补充 transcript 重复 `tool_call_id` 回归测试，覆盖同 ID 不同内容不覆盖、同 ID 相同内容复用；聚焦测试通过。
+
+### TD-019: Transcript 外置大工具结果按 `tool_call_id` 命名，重复 ID 会覆盖内容
+
+- **解决方式：** transcript 外置改为调用 `ToolResultStorage.persist_tool_result()`。同一 `tool_call_id` 且内容相同复用 `tool-results/<id>.txt`；同一 ID 但内容不同生成稳定内容 hash 后缀，恢复时按每条 message metadata 中的 `tool_result_path` 读取对应完整结果。缺失文件仍保留 `missing_external_tool_result` 标记。
+- **验证：** 新增 `tests/test_jsonl_session_persistence.py::test_duplicate_tool_call_id_externalized_results_do_not_overwrite` 和 `test_duplicate_tool_call_id_same_content_reuses_externalized_result`。
 
 ### TD-014: Full compact 通过可用工具的 fork subagent 摘要上下文，只靠 prompt 禁止工具调用
 
@@ -163,11 +263,11 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 
 ### TD-005: 上下文治理已有基础 transcript，但缺少 compaction、projector 和通用 result store
 
-- **解决方式：** 已落地 `services/context/projector.py`、`services/compaction/service.py`、session memory、`ToolResultStore` 和 compaction-aware `ContextEngine` preparer。`PreparedContext` 现在可把 compaction `usage_hints` 与 `transcript_refs` 写入 `ContextSnapshot`，并补充大工具结果替换、stored result refs 和 ContextEngine metadata 投影测试。剩余 compact safety 问题由 TD-014 跟踪；原 TD-015 已因设计取舍废弃。
+- **解决方式：** 已落地 `services/context/projector.py`、`services/compaction/service.py`、session memory、共享 `ToolResultStorage` 和 compaction-aware `ContextEngine` preparer。`PreparedContext` 现在可把 compaction `usage_hints` 与 `transcript_refs` 写入 `ContextSnapshot`，并补充大工具结果替换、stored result refs 和 ContextEngine metadata 投影测试。剩余 compact safety 问题由 TD-014 跟踪；原 TD-015 已因设计取舍废弃。
 
 ### TD-006: 工具 metadata 已驱动结果预算和并发调度，但只读策略与 durable result store 仍未完整落地
 
-- **解决方式：** `RegistryToolExecutor` 已消费 `ToolResultPolicy`，在注入 `ToolResultStore` 后将超预算结果写入 durable store；`PermissionPolicy` 已消费 `read_only` 强制 read-only subagent 和非只读命令 ask；`grep` 的 result policy 已改为超过 20KB 时允许持久化，并补充 result store、search tool policy 和 executor 预算测试。
+- **解决方式：** `RegistryToolExecutor` 已消费 `ToolResultPolicy`，在注入 `ToolResultStorage` 后将超预算结果写入 durable store；`PermissionPolicy` 已消费 `read_only` 强制 read-only subagent 和非只读命令 ask；`grep` 的 result policy 已改为超过 20KB 时允许持久化，并补充 result store、search tool policy 和 executor 预算测试。
 
 ### TD-011: `core.loop` 与 subagent 当前上下文形成反向依赖
 
@@ -179,7 +279,7 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 
 ### TD-013: Compaction 投影持久化大结果非幂等，会重复写入 result store
 
-- **解决方式：** `ToolResultStore.persist_tool_result()` 改为幂等：同一 `tool_call_id` 且内容相同复用原文件，内容不同使用稳定内容 hash 后缀。补充 result store 和 compaction 连续两次 `prepare_for_model()` 的 refs 稳定性测试。
+- **解决方式：** 工具结果持久化改为幂等：同一 `tool_call_id` 且内容相同复用原文件，内容不同使用稳定内容 hash 后缀。该能力现由共享 `ToolResultStorage.persist_tool_result()` 提供。补充 result store 和 compaction 连续两次 `prepare_for_model()` 的 refs 稳定性测试。
 
 ### TD-015: Session memory 缺少真实 transcript anchor 和文件变更记录
 

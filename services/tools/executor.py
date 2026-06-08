@@ -14,7 +14,6 @@ from pathlib import Path
 
 from services.guard import GuardPolicy, SandboxGuard
 from services.hooks import HookEvent, HookRegistry
-from services.compaction.result_store import ToolResultStore
 from services.observability import ErrorLogRecorder, TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
@@ -29,6 +28,7 @@ from services.tools.types import (
     ToolRuntime,
     ValidationResult,
 )
+from utils.toolResultStorage import ToolResultStorage
 
 if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
@@ -102,7 +102,7 @@ class RegistryToolExecutor:
         max_tool_concurrency: int | None = None,
         trace_recorder: TraceRecorder | None = None,
         error_log_recorder: ErrorLogRecorder | None = None,
-        result_store: ToolResultStore | None = None,
+        result_store: ToolResultStorage | None = None,
         file_state_cache: FileStateCache | None = None,
     ) -> None:
         self._registry = registry
@@ -118,7 +118,7 @@ class RegistryToolExecutor:
         self._result_store = result_store
         self._file_state_cache = file_state_cache or FileStateCache()
 
-    def bind_result_store(self, result_store: ToolResultStore | None) -> None:
+    def bind_result_store(self, result_store: ToolResultStorage | None) -> None:
         self._result_store = result_store
 
     def bind_file_state_cache(self, file_state_cache: FileStateCache | None) -> None:
@@ -905,13 +905,10 @@ class RegistryToolExecutor:
             )
             metadata = {
                 **result.metadata,
-                "result_truncated": True,
-                "result_stored": True,
-                "original_size_chars": len(result.content),
-                "max_result_size_chars": max_chars,
-                "stored_result_id": stored_ref.result_id,
-                "stored_result_path": str(stored_ref.absolute_path),
-                "stored_result_relative_path": stored_ref.relative_path,
+                **self._result_store.stored_result_metadata(
+                    stored_ref,
+                    max_result_size_chars=max_chars,
+                ),
             }
             return ToolExecutionResult(
                 tool_call_id=result.tool_call_id,
