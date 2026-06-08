@@ -64,7 +64,7 @@ flowchart TD
   CBatch --> Pre
   Pre --> Run["handler (async 或 to_thread)"]
   Run --> Finalize["_finalize_outcome"]
-  Finalize --> Result["result_policy + ToolResultStore"]
+  Finalize --> Result["result_policy + ToolResultStorage"]
   Result --> Post["PostToolUse / ToolError hook"]
   Post --> Side["executor-owned side effects"]
   Side --> Trace["record tool_result trace"]
@@ -88,7 +88,7 @@ executor 的 JSON Schema 子集校验 → 工具级 `validate_input` → 文件�
 
 ### 结果预算
 
-超出 `max_result_size_chars` 时，若 `persist_when_exceeded=True` 且注入了 `ToolResultStore`，写入 durable result store 并返回模型可见引用；否则返回 JSON 预览。metadata 记录 `result_truncated`、`original_size_chars`、`max_result_size_chars` 和 stored result 引用。
+超出 `max_result_size_chars` 时，若 `persist_when_exceeded=True` 且注入了 `ToolResultStorage`，写入 durable result storage 并返回模型可见引用；否则返回 JSON 预览。metadata 记录 `result_truncated`、`original_size_chars`、`max_result_size_chars` 和 stored result 引用。
 
 ### Executor-owned side effects
 

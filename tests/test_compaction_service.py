@@ -5,7 +5,7 @@ import asyncio
 from core.runtime_state import RuntimeState
 from core.context_engine import ContextEngine
 from services.compaction import ContextCompactionService
-from services.compaction.result_store import ToolResultStore
+from utils.toolResultStorage import ToolResultStorage
 from services.compaction.service import MICROCOMPACT_PLACEHOLDER
 from services.compaction.types import CompactionConfig, CompactionTrigger
 from services.context.message_store import MessageStore
@@ -22,7 +22,7 @@ def _prepare(
 
 def test_prepare_for_model_persists_large_tool_results_before_projection(tmp_path) -> None:
     state = RuntimeState(session_id="session-compact")
-    store = ToolResultStore(tmp_path / ".onecode" / state.session_id)
+    store = ToolResultStorage(tmp_path / ".onecode" / state.session_id)
     service = ContextCompactionService(
         config=CompactionConfig(
             tool_result_budget_chars=3,
@@ -59,7 +59,7 @@ def test_prepare_for_model_persists_large_tool_results_before_projection(tmp_pat
 
 def test_prepare_for_model_reuses_stored_large_tool_result_reference(tmp_path) -> None:
     state = RuntimeState(session_id="session-compact")
-    store = ToolResultStore(tmp_path / ".onecode" / state.session_id)
+    store = ToolResultStorage(tmp_path / ".onecode" / state.session_id)
     service = ContextCompactionService(
         config=CompactionConfig(
             tool_result_budget_chars=3,
@@ -173,7 +173,7 @@ def test_compaction_preparer_populates_context_snapshot_refs_and_hints(tmp_path)
             )
         ]
     )
-    store = ToolResultStore(message_store.transcript_store.session_dir)
+    store = ToolResultStorage(message_store.transcript_store.session_dir)
     service = ContextCompactionService(
         config=CompactionConfig(
             tool_result_budget_chars=3,

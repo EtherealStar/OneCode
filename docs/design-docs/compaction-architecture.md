@@ -1,6 +1,6 @@
 # Compaction Architecture
 
-本文描述 `services/compaction/` 的架构边界：tool result 预算、micro/auto/manual/reactive 压缩、session memory 和 compaction 层的 durable result store。它作为 `ContextEngine` preparer 链的最内层接入，不进入 `core/loop.py` 的具体分支。底层消息存储见 `context-architecture.md`，跨会话长期记忆见 `memory-architecture.md`。
+本文描述 `services/compaction/` 的架构边界：tool result 预算、micro/auto/manual/reactive 压缩和 session memory。它作为 `ContextEngine` preparer 链的最内层接入，不进入 `core/loop.py` 的具体分支。底层消息存储见 `context-architecture.md`，跨会话长期记忆见 `memory-architecture.md`，共享工具结果存储见 `utils/toolResultStorage`。
 
 ## 文件职责
 
@@ -9,7 +9,6 @@
 | `service.py` | `ContextCompactionService`：cheap pipeline + auto/manual/reactive compact |
 | `token_estimator.py` | 保守本地 token 估算（文本 ≈ ceil(len/3)） |
 | `session_memory.py` | session 级 Markdown 记忆：存储、规则更新、fork agent 提取 |
-| `result_store.py` | `ToolResultStore`：超大 tool result 持久化到 session 目录（compaction 用） |
 | `types.py` | `CompactionConfig`、`CompactionTrigger`、`CompactionResult` |
 
 ## 接口设计
@@ -52,7 +51,7 @@ def bind_runtime(*, message_store, session_memory_store, session_memory_extracto
 ```mermaid
 flowchart TD
   Prep["prepare(messages, state)"] --> Cheap["prepare_for_model: cheap pipeline"]
-  Cheap --> Budget["1. tool result budget (>200K → ToolResultStore + 引用)"]
+  Cheap --> Budget["1. tool result budget (>200K → ToolResultStorage + 引用)"]
   Budget --> Snip["2. snip: ContextProjector(max_messages=80)"]
   Snip --> Micro["3. microcompact: 旧 tool result → 占位符"]
   Micro --> Est["token 估算 → state.metadata['last_compaction']"]
@@ -68,7 +67,7 @@ flowchart TD
 
 ### Cheap pipeline（投影，不改写 store）
 
-`prepare_for_model` 顺序：tool result 预算（超 200K 字符的结果写 `ToolResultStore`，模型只见引用+preview）→ snip（`ContextProjector` 滑窗，最多 80 条）→ microcompact（旧的非 stored tool result content 替换为占位符）→ token 估算。这一阶段只投影，不调用 `replace_messages_for_compaction`。
+`prepare_for_model` 顺序：tool result 预算（超 200K 字符的结果写共享 `ToolResultStorage`，模型只见引用+preview）→ snip（`ContextProjector` 滑窗，最多 80 条）→ microcompact（旧的非 stored tool result content 替换为占位符）→ token 估算。这一阶段只投影，不调用 `replace_messages_for_compaction`。
 
 ### Destructive compact（改写活动链）
 
@@ -102,9 +101,9 @@ flowchart TD
 
 compaction service 不生成 session memory；它在 session-memory compact 前只等待进行中的 extraction，读取现有 Markdown 作为摘要来源；tail 由 token/文本消息数选取，并用 `ContextProjector.adjust_start_index_to_preserve_tool_pairs` 保配对。
 
-### ToolResultStore
+### ToolResultStorage
 
-路径 `<session_dir>/tool-results/<result_id>.txt`，`persist_tool_result(...) -> StoredResultRef`，`format_model_reference(ref, preview)` 生成模型可见引用。它服务 compaction 层 200K 字符预算，与 transcript 层的 50KB 外置（恢复时读回完整内容）相互独立。
+路径 `<session_dir>/tool-results/<result_id>.txt`，`persist_tool_result(...) -> StoredToolResultRef`，`format_model_reference(ref, preview)` 生成模型可见引用。该实现位于 `utils/toolResultStorage`，同时服务 transcript 外置、compaction 层 200K 字符预算和 executor `ToolResultPolicy` 预算；compaction 只消费 ref 和模型引用文本，不拥有通用存储实现。
 
 ### PreCompact hook
 
@@ -113,4 +112,4 @@ compaction service 不生成 session memory；它在 session-memory compact 前�
 ## 持久化路径
 
 - session memory：`.onecode/<session_id>/session-memory.md`
-- compaction result store：`.onecode/<session_id>/tool-results/<result_id>.txt`
+- shared tool result storage：`.onecode/<session_id>/tool-results/<result_id>.txt`

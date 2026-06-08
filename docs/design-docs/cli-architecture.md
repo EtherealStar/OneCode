@@ -26,7 +26,7 @@
 4. MCP：`load_project_mcp_config` → `McpConnectionManager.connect_all_blocking()` → `mcp_server_instructions` → `build_mcp_tool_descriptors`。
 5. Hooks 与任务：`HookRegistry`、`TaskStore`、`BackgroundTaskManager`。
 6. base descriptors：`read_file`、`edit_file`、`write_file`、`glob`、`grep`、`bash`、`background_task_stop`、`skill`、`task_create/get/update/list`、`*mcp_descriptors`。
-7. registry 与存储：`ToolRegistry`、`ToolResultStore`、`SessionMemoryStore`、`LongTermMemoryStore`。
+7. registry 与存储：`ToolRegistry`、`ToolResultStorage`、`SessionMemoryStore`、`LongTermMemoryStore`。
 8. prompt 与记忆：`LoaderSkillCatalogProvider`、`InstructionMemoryLoader`、`LongTermMemoryPromptProvider`、`DynamicPromptAssembler`。
 9. compaction：`ContextCompactionService`。
 10. 沙箱/权限 UI/附件：`SandboxGuard(SandboxBoundary(cwd=workspace))`、`CliPermissionPrompter`、`FileStateCache`、`AttachmentFileReader`、`AttachmentCollector`（含 `BackgroundTaskNotificationSource`）。
@@ -41,7 +41,7 @@
 
 ### CliRuntime
 
-聚合 30+ 组件，供 slash command 和 render 层使用。`with_session()` 在 `/clear`/`/resume` 时重建 session 级组件（recorder 切换、清空 `SessionPermissionStore`、重建 `ToolResultStore`/`SessionMemoryStore`/`FileStateCache`/`AttachmentCollector`/`ContextEngine`/`AgentLoop`/`SessionMemoryExtractionService`，并设置 session memory resume 标记）。
+聚合 30+ 组件，供 slash command 和 render 层使用。`with_session()` 在 `/clear`/`/resume` 时重建 session 级组件（recorder 切换、清空 `SessionPermissionStore`、重建 `ToolResultStorage`/`SessionMemoryStore`/`FileStateCache`/`AttachmentCollector`/`ContextEngine`/`AgentLoop`/`SessionMemoryExtractionService`，并设置 session memory resume 标记）。
 
 ## 核心数据流
 

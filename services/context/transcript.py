@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from threading import RLock, Timer
-import uuid
 from typing import Any
+
+from utils.toolResultStorage import ToolResultStorage
 
 
 VALID_MESSAGE_ROLES = {"user", "assistant", "tool_result", "attachment"}
@@ -64,6 +64,10 @@ class JsonlTranscriptStore:
     @property
     def tool_results_dir(self) -> Path:
         return self.session_dir / "tool-results"
+
+    @property
+    def tool_result_storage(self) -> ToolResultStorage:
+        return ToolResultStorage(self.session_dir)
 
     def switch_session(self, session_id: str) -> None:
         """切换当前写入的 session 目录。
@@ -183,24 +187,25 @@ class JsonlTranscriptStore:
             return record_message
 
         tool_call_id = record_message.get("tool_call_id")
-        safe_file_name = _safe_tool_result_file_name(tool_call_id)
-        relative_path = f"tool-results/{safe_file_name}"
-        self.tool_results_dir.mkdir(parents=True, exist_ok=True)
-        (self.tool_results_dir / safe_file_name).write_text(content, encoding="utf-8")
+        tool_name = record_message.get("tool_name")
+        storage = self.tool_result_storage
+        ref = storage.persist_tool_result(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name if isinstance(tool_name, str) else "",
+            content=content,
+        )
 
         metadata = deepcopy(record_message.get("metadata") or {})
         metadata.update(
-            {
-                "tool_result_externalized": True,
-                "tool_result_path": relative_path,
-                "original_tool_call_id": tool_call_id,
-                "original_size_bytes": content_size,
-                "preview_chars": DEFAULT_TOOL_RESULT_PREVIEW_CHARS,
-            }
+            storage.transcript_metadata(
+                ref,
+                preview_chars=DEFAULT_TOOL_RESULT_PREVIEW_CHARS,
+            )
         )
         preview = content[:DEFAULT_TOOL_RESULT_PREVIEW_CHARS]
-        record_message["content"] = (
-            f"[tool result externalized: {relative_path}]\n{preview}"
+        record_message["content"] = storage.format_transcript_externalization(
+            ref,
+            preview=preview,
         )
         record_message["metadata"] = metadata
         return record_message
@@ -220,9 +225,8 @@ class JsonlTranscriptStore:
             restored["metadata"] = metadata
             return restored
 
-        result_path = self.session_dir / relative_path
         try:
-            restored["content"] = result_path.read_text(encoding="utf-8")
+            restored["content"] = self.tool_result_storage.read_result(relative_path)
         except OSError:
             metadata["missing_external_tool_result"] = True
             restored["metadata"] = metadata
@@ -255,15 +259,3 @@ def _parse_json_line(line: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _safe_tool_result_file_name(tool_call_id: Any) -> str:
-    """把 tool call id 转成可安全用作文件名的字符串。
-
-    参数:
-    - tool_call_id: provider 或 runtime 生成的工具调用 ID，可能为空或包含路径字符。
-    """
-
-    raw = tool_call_id if isinstance(tool_call_id, str) else ""
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", raw).strip("._")
-    if not safe:
-        safe = str(uuid.uuid4())
-    return f"{safe}.txt"
