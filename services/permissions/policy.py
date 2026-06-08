@@ -50,10 +50,27 @@ class PermissionPolicy:
         *,
         project_store: ProjectPermissionSettingsStore | None = None,
         protected_project_dirs: tuple[str, ...] = PROTECTED_PROJECT_DIRS,
+        scoped_allowed_tools: tuple[str, ...] = (),
     ) -> None:
         self.session_store = session_store or SessionPermissionStore()
         self.project_store = project_store
         self.protected_project_dirs = tuple(protected_project_dirs)
+        self._scoped_allowed_tools = _names(scoped_allowed_tools)
+
+    def with_scoped_allowed_tools(
+        self,
+        allowed_tools: tuple[str, ...],
+    ) -> PermissionPolicy:
+        """Return a policy sharing persistent grants plus one runtime-local grant set."""
+
+        return PermissionPolicy(
+            self.session_store,
+            project_store=self.project_store,
+            protected_project_dirs=self.protected_project_dirs,
+            scoped_allowed_tools=tuple(
+                sorted(self._scoped_allowed_tools | _names(allowed_tools))
+            ),
+        )
 
     def evaluate(
         self,
@@ -179,6 +196,15 @@ class PermissionPolicy:
                     action="allow",
                     reason="Allowed by a session tool grant.",
                     source="session",
+                    targets=classification.targets,
+                    guard_policies=guard_policies,
+                    metadata={"ask_reasons": asks},
+                )
+            if descriptor.name in self._scoped_allowed_tools:
+                return PermissionDecision(
+                    action="allow",
+                    reason="Allowed by a scoped tool grant.",
+                    source="scoped_tool_grant",
                     targets=classification.targets,
                     guard_policies=guard_policies,
                     metadata={"ask_reasons": asks},

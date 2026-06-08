@@ -12,7 +12,6 @@
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
-| TD-018 | Skill `allowed_tools` 会转成共享 session 级工具授权 | 安全 / 权限 / 架构 | `tools/skill/`, `services/subagents/runner.py`, `services/tools/executor.py`, `services/permissions/` | 高 | 已识别 |
 | TD-020 | 文件、附件和搜索工具会先整文件读取或整目录扫描，再分页/截断 | 性能 / 可用性 | `tools/read_file/`, `tools/grep/`, `tools/glob/`, `services/attachments/` | 中 | 已识别 |
 
 ---
@@ -135,35 +134,6 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 
 ---
 
-### TD-018: Skill `allowed_tools` 会转成共享 session 级工具授权
-
-- **类型：** 安全 / 权限 / 架构
-- **区域：** `tools/skill/`, `services/subagents/runner.py`, `services/tools/executor.py`, `services/permissions/`
-- **优先级：** 高
-- **状态：** 已识别
-- **影响：** skill 执行或 skill 子代理声明的 `allowed_tools` 会写入 session permission grants，后续同一 runtime session 中的其他上下文也可能复用该授权，导致原本应该局限在 skill 范围内的能力扩大。
-
-**描述：**
-`SubagentRunner` 会遍历 `skill.allowed_tools` 并调用 session grant；`RegistryToolExecutor` 也会从 skill 工具结果 metadata 读取 `allowed_tools` 并写入 session grant。`PermissionPolicy` 之后会把 session tool grant 作为 allow 来源之一。当前测试 `tests/test_skill_permissions.py::test_allowed_tools_session_grant_turns_command_ask_into_allow` 已把这种行为固化为预期，但从权限边界看，skill 的工具授权更像 scoped execution capability，不应默认提升为整个会话共享的长期授权。
-
-**引入原因：**
-Skill 第一版为了让 skill 能声明它运行所需的工具能力，复用了已有 session permission grant 机制；该机制原本更适合用户确认后的临时授权，而不是 skill-local capability。
-
-**修复方向：**
-将 skill `allowed_tools` 改为 scoped grant：只在当前 skill 或当前 subagent run 的 tool registry / permission policy context 内生效。执行结束后自动撤销，或通过 child runtime 独立 session 隔离。现有 session grant 仍可保留给用户显式确认，但 skill metadata 不应直接写入共享 session allow。
-
-**关联代码：**
-- `services/subagents/runner.py:L160` - skill 子代理把 `skill.allowed_tools` 写入 session grant。
-- `services/tools/executor.py:L957` - skill 工具结果 metadata 中的 `allowed_tools` 写入 session grant。
-- `services/permissions/session.py:L15` - session 内保存共享 `_allowed_tools`。
-- `services/permissions/policy.py:L177` - session tool grant 会把 permission decision 转成 allow。
-- `tests/test_skill_permissions.py:L61` - 当前测试把该行为固定为预期。
-
-**架构约束：**
-权限能力必须遵循 deny-first；skill-local allow 不能覆盖 guard deny、项目 deny 或 tool disallowed 列表。修复时应保持 tool registry 可见性裁剪、执行入口权限检查和 subagent 工具隔离一致。
-
----
-
 ### TD-020: 文件、附件和搜索工具会先整文件读取或整目录扫描，再分页/截断
 
 - **类型：** 性能 / 可用性
@@ -195,6 +165,11 @@ Skill 第一版为了让 skill 能声明它运行所需的工具能力，复用�
 ---
 
 ## 已解决条目归档
+
+### TD-018: Skill `allowed_tools` 会转成共享 session 级工具授权
+
+- **解决方式：** `PermissionPolicy` 新增 child-local `scoped_allowed_tools` 派生能力，fork skill 通过 child runtime 专属 policy 放行声明工具；`RegistryToolExecutor` 不再把 inline skill 结果中的 `metadata.allowed_tools` 写入共享 `SessionPermissionStore`。用户显式确认产生的 session grant 仍保留，deny/disabled/guard/project deny 仍优先于 scoped allow。
+- **验证：** 补充 scoped grant、skill metadata 不污染 session、fork skill child-local 授权和 deny 覆盖测试；通过 `uv run python -m pytest tests/test_skill_permissions.py tests/test_subagent_runner.py tests/test_permission_policy.py tests/test_skill_tool.py tests/test_tool_registry_and_executor.py tests/test_import_boundaries.py -q`。
 
 ### TD-017: Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量
 

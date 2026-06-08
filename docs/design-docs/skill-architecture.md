@@ -49,8 +49,7 @@ flowchart TD
   Mode -->|是 fork| Fork["SkillForkRunner.run_skill → 干净上下文 child"]
   Inline --> Append["loop append_attachments"]
   Append --> Project["AttachmentProjector → synthetic user (技能全文)"]
-  Inline --> Grant["executor side effect: session_store.allow_tool(*)"]
-  Fork --> Grant2["run_skill 预先 allow_tool"]
+  Fork --> Scoped["child-local PermissionPolicy scoped_allowed_tools"]
 ```
 
 ## 关键机制
@@ -65,7 +64,7 @@ flowchart TD
 
 ### allowed-tools 授权（deny-first）
 
-inline 成功后由 executor side effect 读取 `metadata.allowed_tools` 逐个 `session_store.allow_tool()`；fork 在 child 启动前预先 `allow_tool`。该 allow 只在 deny-first 检查之后把本来需要 ask 的工具降为 allow，**不能覆盖** read-only subagent、工具 deny/disabled、specific skill deny、guard deny 或项目级 deny（见 `permission-architecture.md`）。
+inline skill 加载只把 `allowed_tools` 保留在工具结果 metadata 中，不把它写入共享 session grant；后续普通上下文如需执行 ask 工具仍需用户确认。fork skill 在 child runtime 中创建 child-local `PermissionPolicy(scoped_allowed_tools=...)`，只在该 child run 内把本来需要 ask 的工具降为 allow。scoped allow **不能覆盖** read-only subagent、工具 deny/disabled、specific skill deny、guard deny 或项目级 deny（见 `permission-architecture.md`）。用户显式确认产生的 session grant 仍由 `SessionPermissionStore` 管理。
 
 ### 双轨过滤
 

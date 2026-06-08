@@ -58,6 +58,28 @@ def command_descriptor() -> ToolDescriptor:
     )
 
 
+def skill_descriptor_with_allowed_tools() -> ToolDescriptor:
+    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            tool_call_id=runtime.tool_call_id,
+            tool_name="skill",
+            content="Launching skill: test",
+            metadata={"allowed_tools": ("bash",)},
+        )
+
+    return ToolDescriptor(
+        name="skill",
+        description="Load skill",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=handler,
+        classify_input=lambda tool_input, runtime: ToolCallClassification(
+            read_only=True,
+            modifies_filesystem=False,
+            concurrency_safe=False,
+        ),
+    )
+
+
 def test_allowed_tools_session_grant_turns_command_ask_into_allow() -> None:
     store = SessionPermissionStore()
     store.allow_tool("bash")
@@ -70,11 +92,49 @@ def test_allowed_tools_session_grant_turns_command_ask_into_allow() -> None:
     assert result.content == "ran"
 
 
+def test_scoped_tool_grant_turns_command_ask_into_allow_without_session_grant() -> None:
+    store = SessionPermissionStore()
+    policy = PermissionPolicy(store, scoped_allowed_tools=("bash",))
+    registry = ToolRegistry([command_descriptor()], permission_policy=policy)
+
+    result = execute_one(registry, policy, ToolCall(id="call-1", name="bash", input={}))
+
+    assert result.is_error is False
+    assert result.content == "ran"
+    assert store.is_tool_allowed("bash") is False
+
+
+def test_skill_allowed_tools_metadata_does_not_create_session_tool_grant() -> None:
+    store = SessionPermissionStore()
+    policy = PermissionPolicy(store)
+    registry = ToolRegistry(
+        [skill_descriptor_with_allowed_tools()],
+        permission_policy=policy,
+    )
+
+    result = execute_one(registry, policy, ToolCall(id="call-1", name="skill", input={}))
+
+    assert result.is_error is False
+    assert store.is_tool_allowed("bash") is False
+
+
 def test_tool_deny_still_overrides_allowed_tool_grant() -> None:
     store = SessionPermissionStore()
     store.allow_tool("bash")
     store.deny_tool("bash")
     policy = PermissionPolicy(store)
+    registry = ToolRegistry([command_descriptor()], permission_policy=policy)
+
+    result = execute_one(registry, policy, ToolCall(id="call-1", name="bash", input={}))
+
+    assert result.is_error is True
+    assert json.loads(result.content)["error"] == "permission_denied"
+
+
+def test_tool_deny_still_overrides_scoped_tool_grant() -> None:
+    store = SessionPermissionStore()
+    store.deny_tool("bash")
+    policy = PermissionPolicy(store, scoped_allowed_tools=("bash",))
     registry = ToolRegistry([command_descriptor()], permission_policy=policy)
 
     result = execute_one(registry, policy, ToolCall(id="call-1", name="bash", input={}))
