@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -40,8 +41,13 @@ from services.memory import (
 )
 from services.model.types import ProviderError
 from services.mcp import (
+    BASE_STDIO_ENV_ALLOWLIST,
+    McpConfigSet,
     McpConnectionManager,
+    McpTrustPolicy,
+    McpTrustStore,
     build_mcp_tool_descriptors,
+    fingerprint_mcp_server,
     load_project_mcp_config,
 )
 from services.observability import (
@@ -118,11 +124,14 @@ def build_runtime(workspace: Path) -> CliRuntime:
         error_log_recorder.record_error(exc, source="mcp_config")
         error_log_recorder.flush()
         raise
+    mcp_trust_store = McpTrustStore(workspace / ".onecode" / "settings.json")
+    _prompt_for_project_mcp_trust(workspace, mcp_config, mcp_trust_store)
     mcp_manager = McpConnectionManager(
         workspace,
         mcp_config,
         trace_recorder=trace_recorder,
         error_log_recorder=error_log_recorder,
+        trust_policy=McpTrustPolicy(mcp_trust_store),
     )
     mcp_snapshot = mcp_manager.connect_all_blocking()
     state.metadata["mcp_server_instructions"] = mcp_snapshot.instructions
@@ -301,6 +310,51 @@ def build_runtime(workspace: Path) -> CliRuntime:
         task_store=task_store,
         background_task_manager=background_task_manager,
     )
+
+
+def _prompt_for_project_mcp_trust(
+    workspace: Path,
+    mcp_config: McpConfigSet,
+    trust_store: McpTrustStore,
+) -> None:
+    configs = mcp_config.servers
+    allowed_env_keys = {item.upper() for item in BASE_STDIO_ENV_ALLOWLIST}
+    base_env_keys = sorted(
+        key for key in os.environ if key.upper() in allowed_env_keys
+    )
+    for config in configs.values():
+        if (
+            getattr(config, "transport", None) != "stdio"
+            or getattr(config, "enabled", False) is not True
+        ):
+            continue
+        fingerprint = fingerprint_mcp_server(config, workspace)
+        if trust_store.is_trusted(config.name, fingerprint):
+            continue
+        print("Project MCP stdio server requires trust before it can run:")
+        print(f"  server: {config.name}")
+        print(f"  command: {config.command or ''}")
+        args = " ".join(config.args) if config.args else "(none)"
+        print(f"  args: {args}")
+        print(f"  cwd: {workspace}")
+        explicit_env = ", ".join(sorted(config.env)) if config.env else "(none)"
+        print(f"  explicit env keys: {explicit_env}")
+        base_env = ", ".join(base_env_keys) if base_env_keys else "(none)"
+        print(f"  base env keys: {base_env}")
+        try:
+            response = input("Trust this project MCP server? [t]rust/[s]kip: ")
+        except (EOFError, KeyboardInterrupt):
+            print("Skipping untrusted MCP server.")
+            continue
+        if response.strip().lower() in {"t", "trust", "y", "yes"}:
+            trust_store.trust_server(
+                config.name,
+                fingerprint,
+                transport=config.transport,
+            )
+            print(f"Trusted MCP server: {config.name}")
+        else:
+            print(f"Skipped MCP server: {config.name}")
 
 
 async def _start_long_term_memory_dream(

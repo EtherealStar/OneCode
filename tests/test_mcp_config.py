@@ -43,6 +43,7 @@ def test_load_project_mcp_config_parses_supported_transports(tmp_path: Path) -> 
     config = load_project_mcp_config(tmp_path)
 
     assert config.servers["docs"].transport == "stdio"
+    assert config.servers["docs"].enabled is True
     assert config.servers["docs"].args == ("server.py",)
     assert config.servers["search"].headers == {"X-Api-Key": "static"}
     assert config.servers["legacy"].enabled is False

@@ -23,7 +23,7 @@
 1. 基础状态：`RuntimeState`、`MessageStore`。
 2. 权限：`SessionPermissionStore`、`ProjectPermissionSettingsStore`、`PermissionPolicy`。
 3. 可观测性：`JsonlTraceSink` + `TraceRecorder`、`JsonlErrorLogSink` + `ErrorLogRecorder`。
-4. MCP：`load_project_mcp_config` → `McpConnectionManager.connect_all_blocking()` → `mcp_server_instructions` → `build_mcp_tool_descriptors`。
+4. MCP：`load_project_mcp_config` → stdio server trust prompt/skip → `McpConnectionManager.connect_all_blocking()` → `mcp_server_instructions` → `build_mcp_tool_descriptors`。
 5. Hooks 与任务：`HookRegistry`、`TaskStore`、`BackgroundTaskManager`。
 6. base descriptors：`read_file`、`edit_file`、`write_file`、`glob`、`grep`、`bash`、`background_task_stop`、`skill`、`task_create/get/update/list`、`*mcp_descriptors`。
 7. registry 与存储：`ToolRegistry`、`ToolResultStorage`、`SessionMemoryStore`、`LongTermMemoryStore`。
@@ -69,7 +69,7 @@ flowchart TD
 | `/tools` | registry 全部 descriptor |
 | `/tasks` | 当前 task list（过滤 `_internal`） |
 | `/background-tasks` | 进程内后台任务（最近 20） |
-| `/mcp [tools]` | MCP server 状态；`tools` 列出发现的工具 |
+| `/mcp [tools]` | MCP server 状态（含 untrusted/disabled/failed）；`tools` 列出发现的工具 |
 | `/status` | usage、transcript/trace/errors 路径、MCP、后台任务、长期记忆、compaction 状态 |
 | `/history [n]` | 最近 n 条消息摘要（默认 20） |
 | `/trace [n]` | 最近 n 条 trace（默认 20，读 `trace.jsonl`） |

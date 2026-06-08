@@ -133,6 +133,19 @@ class FakeMcpManager:
         return None
 
 
+class FakeUntrustedMcpManager:
+    def snapshot(self) -> McpConnectionSnapshot:
+        return McpConnectionSnapshot(
+            statuses=(
+                McpServerStatus(
+                    name="docs",
+                    transport="stdio",
+                    state="untrusted",
+                ),
+            ),
+        )
+
+
 def make_runtime(tmp_path: Path) -> CliRuntime:
     state = RuntimeState(session_id="session-cli")
     message_store = MessageStore(
@@ -208,6 +221,32 @@ def test_mcp_command_renders_server_status_and_tools(
     assert "MCP servers:" in output
     assert "docs [stdio] connected tools=1 instructions=yes" in output
     assert "mcp__docs__search_docs: docs/search.docs" in output
+
+
+def test_mcp_command_renders_untrusted_server(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    runtime = replace(make_runtime(tmp_path), mcp_manager=FakeUntrustedMcpManager())  # type: ignore[arg-type]
+
+    handle_command(runtime, "/mcp tools")
+
+    output = capsys.readouterr().out
+    assert "docs [stdio] untrusted" in output
+    assert "MCP tools:" in output
+    assert "none" in output
+
+
+def test_status_command_counts_untrusted_mcp_servers(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    runtime = replace(make_runtime(tmp_path), mcp_manager=FakeUntrustedMcpManager())  # type: ignore[arg-type]
+
+    handle_command(runtime, "/status")
+
+    output = capsys.readouterr().out
+    assert "untrusted=1" in output
 
 
 def test_compact_command_triggers_manual_compact(tmp_path: Path, capsys: Any) -> None:

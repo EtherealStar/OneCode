@@ -20,6 +20,11 @@ from mcp.client.streamable_http import streamable_http_client
 
 from services.mcp.names import build_mcp_tool_name
 from services.mcp.results import render_mcp_tool_result
+from services.mcp.trust import (
+    McpTrustPolicy,
+    build_stdio_child_env,
+    fingerprint_mcp_server,
+)
 from services.mcp.types import (
     McpConfigSet,
     McpConnectionSnapshot,
@@ -55,6 +60,7 @@ class McpConnectionManager:
         max_remote_concurrency: int = 20,
         trace_recorder: TraceRecorder | None = None,
         error_log_recorder: ErrorLogRecorder | None = None,
+        trust_policy: McpTrustPolicy | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.configs = configs.servers if isinstance(configs, McpConfigSet) else dict(configs)
@@ -63,6 +69,7 @@ class McpConnectionManager:
         self.max_remote_concurrency = max(1, max_remote_concurrency)
         self.trace_recorder = trace_recorder or TraceRecorder.noop()
         self.error_log_recorder = error_log_recorder or ErrorLogRecorder.noop()
+        self.trust_policy = trust_policy or McpTrustPolicy()
         self._connections: dict[str, ConnectedMcpServer] = {}
         self._statuses: dict[str, McpServerStatus] = {
             name: McpServerStatus(
@@ -112,6 +119,9 @@ class McpConnectionManager:
         async def connect_one(config: McpServerConfig) -> None:
             if not config.enabled:
                 return
+            if not self._is_trusted(config):
+                self._mark_untrusted(config)
+                return
             sem = local_sem if config.transport == "stdio" else remote_sem
             async with sem:
                 try:
@@ -131,6 +141,9 @@ class McpConnectionManager:
             raise ValueError(f"Unknown MCP server: {server_name}")
         if not config.enabled:
             raise ValueError(f"MCP server is disabled: {server_name}")
+        if not self._is_trusted(config):
+            self._mark_untrusted(config)
+            raise ValueError(f"MCP server is untrusted: {server_name}")
         return await self._connect_one(config)
 
     async def call_tool(
@@ -294,8 +307,7 @@ class McpConnectionManager:
         exit_stack: AsyncExitStack,
     ) -> tuple[Any, ...]:
         if config.transport == "stdio":
-            env = dict(os.environ)
-            env.update(config.env)
+            env = build_stdio_child_env(dict(os.environ), config)
             stderr_log = _LimitedTextLog(STDIO_STDERR_LIMIT_CHARS)
             setattr(exit_stack, "_onecode_stderr_log", stderr_log)
             exit_stack.callback(stderr_log.close)
@@ -326,6 +338,27 @@ class McpConnectionManager:
             await exit_stack.enter_async_context(
                 streamable_http_client(config.url or "", http_client=http_client)
             )
+        )
+
+    def _is_trusted(self, config: McpServerConfig) -> bool:
+        return self.trust_policy.is_trusted(config, self.workspace)
+
+    def _mark_untrusted(self, config: McpServerConfig) -> None:
+        fingerprint = fingerprint_mcp_server(config, self.workspace)
+        self._statuses[config.name] = McpServerStatus(
+            name=config.name,
+            transport=config.transport,
+            state="untrusted",
+        )
+        self.trace_recorder.event(
+            "mcp_connect",
+            {
+                "server": config.name,
+                "transport": config.transport,
+                "status": "untrusted",
+                "fingerprint": fingerprint,
+                "env_key_count": len(config.env),
+            },
         )
 
     async def _disconnect(self, server_name: str) -> None:

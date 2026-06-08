@@ -12,7 +12,6 @@
 | TD-008 | 动态 prompt 已落地，但可见工具裁剪尚未接入完整多来源 permission policy | 架构 / 安全 | `prompts/`, `services/tools/registry.py`, `services/guard/`, `services/permissions/` | 中 | 部分缓解 |
 | TD-009 | BashTool 第一版只支持 Git Bash 和有限 Bash AST 子集 | 架构 / 安全 / 测试 | `tools/bash/`, `services/permissions/policy.py`, `ui/cli/permissions.py` | 中 | 已识别 |
 | TD-016 | 附件系统已有 backend 投影，但 CLI/UI 缺少附件可视化渲染 | UI / 可观测性 | `ui/cli/renderer.py`, `services/attachments/types.py`, `ui/cli/app.py` | 低 | 已识别 |
-| TD-017 | Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量 | 安全 / 架构 | `ui/cli/app.py`, `services/mcp/config.py`, `services/mcp/manager.py` | 高 | 已识别 |
 | TD-018 | Skill `allowed_tools` 会转成共享 session 级工具授权 | 安全 / 权限 / 架构 | `tools/skill/`, `services/subagents/runner.py`, `services/tools/executor.py`, `services/permissions/` | 高 | 已识别 |
 | TD-020 | 文件、附件和搜索工具会先整文件读取或整目录扫描，再分页/截断 | 性能 / 可用性 | `tools/read_file/`, `tools/grep/`, `tools/glob/`, `services/attachments/` | 中 | 已识别 |
 
@@ -136,34 +135,6 @@ UI 渲染不能成为附件投影或安全判断的事实来源；guard、permis
 
 ---
 
-### TD-017: Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量
-
-- **类型：** 安全 / 架构
-- **区域：** `ui/cli/app.py`, `services/mcp/config.py`, `services/mcp/manager.py`
-- **优先级：** 高
-- **状态：** 已识别
-- **影响：** 仓库级 MCP 配置一旦存在，CLI runtime 初始化时会自动连接 enabled server；stdio server 子进程继承完整父进程环境变量，扩大了本地配置被滥用时的命令执行和 secret 暴露面。
-
-**描述：**
-`build_runtime()` 会在 CLI 启动装配阶段调用 `mcp_manager.connect_all_blocking()`。MCP server 配置的 `enabled` 默认值为 `True`，因此项目配置中新增 stdio server 后，除非显式禁用，否则会在启动时执行对应 command。`StdioMcpClient` 启动子进程时先复制 `os.environ`，再叠加配置里的 `env`，导致模型 provider key、系统凭据或其他本地 secret 可能被传给仓库配置声明的 MCP 子进程。
-
-**引入原因：**
-MCP 第一版优先保证 CLI 启动后可直接发现并使用项目 MCP 工具，简化了连接流程和环境传递；尚未引入 project MCP trust gate、按 server 授权、环境变量 allowlist 或启动前审计 UI。
-
-**修复方向：**
-为项目 MCP 配置增加显式 trust/allow 流程，stdio server 首次执行前应显示 command、args、cwd 和 env 摘要并要求授权。子进程环境应默认最小化，只传递 allowlisted 变量和配置显式声明的变量；敏感变量需要 redact trace/log。自动连接可保留给已信任 server，未信任 server 应停留在 pending/disabled 状态。
-
-**关联代码：**
-- `ui/cli/app.py:L127` - CLI runtime 装配阶段自动调用 `connect_all_blocking()`。
-- `services/mcp/config.py:L67` - MCP server `enabled` 默认值为 `True`。
-- `services/mcp/manager.py:L76` - `connect_all_blocking()` 会连接所有 enabled server。
-- `services/mcp/manager.py:L297` - stdio 子进程环境由 `dict(os.environ)` 初始化。
-
-**架构约束：**
-MCP trust 和 env policy 应属于 services/mcp 或 permissions 边界，CLI 只负责展示和收集确认；不得由 prompt 或模型请求绕过。deny 或未信任状态必须在工具 descriptor 暴露和执行入口同时生效。
-
----
-
 ### TD-018: Skill `allowed_tools` 会转成共享 session 级工具授权
 
 - **类型：** 安全 / 权限 / 架构
@@ -224,6 +195,11 @@ Skill 第一版为了让 skill 能声明它运行所需的工具能力，复用�
 ---
 
 ## 已解决条目归档
+
+### TD-017: Project MCP stdio server 会在 CLI 启动时自动运行并继承完整环境变量
+
+- **解决方式：** 新增 `services/mcp/trust.py`，通过 `.onecode/settings.json` 保存 stdio MCP server 的本地 trust fingerprint；`McpConnectionManager` 在 `connect_all()` 和 `ensure_connected()` 中对未信任 stdio server fail closed，状态标记为 `untrusted`，不发现工具、不注入 instructions。stdio 子进程环境改为基础 allowlist 父环境加 `.mcp.json` 显式 `env`，不再继承完整 `os.environ`。CLI 启动时展示 command、args、cwd、显式 env keys 和基础 env keys，并由用户选择 trust 或 skip。
+- **验证：** 补充 MCP trust、manager env/untrusted、CLI 渲染测试；通过 `uv run python -m pytest tests/test_mcp_config.py tests/test_mcp_trust.py tests/test_mcp_manager.py tests/test_mcp_tool_factory.py tests/test_cli_commands.py -q`。
 
 ### TD-021: 工具结果持久化逻辑分散在 transcript 和 compaction result store
 

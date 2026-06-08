@@ -9,6 +9,7 @@
 | `types.py` | MCP 配置、连接快照、发现工具、调用结果等 dataclass |
 | `config.py` | 从 `{workspace}/.mcp.json` 加载 `McpConfigSet` |
 | `manager.py` | `McpConnectionManager`：连接生命周期、工具发现、调用、重连 |
+| `trust.py` | 项目 MCP stdio server 的本地 trust fingerprint、trust store 和最小化子进程环境 |
 | `names.py` | server/tool 名规范化与 provider 可见名 `mcp__{server}__{tool}` |
 | `tool_factory.py` | 将 `McpDiscoveredTool` 包装为 `ToolDescriptor` |
 | `results.py` | MCP SDK 结果 → 模型可见文本 + metadata |
@@ -55,6 +56,8 @@ flowchart TD
 
 `connect_all()` 先 `close_all()` 再并行连接 enabled servers，并发限制 stdio 3 / remote 20；每 server `initialize()` → `list_tools()` 构建发现工具列表；stdio 捕获 stderr（上限 1MB）；server instructions 截断至 2048 字符存入 snapshot。CLI 在 `build_runtime` 中同步 `connect_all_blocking()`，配置错误记 `source="mcp_config"` 并阻止启动。`call_tool` 时 `ensure_connected`，失败则 disconnect + 重连重试。
 
+stdio server 在执行前必须通过本地 trust policy。fingerprint 覆盖 transport、command、args、cwd 和显式 env；未信任 server 状态为 `untrusted`，不会启动子进程、发现工具或注入 instructions。stdio 子进程环境只包含基础 allowlist 父环境加 `.mcp.json` 显式 `env`，不继承完整父进程环境。
+
 ### 动态 descriptor 与分类
 
 `classify_input` 读 MCP annotations：`readOnlyHint=True` 且 `destructiveHint!=True` → `read_only=True`、`concurrency_safe=True`；target 为 `(external_service, call, server/tool)`。result_policy 默认 50k、超出 persist、preview 4k。非只读的 `external_service/call` 会被 permission policy 纳入 ask（见 `permission-architecture.md`）。
@@ -74,4 +77,5 @@ server instructions 注入 prompt `# MCP Server Instructions` section（见 `pro
 ## 持久化与配置
 
 - 配置：`{workspace}/.mcp.json`
+- Trust 记录：`{workspace}/.onecode/settings.json` 的 `mcp.trustedServers`
 - 连接状态仅存进程内存，不持久化。

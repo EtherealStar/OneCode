@@ -387,12 +387,14 @@ def _mcp_status_lines(runtime: CliRuntime) -> list[str]:
     connected = sum(1 for status in snapshot.statuses if status.state == "connected")
     failed = sum(1 for status in snapshot.statuses if status.state == "failed")
     disabled = sum(1 for status in snapshot.statuses if status.state == "disabled")
+    untrusted = sum(1 for status in snapshot.statuses if status.state == "untrusted")
     tool_count = sum(status.tool_count for status in snapshot.statuses)
     return [
         (
             "  mcp: "
             f"servers={len(snapshot.statuses)} connected={connected} "
-            f"failed={failed} disabled={disabled} tools={tool_count}"
+            f"failed={failed} disabled={disabled} untrusted={untrusted} "
+            f"tools={tool_count}"
         )
     ]
 
