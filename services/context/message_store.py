@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 from services.context.transcript import JsonlTranscriptStore
+from services.context.recovery import restore_transcript_active_chain
 from services.tools.types import ToolExecutionResult
 
 if TYPE_CHECKING:
@@ -138,6 +139,7 @@ class MessageStore:
 
         self.flush_transcript()
         self._messages.clear()
+        self._last_uuid = None
         stored: list[dict[str, Any]] = []
         for message in replacement:
             enriched = deepcopy(message)
@@ -206,16 +208,13 @@ class MessageStore:
           transcript 文件中的 session UUID。
         """
 
-        loaded = transcript_store.load_messages()
-        if loaded:
-            state.session_id = loaded[-1].session_id
-            transcript_store.switch_session(state.session_id)
-        else:
-            state.session_id = transcript_store.session_id
+        restored = restore_transcript_active_chain(transcript_store)
+        state.session_id = restored.session_id
+        transcript_store.switch_session(state.session_id)
 
         message_store = cls(transcript_store=transcript_store)
-        message_store._messages = [deepcopy(item.message) for item in loaded]
-        message_store._last_uuid = loaded[-1].uuid if loaded else None
+        message_store._messages = [deepcopy(message) for message in restored.messages]
+        message_store._last_uuid = restored.last_uuid
         return message_store
 
     def _append(self, message: dict[str, Any]) -> dict[str, Any]:

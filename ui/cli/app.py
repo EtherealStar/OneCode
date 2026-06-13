@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
+
+from services.permissions import PermissionPrompter
 
 from core.context_engine import ContextEngine
 from core.loop import AgentLoop
@@ -44,6 +49,7 @@ from services.mcp import (
     BASE_STDIO_ENV_ALLOWLIST,
     McpConfigSet,
     McpConnectionManager,
+    McpServerConfig,
     McpTrustPolicy,
     McpTrustStore,
     build_mcp_tool_descriptors,
@@ -81,13 +87,32 @@ from tools.task_list import descriptor as task_list_descriptor
 from tools.task_update import descriptor as task_update_descriptor
 from tools.write_file import descriptor as write_file_descriptor
 from ui.cli import renderer
-from ui.cli.commands import handle_command
+from ui.cli.input import ConfirmOption, read_confirm_sync
 from ui.cli.permissions import CliPermissionPrompter
 from ui.cli.types import CliRuntime
 from utils.toolResultStorage import ToolResultStorage
 
+TrustChoice = Literal["trust", "skip"]
+McpTrustMode = Literal["prompt", "skip"]
 
-def build_runtime(workspace: Path) -> CliRuntime:
+
+@dataclass(frozen=True)
+class McpTrustPromptRequest:
+    server_name: str
+    command: str
+    args: str
+    cwd: str
+    explicit_env_keys: str
+    base_env_keys: str
+
+
+def build_runtime(
+    workspace: Path,
+    *,
+    trust_prompt: Callable[[McpTrustPromptRequest], TrustChoice] | None = None,
+    permission_prompter: PermissionPrompter | None = None,
+    mcp_trust_mode: McpTrustMode = "prompt",
+) -> CliRuntime:
     workspace = workspace.resolve()
     state = RuntimeState()
     state.metadata["workspace"] = str(workspace)
@@ -125,7 +150,18 @@ def build_runtime(workspace: Path) -> CliRuntime:
         error_log_recorder.flush()
         raise
     mcp_trust_store = McpTrustStore(workspace / ".onecode" / "settings.json")
-    _prompt_for_project_mcp_trust(workspace, mcp_config, mcp_trust_store)
+    if mcp_trust_mode == "prompt":
+        _prompt_for_project_mcp_trust(
+            workspace,
+            mcp_config,
+            mcp_trust_store,
+            trust_prompt=trust_prompt,
+        )
+    state.metadata["mcp_untrusted_servers"] = _collect_untrusted_project_mcp_servers(
+        workspace,
+        mcp_config,
+        mcp_trust_store,
+    )
     mcp_manager = McpConnectionManager(
         workspace,
         mcp_config,
@@ -186,7 +222,7 @@ def build_runtime(workspace: Path) -> CliRuntime:
         trace_recorder=trace_recorder,
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
-    permission_prompter = CliPermissionPrompter()
+    permission_prompter = permission_prompter or CliPermissionPrompter()
     file_state_cache = FileStateCache()
     attachment_reader = AttachmentFileReader(
         guard=guard,
@@ -242,11 +278,12 @@ def build_runtime(workspace: Path) -> CliRuntime:
         subagent_runner=subagent_runner,
         trace_recorder=trace_recorder,
     )
+    long_term_memory_extractor_ref = {"extractor": long_term_memory_extractor}
     hooks.register(
         HookEvent.TURN_STOPPED,
         lambda payload: _start_long_term_memory_dream(
             payload,
-            long_term_memory_extractor=long_term_memory_extractor,
+            long_term_memory_extractor=long_term_memory_extractor_ref["extractor"],
             background_task_manager=background_task_manager,
         ),
     )
@@ -309,6 +346,10 @@ def build_runtime(workspace: Path) -> CliRuntime:
         memory_selector=memory_selector,
         task_store=task_store,
         background_task_manager=background_task_manager,
+        guard=guard,
+        base_descriptors=base_descriptors,
+        subagent_runner_ref=runner_ref,
+        long_term_memory_extractor_ref=long_term_memory_extractor_ref,
     )
 
 
@@ -316,37 +357,37 @@ def _prompt_for_project_mcp_trust(
     workspace: Path,
     mcp_config: McpConfigSet,
     trust_store: McpTrustStore,
+    *,
+    trust_prompt: Callable[[McpTrustPromptRequest], TrustChoice] | None = None,
 ) -> None:
-    configs = mcp_config.servers
-    allowed_env_keys = {item.upper() for item in BASE_STDIO_ENV_ALLOWLIST}
-    base_env_keys = sorted(
-        key for key in os.environ if key.upper() in allowed_env_keys
-    )
-    for config in configs.values():
-        if (
-            getattr(config, "transport", None) != "stdio"
-            or getattr(config, "enabled", False) is not True
-        ):
-            continue
+    for config, request in _iter_untrusted_project_mcp_server_requests(
+        workspace,
+        mcp_config,
+        trust_store,
+    ):
         fingerprint = fingerprint_mcp_server(config, workspace)
-        if trust_store.is_trusted(config.name, fingerprint):
-            continue
-        print("Project MCP stdio server requires trust before it can run:")
-        print(f"  server: {config.name}")
-        print(f"  command: {config.command or ''}")
-        args = " ".join(config.args) if config.args else "(none)"
-        print(f"  args: {args}")
-        print(f"  cwd: {workspace}")
-        explicit_env = ", ".join(sorted(config.env)) if config.env else "(none)"
-        print(f"  explicit env keys: {explicit_env}")
-        base_env = ", ".join(base_env_keys) if base_env_keys else "(none)"
-        print(f"  base env keys: {base_env}")
-        try:
-            response = input("Trust this project MCP server? [t]rust/[s]kip: ")
-        except (EOFError, KeyboardInterrupt):
-            print("Skipping untrusted MCP server.")
-            continue
-        if response.strip().lower() in {"t", "trust", "y", "yes"}:
+        if trust_prompt is not None:
+            response = trust_prompt(request)
+        else:
+            print("Project MCP stdio server requires trust before it can run:")
+            print(f"  server: {config.name}")
+            print(f"  command: {request.command}")
+            print(f"  args: {request.args}")
+            print(f"  cwd: {request.cwd}")
+            print(f"  explicit env keys: {request.explicit_env_keys}")
+            print(f"  base env keys: {request.base_env_keys}")
+            try:
+                response = read_confirm_sync(
+                    "Trust this project MCP server?",
+                    (
+                        ConfirmOption("trust", "t trust", aliases=("t", "y", "yes")),
+                        ConfirmOption("skip", "s skip", aliases=("s", "n", "no")),
+                    ),
+                )
+            except (EOFError, KeyboardInterrupt):
+                print("Skipping untrusted MCP server.")
+                continue
+        if response == "trust":
             trust_store.trust_server(
                 config.name,
                 fingerprint,
@@ -355,6 +396,67 @@ def _prompt_for_project_mcp_trust(
             print(f"Trusted MCP server: {config.name}")
         else:
             print(f"Skipped MCP server: {config.name}")
+
+
+def _collect_untrusted_project_mcp_servers(
+    workspace: Path,
+    mcp_config: McpConfigSet,
+    trust_store: McpTrustStore,
+) -> tuple[dict[str, str], ...]:
+    return tuple(
+        {
+            "name": request.server_name,
+            "command": request.command,
+            "args": request.args,
+            "cwd": request.cwd,
+            "explicit_env_keys": request.explicit_env_keys,
+            "base_env_keys": request.base_env_keys,
+        }
+        for _, request in _iter_untrusted_project_mcp_server_requests(
+            workspace,
+            mcp_config,
+            trust_store,
+        )
+    )
+
+
+def _iter_untrusted_project_mcp_server_requests(
+    workspace: Path,
+    mcp_config: McpConfigSet,
+    trust_store: McpTrustStore,
+) -> tuple[tuple[McpServerConfig, McpTrustPromptRequest], ...]:
+    allowed_env_keys = {item.upper() for item in BASE_STDIO_ENV_ALLOWLIST}
+    base_env_keys = sorted(
+        key for key in os.environ if key.upper() in allowed_env_keys
+    )
+    requests = []
+    for config in mcp_config.servers.values():
+        if (
+            getattr(config, "transport", None) != "stdio"
+            or getattr(config, "enabled", False) is not True
+        ):
+            continue
+        fingerprint = fingerprint_mcp_server(config, workspace)
+        if trust_store.is_trusted(config.name, fingerprint):
+            continue
+        requests.append(
+            (
+                config,
+                McpTrustPromptRequest(
+                    server_name=config.name,
+                    command=config.command or "",
+                    args=" ".join(config.args) if config.args else "(none)",
+                    cwd=str(workspace),
+                    explicit_env_keys=(
+                        ", ".join(sorted(config.env)) if config.env else "(none)"
+                    ),
+                    base_env_keys=(
+                        ", ".join(base_env_keys) if base_env_keys else "(none)"
+                    ),
+                ),
+            )
+        )
+    return tuple(requests)
 
 
 async def _start_long_term_memory_dream(
@@ -406,88 +508,46 @@ async def _start_long_term_memory_dream(
     )
 
 
-async def main_loop_async(runtime: CliRuntime) -> int:
-    print(renderer.render_banner(runtime))
-    print()
-    while True:
-        try:
-            line = await asyncio.to_thread(input, "onecode> ")
-        except EOFError:
-            print()
-            runtime.message_store.flush_transcript()
-            runtime.trace_recorder.flush()
-            runtime.error_log_recorder.flush()
-            if runtime.mcp_manager is not None:
-                await runtime.mcp_manager.close_all()
-            return 0
-        except KeyboardInterrupt:
-            print("\nUse /exit to quit.")
-            continue
-
-        line = line.strip()
-        if not line:
-            continue
-
-        if line.startswith("/"):
-            result = handle_command(runtime, line)
-            if result.runtime is not None:
-                runtime = result.runtime
-            if result.should_exit:
-                return 0
-            continue
-
-        try:
-            print(renderer.render_running())
-            attachments = ()
-            if runtime.attachment_collector is not None:
-                attachments = await runtime.attachment_collector.collect_for_user_turn(
-                    line,
-                    runtime.state,
-                    runtime.message_store.current_messages(),
-                    is_main_thread=True,
-                )
-            saw_delta = False
-            final_text = ""
-            async for event in runtime.loop.stream(line, attachments=attachments):
-                if event.type == "assistant_delta":
-                    saw_delta = True
-                    print(renderer.render_assistant_delta(event.text), end="", flush=True)
-                elif event.type == "tool_result" and event.result is not None:
-                    print(renderer.render_tool_result_summary(event.result))
-                elif event.type == "completed":
-                    final_text = event.text
-            if saw_delta:
-                print()
-            else:
-                print(renderer.render_assistant(final_text))
-        except KeyboardInterrupt:
-            print("\nInterrupted. Use /exit to quit.")
-        except Exception as exc:
-            runtime.error_log_recorder.record_error(
-                exc,
-                source="cli_main_loop",
-                attributes={"turn_count": runtime.state.turn_count},
-            )
-            runtime.error_log_recorder.flush()
-            print(renderer.render_error(str(exc)))
-
-
-def main_loop(runtime: CliRuntime) -> int:
-    return asyncio.run(main_loop_async(runtime))
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     _ = argv
     workspace = Path.cwd()
+    if not sys.stdin.isatty():
+        from ui.cli.batch import run_batch
+
+        return run_batch(workspace)
+    if not sys.stdout.isatty():
+        print(
+            "Error: OneCode CLI requires an interactive terminal: stdout is not a TTY. "
+            "Run `uv run python -m ui.cli.app` from a real terminal window, "
+            "or pipe a prompt into the command to use batch mode.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # The TTY path is an inline REPL (prompt_toolkit + Rich). We wire
+    # MCP trust prompts through ``default_trust_prompt`` and start with
+    # ``mcp_trust_mode="prompt"`` so the user is asked to trust project
+    # stdio servers on startup rather than having them silently skipped.
+    from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
+    from ui.cli.terminal.repl import InlineRepl
+    from ui.cli.terminal.trust_prompt import default_trust_prompt
+
     try:
-        runtime = build_runtime(workspace)
+        permission_prompter = TtyPermissionPrompter()
+        runtime = build_runtime(
+            workspace,
+            trust_prompt=default_trust_prompt,
+            permission_prompter=permission_prompter,
+            mcp_trust_mode="prompt",
+        )
+        repl = InlineRepl(runtime, permission_prompter=permission_prompter)
+        return repl.run()
     except ProviderError as exc:
-        print(renderer.render_error(exc.message))
+        renderer.print_renderable(renderer.render_error(exc.message))
         return 1
     except Exception as exc:
-        print(renderer.render_error(str(exc)))
+        renderer.print_renderable(renderer.render_error(str(exc)))
         return 1
-    return asyncio.run(main_loop_async(runtime))
 
 
 if __name__ == "__main__":
