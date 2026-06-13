@@ -18,13 +18,13 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 - [x] (2026-06-09, Codex) 阅读现有轻量 UI 草稿、CLI 架构、技术债跟踪和 Claude Code 参考文件，确认重构应落在 `ui/cli/`，不能把 runtime 逻辑搬进 UI。
 - [x] (2026-06-09, Codex) 根据用户确认更新产品边界：第一版采用带 Unicode 符号、分隔线和彩色状态的产品化终端；支持参数补全；`/permissions` 只读；`/mcp` 可以只读展示可调用工具；允许 Unicode 符号但禁止 emoji。
 - [x] (2026-06-09, Codex) 根据用户追加要求修订命令重构边界：不保留旧 `handle_command()` 兼容 wrapper，调用点和测试都必须迁移到 `dispatch_command()`。
-- [ ] 增加 `rich` 和 `prompt-toolkit` 依赖，并确认 `uv sync --dev` 后本地环境可导入这两个库。
-- [ ] 建立 `CommandSpec` 命令注册表，把 slash command 的执行、补全、banner 和测试迁移到同一事实来源。
-- [ ] 引入 CLI 主题和 Rich 视图层，先覆盖 banner、错误、状态、任务、MCP、memory、permissions 和 usage。
-- [ ] 引入 `prompt_toolkit` 输入循环，替换 `asyncio.to_thread(input, ...)`，实现命令补全、参数补全、输入历史和 `patch_stdout()`。
-- [ ] 新增只读命令 `/skills`、`/memory`、`/permissions`、`/usage`。
-- [ ] 合并 `/tasks` 和后台任务视图，移除 `/background-tasks` 用户命令入口。
-- [ ] 更新 CLI 架构文档和测试，运行聚焦测试、compile check 和 import boundary 测试。
+- [x] (2026-06-09, Codex) 增加 `rich` 和 `prompt-toolkit` 依赖，运行 `uv sync --dev` 更新环境和 `uv.lock`，并确认 `uv run python -c "import rich, prompt_toolkit; print('ui deps ok')"` 通过。
+- [x] (2026-06-09, Codex) 建立 `CommandSpec` 命令注册表，新增 `dispatch_command()`，删除旧 `handle_command()` 入口，并把 app、resume 测试和命令测试迁移到新入口。
+- [x] (2026-06-09, Codex) 引入 CLI 主题和 Rich 视图层，覆盖 banner、错误、status、usage、memory、permissions、skills、MCP、tasks、history 和 compact 输出。
+- [x] (2026-06-09, Codex) 引入 `prompt_toolkit` 输入循环、命令补全、`/resume` 参数补全、`@file` 补全、输入历史和 `patch_stdout()`；非 TTY 环境回退到线程 `input()`，以支持 Windows pytest/captured output。
+- [x] (2026-06-09, Codex) 新增只读命令 `/skills`、`/memory`、`/permissions`、`/usage`，并为 `SessionPermissionStore` 增加只读 `snapshot()`。
+- [x] (2026-06-09, Codex) 合并 `/tasks` 和后台任务视图，移除 `/background-tasks` 用户命令入口；`/quit`、`/help`、`/tools`、`/trace` 也改为 unknown command。
+- [x] (2026-06-09, Codex) 更新 CLI 架构文档和测试；通过聚焦测试、compile check、import boundary 测试和全量测试。
 
 
 ## Surprises & Discoveries
@@ -43,6 +43,9 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Observation: 当前技术债已经把 CLI UI 不足列为活跃债务。
   Evidence: `docs/tech-debt/tech-debt-tracker.md` 的 TD-007 说明 CLI 缺少恢复 UI 和实时 trace 订阅，TD-016 说明附件系统缺少 CLI 可视化渲染。本计划缓解 CLI 呈现层，但不实现实时 trace 订阅，也不把附件可视化作为第一批必做项。
+
+- Observation: `prompt_toolkit` 在 Windows pytest 捕获输出环境中会因为没有真实 console 而抛 `NoConsoleScreenBufferError`。
+  Evidence: `tests/test_async_cli_streaming.py` 首次运行时在 `PromptSession()` 初始化阶段失败；`ui/cli/input.py` 现在仅在非 TTY 环境回退到 `asyncio.to_thread(input, "onecode> ")`，交互终端仍使用 `prompt_toolkit`。
 
 
 ## Decision Log
@@ -71,17 +74,21 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
   Rationale: 兼容 wrapper 会让新旧命令分发长期并存，削弱 `CommandSpec` registry 作为唯一事实来源的目标。测试应随实现一起迁移，不用旧 API 保护旧断言。
   Date/Author: 2026-06-09 / Codex
 
+- Decision: `prompt_toolkit` 输入在非 TTY 环境回退到标准 `input()`，但补全器继续作为独立类单元测试。
+  Rationale: Windows 的 captured stdout/stdin 不提供真实 console buffer；强行创建 `PromptSession` 会让非交互测试崩溃。回退只影响测试、管道或重定向环境，不改变真实终端中的补全、history 和 `patch_stdout()` 行为。
+  Date/Author: 2026-06-09 / Codex
+
 
 ## Outcomes & Retrospective
 
-尚未开始实现。计划完成后应在这里记录实际完成的命令、视图、测试结果、取舍和后续工作。每完成一个主要里程碑都要追加一条简短记录，说明结果是否符合本计划的用户可见目标。
+2026-06-09 / Codex: 第一轮实现完成。CLI 现在使用 `CommandSpec` 注册表和 `dispatch_command()`，Rich banner/状态视图、`prompt_toolkit` 输入补全、只读 `/skills`/`/memory`/`/permissions`/`/usage`、MCP 工具只读展示和合并后的 `/tasks` 均已落地。删除的用户命令 `/quit`、`/help`、`/tools`、`/trace`、`/background-tasks` 会返回 unknown command。验证通过：`uv run python -c "import rich, prompt_toolkit; print('ui deps ok')"`、`uv run python -m compileall ui services`、`uv run python -m pytest tests/test_cli_commands.py tests/test_cli_resume.py tests/test_cli_completion.py -q`、`uv run python -m pytest tests/test_async_cli_streaming.py -q`、`uv run python -m pytest tests/test_import_boundaries.py -q`、`uv run python -m pytest tests -q`。
 
 
 ## Context and Orientation
 
 OneCode 是 Python code agent runtime。核心 agent 主循环在 `core/loop.py`，上下文治理在 `services/context/`、`services/compaction/` 和 `services/memory/`，工具执行在 `services/tools/` 和 `tools/`，权限在 `services/permissions/`，MCP 在 `services/mcp/`，任务在 `services/tasks/` 和 `services/background_tasks/`。本计划只重构 `ui/cli/` 的用户界面，不改变 agent 主循环、工具执行、安全策略或 provider 协议。
 
-当前 CLI 入口是 `ui/cli/app.py`。`build_runtime(workspace)` 创建 `CliRuntime`，`main_loop_async(runtime)` 打印 banner，使用 `input("onecode> ")` 等待一行输入。如果输入以 `/` 开头，它调用 `ui/cli/commands.py` 的 `handle_command()`；否则收集 `@mention` 附件，然后调用 `AgentLoop.stream()` 并打印 assistant delta 和工具结果摘要。
+当前 CLI 入口是 `ui/cli/app.py`。`build_runtime(workspace)` 创建 `CliRuntime`，`main_loop_async(runtime)` 打印 Rich banner，使用 `ui/cli/input.py` 的 `prompt_async()` 等待一行输入。如果输入以 `/` 开头，它调用 `ui/cli/commands.py` 的 `dispatch_command()`；否则收集 `@mention` 附件，然后调用 `AgentLoop.stream()` 并打印 assistant delta 和工具结果摘要。
 
 `ui/cli/commands.py` 当前用一串 `if command == ...` 分支处理 slash 命令。slash command 是以 `/` 开头的用户命令，例如 `/status` 或 `/resume session-id`。当前命令分发、帮助文本、banner 中列出的命令和测试里的预期彼此分散，导致删除或新增命令时容易漏改。
 
@@ -367,6 +374,183 @@ Claude Code 参考文件放在 `docs/references/ui/`。可借鉴的文件包括 
 
 `app.py` 负责 runtime 装配和主循环；`input.py` 负责 prompt_toolkit 输入、历史和补全；`commands.py` 负责命令注册和分发；`theme.py` 负责 CLI 样式和符号；`renderer.py` 负责兼容和 Rich console 输出；`views/` 负责用户可见状态视图；`permissions.py` 继续只负责工具执行前的权限确认面板，不被 `/permissions` 只读视图替代。
 
+
+### User-Facing Scope
+
+启动主页只显示具体信息，不显示字段说明，也不显示模型来源。主页应保留 `OneCode`、当前 workspace 绝对路径和当前模型名。示例：
+
+    OneCode
+    D:\study\OneCode
+    deepseek-chat
+
+主页不显示 `workspace`、`session`、`provider`、`model` 这些标签，不显示 `DeepSeek / deepseek-chat` 这种来源加模型组合。模型名使用 `runtime.model`。
+
+`/status`、`/usage`、`/mcp`、`/tasks`、`/permissions`、`/memory`、`/skills` 进入只读 page 模式。page 模式下主 prompt 失活，用户只能按 `Esc` 退出，允许滚动键查看长内容。普通字符、Enter、slash command 和其他按键都必须被忽略，不能进入输入缓冲，也不能在退出页面后作为命令执行。
+
+`/history` 不作为用户命令实现。历史查看只通过 `/resume` 进入：用户先选择会话，按 Enter 恢复到该会话状态，然后自动进入该会话的只读历史页面。按 `Esc` 退出历史页面后，prompt 继续在已恢复的会话中工作。
+
+`/connect` 进入连接向导。用户用方向键从上到下选择 provider，最后一项是 `Custom`。选择 provider 后按 Enter 进入配置输入。非 custom provider 提示输入 API key，再输入 model；custom provider 先输入 base URL，再输入 API key，再输入 model。写入项目 `.env` 后重建当前 runtime 的模型相关组件。
+
+### Interaction Modes
+
+第一版可用 `prompt_toolkit` 的 `PromptSession`、key bindings、completion menu 和受控 prompt 完成这些模式，不要求实现自定义终端 screen buffer。若 `prompt_toolkit` 无法可靠承载 page/picker 模式，再评估是否引入更小的 raw-key helper，但不要把核心 runtime 逻辑搬进 UI。
+
+### Backspace Fix
+
+当前启动后输入命令无法按退格键的问题应作为输入层 bug 单独修复。优先检查 `ui/cli/input.py` 的 TTY 判定和 Windows 控制台行为：当前实现只要 `stdin` 或 `stdout` 任一不是 TTY 就回退到标准 `input()`，这在集成终端和测试捕获环境里可能导致退格表现不一致。
+
+修复方向：
+
+1. 真实交互终端优先使用 `prompt_toolkit`。
+2. 非交互测试、pipe 和 captured output 继续使用 fallback，保证现有 pytest 不需要真实 console。
+3. 为 `prompt_toolkit` 输入显式绑定 Backspace 相关按键：`backspace`、`c-h`、`delete`，确保 `/abc` 可以退格到 `/ab`、`/a`、`/` 和空输入。
+4. 增加输入层测试，至少覆盖 completer 不被 Backspace 状态破坏；如能稳定模拟 key binding，则覆盖 Backspace 删除行为。
+
+### Command Preview And Completion
+
+命令发现继续以 `CommandSpec` 为唯一事实来源。输入 `/` 时展示所有可见命令，输入 `/a` 时过滤匹配命令。补全候选应接近参考截图的两列语义：左侧命令名，右侧描述和参数 hint。第一版可以使用 `prompt_toolkit` 的 completion display metadata；若默认菜单太弱，再自定义 completion display，但不新增 `/help`。
+
+候选中不要出现已删除或不希望暴露的用户命令。`/history` 不出现。`/connect`、`/resume`、`/status`、`/usage`、`/mcp`、`/tasks`、`/permissions`、`/memory`、`/skills`、`/compact`、`/clear`、`/exit` 应可发现。
+
+### Page Commands
+
+只读 page 命令第一批为：
+
+    /status
+    /usage
+    /mcp
+    /tasks
+    /permissions
+    /memory
+    /skills
+
+这些命令返回页面内容后，主输入阻断。页面页脚应提示：
+
+    Esc return
+
+如果内容超过终端高度，允许滚动键。滚动键只影响页面视口，不进入 prompt。Enter 和普通字符忽略。
+
+动作命令仍保持 inline 行为：
+
+    /compact
+    /clear
+    /exit
+
+`/compact` 会修改上下文，不进入只读页面。`/clear` 和 `/exit` 是状态切换或退出动作，不进入页面。
+
+### Resume Picker And Session History
+
+`/resume` 不再主要依赖用户手动输入 session id。输入 `/resume` 后进入 picker 模式，扫描 `.onecode/*/messages.jsonl`，列出可恢复会话。每行展示一个小标题、最后更新时间和消息数量。示例：
+
+    Resume
+
+    > 修复 CLI 输入退格问题                  2026-06-09  18 messages
+      新 UI 计划讨论                         2026-06-08  42 messages
+      OneCode permission policy cleanup       2026-06-07  15 messages
+
+    Esc cancel    Enter resume    Up/Down move
+
+会话小标题第一版不新增模型生成。标题从 transcript 派生：
+
+1. 读取第一条非空 `user` message。
+2. 去掉换行、多余空白和明显 attachment/XML 噪音。
+3. 截断到 40 到 60 个字符。
+4. 若没有 user message，用第一条 assistant message。
+5. 仍没有内容时，用短 session id。
+
+按 Enter 选择后，复用现有恢复逻辑：`resolve_resume_target()`、`MessageStore.from_transcript()`、`runtime.with_session()`。恢复成功后立即展示该会话历史页面。历史页面按时间顺序展示恢复后的 `message_store.current_messages()`：
+
+- `user`: 展示前几行或前 N 字符。
+- `assistant`: 展示前几行或前 N 字符。
+- `tool_result`: 默认折叠成 `tool_name call_id ok/error`，避免大工具输出刷屏。
+- `attachment`: 展示 attachment 类型和路径摘要。
+
+历史页面是只读 page 模式，按 `Esc` 回到 prompt。退出历史页后，当前 runtime 必须已经是恢复后的会话。
+
+### Connect Wizard
+
+新增 `/connect` 命令，进入 provider 连接向导。provider 选择页使用 picker 模式，顺序来自 `infrastructure.providers.connection.ProviderConnectionService.list_connect_options()`，并保持 `Custom` 最后一项。当前 provider catalog 顺序为：
+
+    OpenAI
+    DeepSeek
+    GLM
+    MiniMax
+    SiliconFlow
+    Gemini
+    Claude OpenAI-compatible
+    Custom
+
+非 custom 流程：
+
+1. 选择 provider，按 Enter。
+2. 输入 API key，隐藏或掩码显示。
+3. 输入 model，例如 `deepseek-chat`。
+4. 写入 `.env`。
+5. 重建当前 runtime 的模型相关组件。
+6. 显示连接成功页面或 inline 成功结果。
+
+custom 流程：
+
+1. 选择 `Custom`，按 Enter。
+2. 输入 base URL，例如 `https://example.com/v1`。
+3. 输入 API key，隐藏或掩码显示。
+4. 输入 model。
+5. 写入 `.env`。
+6. 重建当前 runtime 的模型相关组件。
+
+`.env` 写入必须遵守现有 model provider 边界：OneCode 只从项目根目录 `.env` 读取 provider 配置。写入字段为：
+
+    ONECODE_PROVIDER_ID=<provider-id>
+    ONECODE_MODEL=<model>
+    ONECODE_API_KEY=<secret>
+
+custom 或需要 base URL 的 provider 额外写：
+
+    ONECODE_BASE_URL=<base-url>
+
+写入规则：
+
+- `.env` 不存在时创建最小可用文件。
+- `.env` 存在时保留无关字段和注释，只更新 OneCode provider 相关键。
+- API key 不能出现在 console 输出、trace、error log 或异常详情中。
+- 切换到不需要 custom base URL 的 provider 时，不允许旧 custom URL 污染新 provider。可以删除 `ONECODE_BASE_URL`，也可以写为空值；实现前在 Decision Log 记录选择。
+
+写入 `.env` 后不能只更新 banner。必须重建当前 CLI runtime 的模型相关组件，使下一轮模型调用使用新连接。推荐在 `CliRuntime` 上新增 `with_provider_config()` 或 `with_model_client()`，由它重建：
+
+- `model_client`
+- `RelevantMemorySelector`
+- `ContextEngine`
+- `SubagentRunner`
+- `SessionMemoryExtractionService`
+- `LongTermMemoryExtractionService`
+- `AgentLoop`
+
+避免在 `/connect` handler 内复制 `build_runtime()` 的大段装配逻辑。`core/` 和 `services/model/` 仍只依赖 provider-neutral 协议；`.env` 写入和 provider catalog 读取属于 CLI 与 infrastructure 边界。
+
+### Implementation Sketch
+
+建议新增或调整这些文件：
+
+- `ui/cli/pages.py`: page/picker/form 模式输入循环和键盘处理。
+- `ui/cli/views/resume.py`: resume 会话列表和恢复后历史页面。
+- `ui/cli/views/connect.py`: provider 选择、输入提示和连接结果视图。
+- `ui/cli/resume.py`: 扫描 `.onecode/*/messages.jsonl`，生成 `SessionSummary`，派生小标题、更新时间、消息数。
+- `ui/cli/connect.py`: provider 选项、`.env` 更新、连接结果对象。API key 处理必须避免日志泄漏。
+- `ui/cli/types.py`: 扩展 `CommandResult`，支持 `presentation` 或专门的 page/picker action；增加 runtime model client 重绑定 helper。
+- `ui/cli/commands.py`: 注册 `/connect`，移除 `/history` 用户入口，把 `/resume` 改为 picker action。
+- `ui/cli/input.py`: 修复 Backspace，调整 command completion preview。
+- `ui/cli/views/status.py`: 精简主页 banner，去掉 session、provider 和字段标签。
+
+可以把页面结果抽象为：
+
+    @dataclass(frozen=True)
+    class CommandResult:
+        should_exit: bool = False
+        runtime: CliRuntime | None = None
+        renderable: object | None = None
+        presentation: Literal["inline", "page", "resume_picker", "connect_wizard"] = "inline"
+
+也可以保持 `CommandResult` 简洁，新增 `CommandAction` 联合类型承载 picker/wizard。关键是 `main_loop_async()` 能明确区分 inline 输出、只读页面、会话选择和连接向导，不再把所有命令都当成“打印 renderable 后回 prompt”。
 
 ## Revision Note
 

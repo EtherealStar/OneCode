@@ -13,7 +13,7 @@ from services.permissions.rules import (
     permission_rule_value_from_string,
     permission_rule_value_to_string,
 )
-from services.permissions.session import SessionPermissionStore
+from services.permissions.session import SessionPermissionSnapshot, SessionPermissionStore
 from services.permissions.types import (
     PermissionAction,
     PermissionDecision,
@@ -39,6 +39,7 @@ __all__ = [
     "PermissionUpdateDestination",
     "PermissionUpdateType",
     "ProjectPermissionSettingsStore",
+    "SessionPermissionSnapshot",
     "SessionPermissionStore",
     "permission_rule_value_from_string",
     "permission_rule_value_to_string",

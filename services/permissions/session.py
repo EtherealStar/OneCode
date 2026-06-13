@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from infrastructure.filesystem.paths import contains_path, resolve_path
+
+
+@dataclass(frozen=True)
+class SessionPermissionSnapshot:
+    allowed_directories: tuple[tuple[str, str, Path], ...]
+    allowed_tools: tuple[str, ...]
+    allowed_skills: tuple[str, ...]
+    denied_skills: tuple[str, ...]
+    denied_tools: tuple[str, ...]
+    disabled_tools: tuple[str, ...]
 
 
 class SessionPermissionStore:
@@ -80,6 +91,23 @@ class SessionPermissionStore:
 
     def is_tool_disabled(self, tool_name: str) -> bool:
         return tool_name in self._disabled_tools
+
+    def snapshot(self) -> SessionPermissionSnapshot:
+        """Return a stable copy for read-only UI/reporting code."""
+
+        return SessionPermissionSnapshot(
+            allowed_directories=tuple(
+                sorted(
+                    self._allowed_directories,
+                    key=lambda item: (item[0], item[1], str(item[2])),
+                )
+            ),
+            allowed_tools=tuple(sorted(self._allowed_tools)),
+            allowed_skills=tuple(sorted(self._allowed_skills)),
+            denied_skills=tuple(sorted(self._denied_skills)),
+            denied_tools=tuple(sorted(self._denied_tools)),
+            disabled_tools=tuple(sorted(self._disabled_tools)),
+        )
 
     def clear(self) -> None:
         self._allowed_directories.clear()

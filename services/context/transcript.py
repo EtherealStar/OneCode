@@ -24,6 +24,8 @@ class LoadedTranscriptMessage:
     uuid: str
     parent_uuid: str | None
     session_id: str
+    timestamp: str | None
+    sequence: int
     message: dict[str, Any]
 
 
@@ -121,7 +123,7 @@ class JsonlTranscriptStore:
 
         loaded: list[LoadedTranscriptMessage] = []
         with self.messages_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            for sequence, line in enumerate(handle):
                 record = _parse_json_line(line)
                 if record is None or record.get("type") != "message":
                     continue
@@ -142,11 +144,14 @@ class JsonlTranscriptStore:
                     parent_uuid = None
 
                 restored_message = self._restore_externalized_tool_result(message)
+                timestamp = record.get("timestamp")
                 loaded.append(
                     LoadedTranscriptMessage(
                         uuid=message_uuid,
                         parent_uuid=parent_uuid,
                         session_id=session_id,
+                        timestamp=timestamp if isinstance(timestamp, str) else None,
+                        sequence=sequence,
                         message=restored_message,
                     )
                 )

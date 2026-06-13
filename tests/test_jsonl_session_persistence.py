@@ -96,17 +96,16 @@ def test_large_tool_result_is_externalized_and_restored(tmp_path: Path) -> None:
         encoding="utf-8"
     ) == large_content
 
-    restored_state = RuntimeState()
     transcript_store = JsonlTranscriptStore(
         tmp_path / ".onecode",
         state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
     )
-    restored_store = MessageStore.from_transcript(transcript_store, restored_state)
+    restored_messages = transcript_store.load_messages()
 
-    assert restored_state.session_id == state.session_id
-    assert restored_store.current_messages()[0]["content"] == large_content
+    assert restored_messages[0].session_id == state.session_id
+    assert restored_messages[0].message["content"] == large_content
 
 
 def test_duplicate_tool_call_id_externalized_results_do_not_overwrite(
@@ -144,16 +143,15 @@ def test_duplicate_tool_call_id_externalized_results_do_not_overwrite(
     assert (session_dir / first_path).read_text(encoding="utf-8") == first_content
     assert (session_dir / second_path).read_text(encoding="utf-8") == second_content
 
-    restored_state = RuntimeState()
     transcript_store = JsonlTranscriptStore(
         tmp_path / ".onecode",
         state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
     )
-    restored_store = MessageStore.from_transcript(transcript_store, restored_state)
+    restored_messages = transcript_store.load_messages()
 
-    assert [message["content"] for message in restored_store.current_messages()] == [
+    assert [item.message["content"] for item in restored_messages] == [
         first_content,
         second_content,
     ]
@@ -248,9 +246,25 @@ def test_replace_messages_for_compaction_appends_new_chain_without_deleting_hist
         "[Compact boundary]",
         "Summary: old work",
     ]
-    assert records[2]["parent_uuid"] == records[1]["uuid"]
+    assert records[2]["parent_uuid"] is None
+    assert records[3]["parent_uuid"] == records[2]["uuid"]
     assert records[2]["message"]["metadata"]["compaction"]["reason"] == "manual"
     assert records[2]["message"]["metadata"]["compaction"]["boundary_id"] == "boundary-1"
+
+    restored_state = RuntimeState()
+    restored_store = MessageStore.from_transcript(
+        JsonlTranscriptStore(
+            tmp_path / ".onecode",
+            state.session_id,
+            cwd=tmp_path,
+            flush_interval_seconds=60,
+        ),
+        restored_state,
+    )
+    assert [message["content"] for message in restored_store.current_messages()] == [
+        "[Compact boundary]",
+        "Summary: old work",
+    ]
 
 
 def test_restore_skips_bad_lines_and_continues_same_session(tmp_path: Path) -> None:

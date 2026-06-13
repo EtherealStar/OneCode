@@ -12,6 +12,7 @@ from services.permissions import (
     PermissionRuleValue,
     PermissionUpdate,
 )
+from ui.cli.input import ConfirmOption, read_confirm_sync
 
 InputFunc = Callable[[str], str]
 OutputFunc = Callable[[str], None]
@@ -21,7 +22,7 @@ class CliPermissionPrompter:
     def __init__(
         self,
         *,
-        input_func: InputFunc = input,
+        input_func: InputFunc | None = None,
         output_func: OutputFunc = print,
     ) -> None:
         self._input = input_func
@@ -33,10 +34,17 @@ class CliPermissionPrompter:
     ) -> PermissionResponse:
         self._output(render_permission_panel(request))
         try:
-            choice = await asyncio.to_thread(
-                self._input,
-                _prompt_line(request),
-            )
+            if self._input is None:
+                choice = await asyncio.to_thread(
+                    read_confirm_sync,
+                    _prompt_line(request),
+                    _confirm_options(request),
+                )
+            else:
+                choice = await asyncio.to_thread(
+                    self._input,
+                    _prompt_line(request),
+                )
         except (EOFError, KeyboardInterrupt):
             return PermissionResponse(
                 action="deny",
@@ -223,6 +231,17 @@ def _prompt_line(request: PermissionRequest) -> str:
     if request.descriptor.name == "bash":
         return "Allow? [y] once  [s] session directory  [p] project rule  [n] deny: "
     return "Allow? [y] once  [s] session directory  [n] deny: "
+
+
+def _confirm_options(request: PermissionRequest) -> tuple[ConfirmOption, ...]:
+    options = [
+        ConfirmOption("y", "y once", aliases=("yes",)),
+        ConfirmOption("s", "s session", aliases=("session",)),
+    ]
+    if request.descriptor.name == "bash":
+        options.append(ConfirmOption("p", "p project", aliases=("project",)))
+    options.append(ConfirmOption("n", "n deny", aliases=("no", "deny")))
+    return tuple(options)
 
 
 def _bash_project_rule_content(request: PermissionRequest) -> str:

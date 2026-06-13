@@ -8,21 +8,22 @@ from typing import Any
 from core.runtime_state import RuntimeState
 from services.background_tasks import BackgroundTaskManager
 from services.compaction import SessionMemoryStore
+from services.context.current_model_context import CurrentModelContext
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.compaction.types import CompactionResult, CompactionTrigger
-from services.tools.executor import ToolExecutionUpdate
-from services.observability import JsonlTraceSink, TraceRecorder
-from services.context.current_model_context import CurrentModelContext
-from services.tools.registry import ToolRegistry
-from services.tools.types import ToolExecutionResult
+from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool, McpServerStatus
+from services.permissions import PermissionPolicy, ProjectPermissionSettingsStore, SessionPermissionStore
 from services.tasks import TaskStore
+from services.tools.executor import ToolExecutionUpdate
+from services.tools.registry import ToolRegistry
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from tools.write_file import descriptor as write_file_descriptor
-from ui.cli.commands import handle_command
+from ui.cli import renderer
+from ui.cli.commands import dispatch_command, visible_commands
 from ui.cli.types import CliRuntime
-from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool, McpServerStatus
+from ui.cli.views.common import strip_ansi
 
 
 class FakeModelClient:
@@ -90,6 +91,7 @@ class BindableFakeCompactionService(FakeCompactionService):
         result_store: object | None = None,
         subagent_runner: object | None = None,
     ) -> None:
+        _ = subagent_runner
         self.bound_message_store = message_store
         self.bound_session_memory_store = session_memory_store
         self.bound_result_store = result_store
@@ -124,6 +126,7 @@ class FakeMcpManager:
                     descriptor_name="mcp__docs__search_docs",
                     description="Search docs.",
                     input_schema={"type": "object", "properties": {}},
+                    annotations={"readOnlyHint": True},
                 ),
             ),
             instructions={"docs": "Use docs."},
@@ -171,176 +174,154 @@ def make_runtime(tmp_path: Path) -> CliRuntime:
     )
 
 
-def test_help_command_prints_available_commands(tmp_path: Path, capsys: Any) -> None:
+def run_command(runtime: CliRuntime, line: str) -> tuple[Any, str]:
+    result = dispatch_command(runtime, line)
+    return result, strip_ansi(renderer.render_to_text(result.renderable))
+
+
+def test_visible_commands_are_productized_command_set() -> None:
+    names = {spec.name for spec in visible_commands()}
+
+    assert {
+        "status",
+        "usage",
+        "memory",
+        "permissions",
+        "skills",
+        "tasks",
+        "mcp",
+        "compact",
+        "resume",
+        "connect",
+        "clear",
+        "exit",
+    } <= names
+    assert {"help", "history", "tools", "trace", "background-tasks", "quit"}.isdisjoint(
+        names
+    )
+
+
+def test_removed_user_commands_are_unknown(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
 
-    result = handle_command(runtime, "/help")
+    for command in (
+        "/quit",
+        "/help",
+        "/history",
+        "/tools",
+        "/trace",
+        "/background-tasks",
+    ):
+        result, output = run_command(runtime, command)
+        assert result.should_exit is False
+        assert "Unknown command" in output
+        assert "Press Tab after /" in output
 
-    output = capsys.readouterr().out
-    assert result.should_exit is False
-    assert "/tools" in output
-    assert "/tasks" in output
-    assert "/background-tasks" in output
-    assert "/mcp [tools]" in output
-    assert "/resume <target>" in output
-    assert "/permissions" not in output
 
-
-def test_tools_command_lists_fixed_file_tools(tmp_path: Path, capsys: Any) -> None:
+def test_banner_shows_only_product_workspace_and_model(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
 
-    handle_command(runtime, "/tools")
+    output = strip_ansi(renderer.render_to_text(renderer.render_banner(runtime)))
 
-    output = capsys.readouterr().out
-    assert "edit_file" in output
-    assert "read_file" in output
-    assert "write_file" in output
+    assert "OneCode" in output
+    assert str(tmp_path) in output
+    assert "test-model" in output
+    assert "TestProvider" not in output
+    assert "session-cli" not in output
+    assert "workspace" not in output.lower()
+    assert "model" not in output.lower().replace("test-model", "")
 
 
-def test_status_command_shows_session_and_model(tmp_path: Path, capsys: Any) -> None:
+def test_read_only_status_commands_are_page_results(tmp_path: Path) -> None:
+    runtime = replace(
+        make_runtime(tmp_path),
+        task_store=TaskStore(tmp_path),
+        background_task_manager=BackgroundTaskManager(workspace=tmp_path),
+        mcp_manager=FakeMcpManager(),  # type: ignore[arg-type]
+    )
+
+    for command in ("/status", "/usage", "/memory", "/permissions", "/skills", "/tasks", "/mcp"):
+        result, output = run_command(runtime, command)
+        assert result.presentation == "page"
+        assert output
+
+
+def test_status_command_shows_session_and_model(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
 
-    handle_command(runtime, "/status")
+    result, output = run_command(runtime, "/status")
 
-    output = capsys.readouterr().out
+    assert result.presentation == "page"
     assert "session-cli" in output
     assert "TestProvider" in output
     assert "test-model" in output
     assert ".onecode" in output
 
 
-def test_mcp_command_renders_server_status_and_tools(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
+def test_usage_command_shows_tokens_and_compaction(tmp_path: Path) -> None:
+    runtime = replace(make_runtime(tmp_path), compaction_service=FakeCompactionService())  # type: ignore[arg-type]
+
+    _result, output = run_command(runtime, "/usage")
+
+    assert "input tokens" in output
+    assert "output tokens" in output
+    assert "auto compact threshold" in output
+    assert "93000" in output
+
+
+def test_mcp_command_renders_server_status_and_tools(tmp_path: Path) -> None:
     runtime = replace(make_runtime(tmp_path), mcp_manager=FakeMcpManager())  # type: ignore[arg-type]
 
-    handle_command(runtime, "/mcp tools")
+    _result, output = run_command(runtime, "/mcp")
 
-    output = capsys.readouterr().out
-    assert "MCP servers:" in output
-    assert "docs [stdio] connected tools=1 instructions=yes" in output
-    assert "mcp__docs__search_docs: docs/search.docs" in output
+    assert "MCP" in output
+    assert "docs" in output
+    assert "connected" in output
+    assert "mcp__docs__search_docs" in output
+    assert "readOnlyHint=True" in output
 
 
-def test_mcp_command_renders_untrusted_server(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
+def test_mcp_command_renders_untrusted_server(tmp_path: Path) -> None:
     runtime = replace(make_runtime(tmp_path), mcp_manager=FakeUntrustedMcpManager())  # type: ignore[arg-type]
 
-    handle_command(runtime, "/mcp tools")
+    _result, output = run_command(runtime, "/mcp")
 
-    output = capsys.readouterr().out
-    assert "docs [stdio] untrusted" in output
-    assert "MCP tools:" in output
+    assert "docs" in output
+    assert "untrusted" in output
     assert "none" in output
 
 
-def test_status_command_counts_untrusted_mcp_servers(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
+def test_status_command_counts_untrusted_mcp_servers(tmp_path: Path) -> None:
     runtime = replace(make_runtime(tmp_path), mcp_manager=FakeUntrustedMcpManager())  # type: ignore[arg-type]
 
-    handle_command(runtime, "/status")
+    _result, output = run_command(runtime, "/status")
 
-    output = capsys.readouterr().out
     assert "untrusted=1" in output
 
 
-def test_compact_command_triggers_manual_compact(tmp_path: Path, capsys: Any) -> None:
+def test_compact_command_triggers_manual_compact(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
     compaction = FakeCompactionService()
     runtime = replace(runtime, compaction_service=compaction)  # type: ignore[arg-type]
 
-    result = handle_command(runtime, "/compact current goal")
+    result, output = run_command(runtime, "/compact current goal")
 
-    output = capsys.readouterr().out
     assert result.should_exit is False
     assert compaction.focus == "current goal"
-    assert "Compacted session:" in output
+    assert "Compacted session" in output
     assert "100 -> 25" in output
 
 
-def test_history_command_renders_recent_message_summaries(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
-    runtime = make_runtime(tmp_path)
-    runtime.message_store.append_user("inspect files")
-    runtime.message_store.append_assistant(
-        {
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "call_read",
-                    "type": "function",
-                    "function": {"name": "read_file", "arguments": "{}"},
-                }
-            ],
-        }
-    )
-    runtime.message_store.append_tool_results(
-        [
-            ToolExecutionResult(
-                tool_call_id="call_read",
-                tool_name="read_file",
-                content="1\tline",
-                is_error=False,
-            )
-        ]
-    )
-
-    handle_command(runtime, "/history 2")
-
-    output = capsys.readouterr().out
-    assert "[1] assistant: <tool call: read_file>" in output
-    assert "[2] tool_result: read_file call_read: 1 line" in output
-    assert "inspect files" not in output
-
-
-def test_trace_command_renders_recent_trace_records(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
-    runtime = make_runtime(tmp_path)
-    sink = JsonlTraceSink(
-        tmp_path / ".onecode",
-        runtime.state.session_id,
-        flush_interval_seconds=60,
-    )
-    recorder = TraceRecorder(
-        session_id=runtime.state.session_id,
-        workspace=tmp_path,
-        sink=sink,
-    )
-    recorder.event("transition", {"transition": "completed"})
-    recorder.flush()
-    runtime = replace(runtime, trace_recorder=recorder)
-
-    handle_command(runtime, "/trace 1")
-
-    output = capsys.readouterr().out
-    assert "Recent trace:" in output
-    assert "transition" in output
-    assert "transition=completed" in output
-
-
-def test_clear_command_starts_new_session_without_deleting_old(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
+def test_clear_command_starts_new_session_without_deleting_old(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
     runtime.message_store.append_user("old")
     runtime.message_store.flush_transcript()
     old_session = runtime.state.session_id
 
-    result = handle_command(runtime, "/clear")
+    result, output = run_command(runtime, "/clear")
     runtime.message_store.append_user("new")
     runtime.message_store.flush_transcript()
 
-    output = capsys.readouterr().out
     assert result.should_exit is False
     assert runtime.state.session_id != old_session
     assert runtime.message_store.current_messages() == (
@@ -350,10 +331,7 @@ def test_clear_command_starts_new_session_without_deleting_old(
     assert "Started new session" in output
 
 
-def test_clear_command_rebinds_session_scoped_services(
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
+def test_clear_command_rebinds_session_scoped_services(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
     old_session = runtime.state.session_id
     old_memory_store = SessionMemoryStore(
@@ -374,10 +352,9 @@ def test_clear_command_rebinds_session_scoped_services(
         session_memory_store=old_memory_store,
     )
 
-    result = handle_command(runtime, "/clear")
+    result, _output = run_command(runtime, "/clear")
     cleared = result.runtime
 
-    capsys.readouterr()
     assert cleared is not None
     assert cleared.state.session_id != old_session
     assert current_context.snapshot is None
@@ -390,60 +367,66 @@ def test_clear_command_rebinds_session_scoped_services(
     assert cleared.loop.message_store is cleared.message_store
 
 
-def test_unknown_command_does_not_exit(tmp_path: Path, capsys: Any) -> None:
+def test_unknown_command_does_not_exit(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
 
-    result = handle_command(runtime, "/nope")
+    result, output = run_command(runtime, "/nope")
 
-    output = capsys.readouterr().out
     assert result.should_exit is False
     assert "Unknown command" in output
 
 
-def test_tasks_command_renders_empty_task_list(tmp_path: Path, capsys: Any) -> None:
-    runtime = replace(make_runtime(tmp_path), task_store=TaskStore(tmp_path))
+def test_tasks_command_renders_empty_task_list_and_background_section(tmp_path: Path) -> None:
+    runtime = replace(
+        make_runtime(tmp_path),
+        task_store=TaskStore(tmp_path),
+        background_task_manager=BackgroundTaskManager(workspace=tmp_path),
+    )
 
-    result = handle_command(runtime, "/tasks")
+    result, output = run_command(runtime, "/tasks")
 
-    output = capsys.readouterr().out
     assert result.should_exit is False
     assert "No tasks found for task list session-cli." in output
+    assert "Background tasks: none" in output
     assert runtime.state.metadata["task_list_id"] == "session-cli"
 
 
-def test_tasks_command_renders_existing_tasks(tmp_path: Path, capsys: Any) -> None:
+def test_tasks_command_renders_existing_tasks(tmp_path: Path) -> None:
     task_store = TaskStore(tmp_path)
     first = task_store.create_task("session-cli", subject="Schema", description="A")
     second = task_store.create_task("session-cli", subject="API", description="B")
     task_store.block_task("session-cli", first.id, second.id)
     runtime = replace(make_runtime(tmp_path), task_store=task_store)
 
-    handle_command(runtime, "/tasks")
+    _result, output = run_command(runtime, "/tasks")
 
-    output = capsys.readouterr().out
-    assert "Tasks:" in output
+    assert "Durable tasks" in output
     assert "task list: session-cli" in output
     assert ".onecode" in output
-    assert "#1 [pending] Schema" in output
-    assert "#2 [pending] API [blocked by #1]" in output
+    assert "#1" in output
+    assert "pending" in output
+    assert "Schema" in output
+    assert "#2" in output
+    assert "API" in output
+    assert "#1" in output
 
 
-def test_tasks_command_reports_store_errors(tmp_path: Path, capsys: Any) -> None:
+def test_tasks_command_reports_store_errors(tmp_path: Path) -> None:
     task_store = TaskStore(tmp_path)
     task_dir = task_store.tasks_dir("session-cli")
     task_dir.mkdir(parents=True)
     (task_dir / "1.json").write_text("{bad json", encoding="utf-8")
     runtime = replace(make_runtime(tmp_path), task_store=task_store)
 
-    handle_command(runtime, "/tasks")
+    _result, output = run_command(runtime, "/tasks")
 
-    output = capsys.readouterr().out
-    assert "Error: Could not read task file" in output
+    assert "Could not read task file" in output
 
 
-def test_background_tasks_command_renders_tasks(tmp_path: Path, capsys: Any) -> None:
+def test_tasks_command_renders_background_tasks(tmp_path: Path) -> None:
     async def start_task(manager: BackgroundTaskManager, state: RuntimeState) -> None:
         async def work(task_id: str) -> dict[str, object]:
+            _ = task_id
             return {"summary": "done"}
 
         manager.start_agent(description="agent work", state=state, run=work)
@@ -452,10 +435,59 @@ def test_background_tasks_command_renders_tasks(tmp_path: Path, capsys: Any) -> 
     runtime = make_runtime(tmp_path)
     manager = BackgroundTaskManager(workspace=tmp_path)
     asyncio.run(start_task(manager, runtime.state))
-    runtime = replace(runtime, background_task_manager=manager)
+    runtime = replace(
+        runtime,
+        task_store=TaskStore(tmp_path),
+        background_task_manager=manager,
+    )
 
-    handle_command(runtime, "/background-tasks")
+    _result, output = run_command(runtime, "/tasks")
 
-    output = capsys.readouterr().out
-    assert "Background tasks:" in output
-    assert "local_agent completed" in output
+    assert "Background tasks" in output
+    assert "local_agent" in output
+    assert "completed" in output
+
+
+def test_permissions_command_is_read_only(tmp_path: Path) -> None:
+    store = SessionPermissionStore()
+    store.allow_tool("bash")
+    store.deny_tool("agent")
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(store, project_store=project_store)
+    runtime = replace(
+        make_runtime(tmp_path),
+        permission_store=store,
+        permission_policy=policy,
+    )
+    before = store.snapshot()
+
+    _result, output = run_command(runtime, "/permissions")
+
+    assert "Permissions" in output
+    assert "bash" in output
+    assert "agent" in output
+    assert store.snapshot() == before
+    assert not project_store.settings_path.exists()
+
+
+def test_memory_command_renders_session_and_long_term_state(tmp_path: Path) -> None:
+    runtime = replace(
+        make_runtime(tmp_path),
+        session_memory_store=SessionMemoryStore(tmp_path / ".onecode" / "session-cli"),
+    )
+
+    _result, output = run_command(runtime, "/memory")
+
+    assert "Memory" in output
+    assert "session-memory.md" in output
+
+
+def test_exit_command_flushes_and_exits(tmp_path: Path) -> None:
+    runtime = replace(make_runtime(tmp_path), mcp_manager=FakeMcpManager())  # type: ignore[arg-type]
+    runtime.message_store.append_user("bye")
+
+    result, output = run_command(runtime, "/exit")
+
+    assert result.should_exit is True
+    assert output == ""
+    assert runtime.message_store.transcript_store.messages_path.exists()
