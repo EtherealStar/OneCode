@@ -65,6 +65,14 @@ def test_command_suggestions_use_visible_commands(tmp_path: Path) -> None:
     assert "Show runtime status" in status.description
 
 
+def test_command_suggestions_filter_by_prefix(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    displays_for_r = displays(runtime, "/r")
+
+    assert "/resume" in displays_for_r
+    assert "/status" not in displays_for_r
+
+
 def test_resume_suggestions_list_session_ids(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
     messages_path = tmp_path / ".onecode" / "session-old" / "messages.jsonl"

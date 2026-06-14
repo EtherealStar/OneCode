@@ -162,6 +162,68 @@ tool_prompt_sections(state) -> tuple[str, ...]
 
 Prompt assembler 从 registry 读取当前启用且未被 deny 的工具 prompt。被 deny 或 disabled 的工具不得出现在 schema 或 prompt 中。
 
+### Tool Prompt Style
+
+工具 prompt 是模型可见的使用规则，不是工具实现说明、权限系统说明或 schema 字段清单。它的目标是帮助模型判断何时选择该工具、如何给出高质量输入、如何理解结果，以及失败后如何恢复。
+
+工具 prompt 应遵守以下原则：
+
+- 不在 prompt 正文中写 `# Tool: <name>` 标题；`prompts.sections.tool_prompt_sections()` 会统一渲染工具标题。
+- 用英文书写，保持与当前 system prompt 和 provider-facing schema 的语言一致。
+- 第一段说明工具用途，后续规则聚焦模型调用决策和输入质量。
+- 面向模型的工具 prompt 不使用 `sandbox`、`sandboxed` 或“沙箱”等实现边界词；需要描述范围时使用 project、workspace、file、directory 或 path。路径被拒绝时，表述为运行时、guard 或 permission 返回的结果即可。
+- 不重复 `input_schema` 已经清楚表达的字段类型；只有字段行为、默认值、前置条件或容易误用的地方才写入 prompt。
+- 不把安全边界寄托给 prompt。guard、permission、schema validation 和 handler 仍是执行事实来源；prompt 只提醒模型尊重这些结果。
+- 不承诺运行时无法保证的能力。例如工具只读 UTF-8 文本时，不应写支持图片、PDF、notebook 或任意二进制文件。
+- 不把通用工具选择规则在每个工具中重复堆叠。跨工具偏好应放在全局 prompt section；单个工具 prompt 只写该工具独有的选择边界。
+- 写清楚常见失败后的恢复策略，例如先读取文件、缩小搜索范围、改用路径搜索、重新确认路径或询问用户。
+- 保持短小稳定。工具 prompt 是每轮 system prompt 的一部分，应避免产品文案、长篇示例和与当前工具无关的工作流。
+
+推荐模板：
+
+```python
+PROMPT = """Purpose:
+<One or two sentences explaining what this tool does and when it is the right choice.>
+
+Use when:
+- <Concrete trigger for choosing this tool.>
+- <Another common trigger, if useful.>
+
+Prefer instead:
+- Use `<other_tool>` when <clear boundary>.
+- <Omit this section if there is no meaningful alternative.>
+
+Rules:
+- <Important calling rule that affects correctness.>
+- <Important precondition, default, limitation, or runtime behavior.>
+- <Do not restate schema fields unless the behavior is non-obvious.>
+
+Returns:
+- <What the model should expect in the result.>
+- <Mention pagination, truncation, line numbers, task ids, or structured errors if relevant.>
+
+If it fails:
+- <How the model should recover: read first, narrow search, adjust input, ask the user, etc.>
+"""
+```
+
+简单工具可以省略没有实际内容的小节，但应保持剩余小节顺序稳定。常用精简形态：
+
+```python
+PROMPT = """Purpose:
+<What this tool does.>
+
+Use when:
+- <When to call it.>
+
+Rules:
+- <Important usage rule.>
+
+Returns:
+- <Result shape.>
+"""
+```
+
 ## Internal Tool Call Record
 
 OneCode 内部应保留 provider-neutral 工具调用记录。Provider adapter 可以将其投影为 OpenAI-compatible、Anthropic-compatible 或其他 wire format。
