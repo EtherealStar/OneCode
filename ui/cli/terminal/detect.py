@@ -23,6 +23,7 @@ the reverse-video user prompt.
 from __future__ import annotations
 
 import os
+import platform
 import re
 import sys
 from dataclasses import dataclass
@@ -58,9 +59,10 @@ def detect_terminal_brightness(
         stdout = sys.stdout
     if not getattr(stdout, "isatty", lambda: False)():
         return "dark"
-    osc = _probe_osc11_background(stdout, timeout=timeout)
-    if osc is not None:
-        return osc.brightness
+    if _should_probe_osc11():
+        osc = _probe_osc11_background(stdout, timeout=timeout)
+        if osc is not None:
+            return osc.brightness
     colorfgbg = _probe_colorfgbg(os.environ.get("COLORFGBG"))
     if colorfgbg is not None:
         return colorfgbg
@@ -72,6 +74,19 @@ def detect_terminal_brightness(
 
 _OSC11_REQUEST = b"\x1b]11;?\x07"
 _OSC11_REPLY = re.compile(rb"\x1b]11;rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)")
+
+
+def _should_probe_osc11(system: str | None = None) -> bool:
+    """Return whether OSC 11 probing is safe enough to attempt.
+
+    Windows terminal hosts can echo OSC 11 replies into the next line
+    editor when the query is not consumed from the real input stream.
+    Until the probe owns the input side of the TTY, skip it there and
+    rely on COLORFGBG/fallback.
+    """
+
+    current = system if system is not None else platform.system()
+    return current.lower() != "windows"
 
 
 def _probe_osc11_background(stdout, *, timeout: float) -> _ProbeResult | None:
@@ -113,15 +128,34 @@ def _probe_osc11_background(stdout, *, timeout: float) -> _ProbeResult | None:
     if match is None:
         return None
     try:
-        r, g, b = (int(value, 16) for value in match.groups())
+        brightness = _brightness_from_osc11_match(match)
     except ValueError:
         return None
-    luminance = _relative_luminance(r, g, b)
-    brightness: TerminalBrightness = "light" if luminance >= 0.5 else "dark"
     return _ProbeResult(brightness=brightness, source="osc11")
 
 
-def _relative_luminance(r: int, g: int, b: int) -> float:
+def _brightness_from_osc11_reply(reply: bytes) -> TerminalBrightness | None:
+    match = _OSC11_REPLY.search(reply)
+    if match is None:
+        return None
+    try:
+        return _brightness_from_osc11_match(match)
+    except ValueError:
+        return None
+
+
+def _brightness_from_osc11_match(match: re.Match[bytes]) -> TerminalBrightness:
+    raw_channels = tuple(match.groups())
+    max_digits = max(len(value) for value in raw_channels)
+    max_value = (16**max_digits) - 1
+    if max_value <= 0:
+        raise ValueError("invalid OSC 11 channel width")
+    r, g, b = tuple(int(value, 16) / max_value * 255 for value in raw_channels)
+    luminance = _relative_luminance(r, g, b)
+    return "light" if luminance >= 0.5 else "dark"
+
+
+def _relative_luminance(r: float, g: float, b: float) -> float:
     """Compute relative luminance per WCAG, but on 0..255 channels."""
 
     def channel(value: int) -> float:

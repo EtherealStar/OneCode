@@ -28,25 +28,27 @@ the top item is implicitly chosen.
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import CompleteEvent, Completion
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
-    Float,
-    FloatContainer,
     HSplit,
     Window,
 )
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.styles import Style
 
@@ -80,12 +82,23 @@ _PROMPT_STYLE = Style.from_dict(
         "prompt-border": "#666666",
         "prompt-gutter": "ansicyan bold",
         "prompt-hint": "#666666",
-        "completion-menu.completion": "bg:default",
-        "completion-menu.completion.current": "bg:ansicyan fg:ansiblack",
-        "completion-menu.meta.completion": "#888888",
-        "completion-menu.meta.completion.current": "bg:ansibrightblack fg:ansiwhite",
+        "suggestion": "#888888",
+        "suggestion-current": "ansicyan bold",
+        "suggestion-meta": "#777777",
+        "suggestion-meta-current": "ansiwhite",
     }
 )
+
+_EXIT_CONFIRM_HINT = "Press Ctrl-C again to exit"
+_OSC11_REPLY_FRAGMENT = re.compile(
+    r"(?:\x1b)?\]11;rgb:[0-9a-fA-F]{1,4}/[0-9a-fA-F]{1,4}/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\|\\)?"
+)
+
+
+def strip_osc11_reply_fragments(text: str) -> str:
+    """Remove the narrow OSC 11 reply fragment known to leak into input."""
+
+    return _OSC11_REPLY_FRAGMENT.sub("", text)
 
 
 def _highlighted_completion(buffer: Buffer) -> Completion | None:
@@ -131,11 +144,18 @@ class PromptSession:
         queue: InputQueue,
         *,
         bottom_hint: str = "Enter to send · Tab to fill · ↑↓ to choose · Ctrl-C to cancel",
+        exit_confirm_window_seconds: float = 1.5,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._runtime = runtime
         self._queue = queue
         self._bottom_hint = bottom_hint
+        self._exit_confirm_window_seconds = exit_confirm_window_seconds
+        self._clock = clock
         self._completer = InlineCompleter(runtime)
+        self._pending_exit_at: float | None = None
+        self._suppress_next_text_reset = False
+        self._active_hint: _PromptHint | None = None
 
     async def read(
         self,
@@ -173,34 +193,30 @@ class PromptSession:
             completer=self._completer,
             complete_while_typing=True,
             multiline=False,
+            on_text_changed=self._on_buffer_text_changed,
         )
+        hint = _PromptHint(self._bottom_hint)
+        self._active_hint = hint
         gutter = "▌ " if queue_mode else "> "
         buffer_control = BufferControl(
             buffer=buffer,
             input_processors=[BeforeInput(gutter, style="class:prompt-gutter")],
             include_default_input_processors=True,
         )
-        bindings = self._build_key_bindings(buffer, queue_mode, result)
+        bindings = self._build_key_bindings(buffer, queue_mode, result, hint)
 
         prompt_window = Window(
             content=buffer_control,
             height=Dimension(min=1, max=1),
             wrap_lines=False,
         )
+        suggestion_panel = _suggestion_panel(buffer)
         body = HSplit(
             [
                 _border_window(),
-                FloatContainer(
-                    content=prompt_window,
-                    floats=[
-                        Float(
-                            xcursor=True,
-                            ycursor=True,
-                            content=CompletionsMenu(max_height=8, scroll_offset=1),
-                        ),
-                    ],
-                ),
-                _hint_window(self._bottom_hint),
+                prompt_window,
+                suggestion_panel,
+                _hint_window(hint.text),
                 _border_window(),
             ]
         )
@@ -220,10 +236,12 @@ class PromptSession:
         buffer: Buffer,
         queue_mode: bool,
         result: list[PromptSubmission | None],
+        hint: "_PromptHint",
     ) -> KeyBindings:
         bindings = KeyBindings()
 
         def finish(submission: PromptSubmission, event) -> None:  # type: ignore[no-untyped-def]
+            self._reset_pending_exit()
             result[0] = submission
             event.app.exit()
 
@@ -250,6 +268,8 @@ class PromptSession:
 
         @bindings.add(Keys.Tab, eager=True)
         def _on_tab(event) -> None:  # type: ignore[no-untyped-def]
+            self._reset_pending_exit()
+            hint.reset()
             completion = _highlighted_completion(buffer)
             if completion is not None:
                 # Menu open + Tab → fill the input with the item but do
@@ -261,6 +281,8 @@ class PromptSession:
 
         @bindings.add(Keys.Down, eager=True)
         def _on_down(event) -> None:  # type: ignore[no-untyped-def]
+            self._reset_pending_exit()
+            hint.reset()
             if buffer.complete_state is not None:
                 buffer.complete_next()
             else:
@@ -268,12 +290,28 @@ class PromptSession:
 
         @bindings.add(Keys.Up, eager=True)
         def _on_up(event) -> None:  # type: ignore[no-untyped-def]
+            self._reset_pending_exit()
+            hint.reset()
             if buffer.complete_state is not None:
                 buffer.complete_previous()
 
         @bindings.add(Keys.ControlC, eager=True)
         def _on_ctrl_c(event) -> None:  # type: ignore[no-untyped-def]
-            finish(PromptSubmission(SubmissionKind.CANCEL), event)
+            now = self._clock()
+            if self._pending_exit_at is not None:
+                elapsed = now - self._pending_exit_at
+                if elapsed <= self._exit_confirm_window_seconds:
+                    finish(PromptSubmission(SubmissionKind.EXIT), event)
+                    return
+            self._pending_exit_at = now
+            hint.set(_EXIT_CONFIRM_HINT)
+            asyncio.create_task(self._expire_exit_hint_after(now, hint, event.app))
+            if buffer.complete_state is not None:
+                buffer.cancel_completion()
+            if buffer.text:
+                self._suppress_next_text_reset = True
+                buffer.text = ""
+            event.app.invalidate()
 
         @bindings.add(Keys.ControlD, eager=True)
         def _on_ctrl_d(event) -> None:  # type: ignore[no-untyped-def]
@@ -289,6 +327,38 @@ class PromptSession:
 
         return bindings
 
+    def _on_buffer_text_changed(self, buffer: Buffer) -> None:
+        cleaned = strip_osc11_reply_fragments(buffer.text)
+        if cleaned != buffer.text:
+            cursor = min(buffer.cursor_position, len(cleaned))
+            self._suppress_next_text_reset = True
+            buffer.text = cleaned
+            buffer.cursor_position = cursor
+            return
+        if self._suppress_next_text_reset:
+            self._suppress_next_text_reset = False
+            return
+        if buffer.text:
+            self._reset_pending_exit()
+            if self._active_hint is not None:
+                self._active_hint.reset()
+
+    def _reset_pending_exit(self) -> None:
+        self._pending_exit_at = None
+
+    async def _expire_exit_hint_after(
+        self,
+        timestamp: float,
+        hint: "_PromptHint",
+        app: Application[None],
+    ) -> None:
+        await asyncio.sleep(self._exit_confirm_window_seconds)
+        if self._pending_exit_at != timestamp:
+            return
+        self._reset_pending_exit()
+        hint.reset()
+        app.invalidate()
+
 
 # --- layout helpers --------------------------------------------------------
 
@@ -301,12 +371,10 @@ def _border_window() -> Window:
     )
 
 
-def _hint_window(hint: str) -> ConditionalContainer:
-    from prompt_toolkit.filters import Condition
-
+def _hint_window(hint: Callable[[], str]) -> ConditionalContainer:
     window = Window(
         height=Dimension(min=1, max=1),
-        content=FormattedTextControl([("class:prompt-hint", hint)]),
+        content=FormattedTextControl(lambda: [("class:prompt-hint", hint())]),
         style="class:prompt-hint",
     )
     # Always shown; ConditionalContainer keeps the door open for
@@ -314,8 +382,92 @@ def _hint_window(hint: str) -> ConditionalContainer:
     return ConditionalContainer(window, filter=Condition(lambda: True))
 
 
+class _PromptHint:
+    def __init__(self, default: str) -> None:
+        self._default = default
+        self._text = default
+
+    def text(self) -> str:
+        return self._text
+
+    def set(self, text: str) -> None:
+        self._text = text
+
+    def reset(self) -> None:
+        self._text = self._default
+
+
+def _suggestion_panel(buffer: Buffer) -> ConditionalContainer:
+    window = Window(
+        height=Dimension(min=1, max=8),
+        content=FormattedTextControl(lambda: _suggestion_fragments(buffer)),
+        dont_extend_height=True,
+        style="class:suggestion",
+    )
+    return ConditionalContainer(
+        window,
+        filter=Condition(lambda: bool(_suggestion_rows(buffer))),
+    )
+
+
+def _suggestion_rows(buffer: Buffer) -> tuple[tuple[Completion, bool], ...]:
+    state = buffer.complete_state
+    if state is None or not state.completions:
+        if buffer.completer is None:
+            return ()
+        completions = list(
+            buffer.completer.get_completions(buffer.document, CompleteEvent())
+        )
+        return tuple(
+            (completion, index == 0)
+            for index, completion in enumerate(completions[:8])
+        )
+    completions = tuple(state.completions[:8])
+    if not completions:
+        return ()
+    current = state.current_completion
+    if current is None:
+        current_index = 0
+    else:
+        try:
+            current_index = completions.index(current)
+        except ValueError:
+            current_index = 0
+    return tuple(
+        (completion, index == current_index)
+        for index, completion in enumerate(completions)
+    )
+
+
+def _suggestion_fragments(buffer: Buffer) -> FormattedText:
+    rows = _suggestion_rows(buffer)
+    if not rows:
+        return FormattedText([])
+    command_width = min(
+        max(len(completion.display_text) for completion, _ in rows),
+        32,
+    )
+    fragments: list[tuple[str, str]] = []
+    for index, (completion, selected) in enumerate(rows):
+        display = completion.display_text
+        meta = completion.display_meta_text
+        pointer = "> " if selected else "  "
+        display_style = "class:suggestion-current" if selected else "class:suggestion"
+        meta_style = (
+            "class:suggestion-meta-current" if selected else "class:suggestion-meta"
+        )
+        fragments.append((display_style, pointer))
+        fragments.append((display_style, display.ljust(command_width)))
+        if meta:
+            fragments.append((meta_style, f"  {meta}"))
+        if index < len(rows) - 1:
+            fragments.append(("", "\n"))
+    return FormattedText(fragments)
+
+
 __all__ = [
     "PromptSession",
     "PromptSubmission",
     "SubmissionKind",
+    "strip_osc11_reply_fragments",
 ]

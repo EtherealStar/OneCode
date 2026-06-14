@@ -33,6 +33,7 @@ from ui.cli.terminal.prompt_session import (
     PromptSession,
     PromptSubmission,
     SubmissionKind,
+    strip_osc11_reply_fragments,
 )
 from ui.cli.terminal.queue import InputQueue
 from ui.cli.theme import RICH_THEME
@@ -179,6 +180,14 @@ class _FakeTtyStream:
         return self._buffer.getvalue()
 
 
+class _FakeTtyForBrightness:
+    def isatty(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        raise AssertionError("OSC 11 should not be probed")
+
+
 def test_alternate_screen_emits_dec_1049() -> None:
     transient.reset_for_tests()
     stream = _FakeTtyStream()
@@ -209,6 +218,22 @@ def test_transient_scope_exits_on_exception() -> None:
     # The scope must restore the primary buffer even on exception.
     assert not transient.is_alternate_screen_active()
     assert "\x1b[?1049l" in stream.getvalue()
+
+
+def test_terminal_brightness_skips_osc11_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ui.cli.terminal import detect
+
+    monkeypatch.setattr(detect.platform, "system", lambda: "Windows")
+    monkeypatch.setenv("COLORFGBG", "0;15")
+
+    assert detect.detect_terminal_brightness(_FakeTtyForBrightness()) == "light"
+
+
+def test_osc11_reply_parser_classifies_light_and_dark() -> None:
+    from ui.cli.terminal.detect import _brightness_from_osc11_reply
+
+    assert _brightness_from_osc11_reply(b"\x1b]11;rgb:f8f8/f8f8/f8f8\x07") == "light"
+    assert _brightness_from_osc11_reply(b"\x1b]11;rgb:0000/0000/0000\x1b\\") == "dark"
 
 
 # --- M3: completion adapter -----------------------------------------------
@@ -280,6 +305,25 @@ def test_tab_fills_without_submitting_then_enter_submits(tmp_path: Path) -> None
     assert submission.text == "/status"
 
 
+def test_suggestion_panel_fragments_include_command_descriptions(tmp_path: Path) -> None:
+    from prompt_toolkit.buffer import Buffer
+
+    from ui.cli.terminal.completer import InlineCompleter
+    from ui.cli.terminal.prompt_session import _suggestion_fragments
+
+    buffer = Buffer(
+        completer=InlineCompleter(_FakeRuntime(tmp_path)),
+        complete_while_typing=True,
+        multiline=False,
+    )
+    buffer.text = "/st"
+    buffer.cursor_position = len(buffer.text)
+    text = "".join(fragment for _, fragment in _suggestion_fragments(buffer))
+
+    assert "/status" in text
+    assert "Show runtime status" in text
+
+
 def test_enter_plain_text_submits_literally(tmp_path: Path) -> None:
     session = PromptSession(_FakeRuntime(tmp_path), InputQueue())
     submission = _drive_prompt(session, "hello world\r")
@@ -300,6 +344,37 @@ def test_ctrl_d_on_empty_buffer_exits(tmp_path: Path) -> None:
     session = PromptSession(_FakeRuntime(tmp_path), InputQueue())
     submission = _drive_prompt(session, "\x04")  # Ctrl-D
     assert submission.kind is SubmissionKind.EXIT
+
+
+def test_idle_ctrl_c_once_clears_input_and_keeps_prompt(tmp_path: Path) -> None:
+    session = PromptSession(_FakeRuntime(tmp_path), InputQueue())
+    submission = _drive_prompt(session, "abc\x03done\r")
+    assert submission.kind is SubmissionKind.SUBMIT
+    assert submission.text == "done"
+
+
+def test_idle_ctrl_c_twice_exits(tmp_path: Path) -> None:
+    session = PromptSession(_FakeRuntime(tmp_path), InputQueue())
+    submission = _drive_prompt(session, "\x03\x03")
+    assert submission.kind is SubmissionKind.EXIT
+
+
+def test_idle_ctrl_c_second_press_after_window_does_not_exit(tmp_path: Path) -> None:
+    values = iter((0.0, 2.0))
+    session = PromptSession(
+        _FakeRuntime(tmp_path),
+        InputQueue(),
+        exit_confirm_window_seconds=1.5,
+        clock=lambda: next(values),
+    )
+    submission = _drive_prompt(session, "\x03\x03hello\r")
+    assert submission.kind is SubmissionKind.SUBMIT
+    assert submission.text == "hello"
+
+
+def test_strip_osc11_reply_fragments_is_narrow() -> None:
+    assert strip_osc11_reply_fragments("]11;rgb:f8f8/f8f8/f8f8\\") == ""
+    assert strip_osc11_reply_fragments("keep ]12;rgb:f8f8/f8f8/f8f8\\") == "keep ]12;rgb:f8f8/f8f8/f8f8\\"
 
 
 # --- M4: streaming session ------------------------------------------------
@@ -424,6 +499,31 @@ def test_streaming_session_cancels_on_escape(captured_console: io.StringIO) -> N
     assert "已取消" in captured_console.getvalue()
 
 
+def test_streaming_session_cancels_on_ctrl_c(captured_console: io.StringIO) -> None:
+    from ui.cli.terminal.stream_session import StreamingSession
+
+    async def slow_events():
+        yield _agent_event("assistant_delta", text="working…")
+        while True:
+            await asyncio.sleep(0.05)
+            yield _agent_event("assistant_delta", text=".")
+
+    async def run() -> bool:
+        session = StreamingSession()
+        with create_pipe_input() as pipe:
+            pipe.send_text("\x03")  # Ctrl-C
+            await session.run(
+                slow_events(),
+                input=pipe,
+                output=DummyOutput(),
+            )
+        return session.cancelled
+
+    cancelled = asyncio.run(run())
+    assert cancelled
+    assert "已取消" in captured_console.getvalue()
+
+
 # --- M5: transient selector + page ----------------------------------------
 
 
@@ -528,5 +628,3 @@ def test_permission_response_for_choice_deny() -> None:
 
     response = _response_for_choice("n", _Request())
     assert response.action == "deny"
-
-
