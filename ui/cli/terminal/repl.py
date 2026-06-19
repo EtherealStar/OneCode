@@ -8,31 +8,34 @@ streaming, transient pages) and this class is just the conductor.
 Loop shape::
 
     while not done:
-        submission = prompt.read(queue_mode=agent_running)
+        submission = prompt.read()
         if submission.kind == CANCEL/EXIT:
             shutdown(); break
         echo user line into static region
         if line starts with "/":
             result = dispatch_command(...)
             handle_command_result(result)
-        elif agent_running:
-            queue.push(line)
         else:
             await run_agent_turn(line)
-            if queue: keep going
+            drain queued inputs in FIFO order, each via either
+            ``_handle_command`` (slash) or ``_run_turn`` (prompt)
 
 A "turn" is one full pass through the agent loop, including any
-tool calls and queued follow-ups.
+tool calls and queued follow-ups. ``InputQueue`` is shared with
+:class:`StreamingSession` so the user can keep typing while an
+agent turn is running; the running-turn input box pushes new
+submissions onto the same queue, and the REPL drains it once the
+turn finishes.
 """
 
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 from typing import Awaitable, Callable
 
 from rich.console import Console
-from rich.text import Text
 
 from core.runtime_state import RuntimeState
 from ui.cli import renderer
@@ -47,14 +50,10 @@ from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
 from ui.cli.terminal.prompt_session import PromptSession, PromptSubmission, SubmissionKind
 from ui.cli.terminal.queue import InputQueue
 from ui.cli.terminal.selector import SelectorItem, TransientSelector
-from ui.cli.terminal.static_output import (
-    print_assistant_markdown,
-    print_assistant_start,
-    print_static,
-    print_user_submitted,
-)
+from ui.cli.terminal.static_output import print_user_submitted
 from ui.cli.terminal.stream_session import StreamingSession
 from ui.cli.terminal.trust_prompt import default_trust_prompt
+from ui.cli.terminal.transcript_replay import replay_messages_to_static
 from ui.cli.theme import rich_theme_for
 from ui.cli.types import CliRuntime, CommandResult
 
@@ -102,7 +101,7 @@ class InlineRepl:
         self._print_untrusted_mcp_notices(self._runtime)
         self._agent_running = False
         while True:
-            submission = await self._prompt.read(queue_mode=self._agent_running)
+            submission = await self._prompt.read()
             if submission.kind is SubmissionKind.EXIT:
                 self._shutdown()
                 return
@@ -110,16 +109,6 @@ class InlineRepl:
                 # Ctrl-C on an empty prompt: just clear and keep going.
                 if self._agent_running:
                     self._cancel_requested = True
-                continue
-            if submission.kind is SubmissionKind.QUEUE:
-                # The user typed into the queue; show a single
-                # static-region note so they know it landed.
-                print_static(
-                    Text(
-                        f"… queued: {submission.text}",
-                        style="onecode.subtle",
-                    )
-                )
                 continue
             # Plain submit. ``text`` is the literal buffer (or the
             # completion's ``replacement`` when Enter was used to
@@ -132,18 +121,17 @@ class InlineRepl:
                 await self._handle_command(text)
                 if self._runtime is None:
                     return
-                continue
-            if self._agent_running:
-                self._queue.push(text)
+                # Some commands (e.g. ``/clear``) change the runtime;
+                # ``_handle_command`` already took care of the
+                # prompt session reset, so we just keep looping.
                 continue
             await self._run_turn(text)
-            # Drain queued prompts one by one until empty.
-            while self._queue:
-                next_text = self._queue.pop()
-                if next_text is None:
-                    break
-                print_user_submitted(next_text, brightness=self._brightness)
-                await self._run_turn(next_text)
+            # Drain queued inputs in FIFO order. Each entry was
+            # pushed by the running-turn input box while the turn
+            # was active. Slash commands are routed to the command
+            # dispatcher; ordinary prompts go back into
+            # ``_run_turn``.
+            await self._drain_queue()
 
     # --- command dispatch -------------------------------------------------
 
@@ -155,11 +143,25 @@ class InlineRepl:
             result = await self._run_connect_flow()
         if result.runtime is not None:
             self._runtime = result.runtime
+            self._reset_prompt_session()
+        if result.reset_main_view:
+            self._reset_main_view(result.renderable)
+            return
         if result.renderable is not None:
             if result.presentation == "page":
                 await self._show_page(result.renderable)
             else:
                 self._console.print(result.renderable)
+        # Replay restored history into the main scrollback after any inline
+        # notice is printed. This runs once the resume selector (if any) has
+        # already exited the alternate screen, and before the next prompt is
+        # read, so historical messages land in the primary buffer.
+        if result.replay_messages:
+            replay_messages_to_static(
+                result.replay_messages,
+                brightness=self._brightness,
+                workspace=self._runtime.workspace if self._runtime else None,
+            )
         if result.should_exit:
             self._shutdown()
             self._runtime = None
@@ -200,17 +202,13 @@ class InlineRepl:
             return CommandResult(renderable=renderer.render_error(str(exc)))
         return CommandResult(
             runtime=resumed,
-            renderable=renderer.render_group(
-                renderer.render_resume(
-                    resumed.state.session_id,
-                    resumed.message_store.transcript_store.messages_path,
-                    resumed.workspace,
-                ),
-                renderer.render_restored_messages(
-                    resumed.message_store.current_messages()
-                ),
+            renderable=renderer.render_resume(
+                resumed.state.session_id,
+                resumed.message_store.transcript_store.messages_path,
+                resumed.workspace,
             ),
-            presentation="page",
+            presentation="inline",
+            replay_messages=resumed.message_store.current_messages(),
         )
 
     async def _run_connect_flow(self) -> CommandResult:
@@ -234,6 +232,22 @@ class InlineRepl:
         page = TransientPage(renderable)
         await page.show()
 
+    def _reset_prompt_session(self) -> None:
+        self._prompt = PromptSession(self._runtime, self._queue)
+
+    def _reset_main_view(self, renderable: object | None) -> None:
+        self._push_previous_view_out()
+        self._console.print(renderer.render_banner(self._runtime))
+        if renderable is not None:
+            self._console.print(renderable)
+
+    def _push_previous_view_out(self) -> None:
+        for _ in range(self._terminal_height() + 1):
+            self._console.print()
+
+    def _terminal_height(self) -> int:
+        return shutil.get_terminal_size((80, 24)).lines
+
     # --- agent turn -------------------------------------------------------
 
     async def _run_turn(self, line: str) -> None:
@@ -243,10 +257,19 @@ class InlineRepl:
         which owns the dynamic-region preview and Esc cancellation. The
         session commits the final Markdown to the static region and
         returns the buffer so we can record cancellation state.
+
+        The session shares ``self._queue`` so the user can keep
+        typing into the running-turn input box while the agent is
+        busy; queued submissions land on the same FIFO that
+        :meth:`_drain_queue` will consume after the turn ends.
         """
 
         self._agent_running = True
-        session = StreamingSession()
+        session = StreamingSession(
+            workspace=self._runtime.workspace,
+            queue=self._queue,
+            runtime=self._runtime,
+        )
         try:
             events = self._agent_events(line)
             await session.run(events)
@@ -260,6 +283,35 @@ class InlineRepl:
             self._console.print(renderer.render_error(str(exc)))
         finally:
             self._agent_running = False
+
+    async def _drain_queue(self) -> None:
+        """Pop queued inputs in FIFO order after a turn finishes.
+
+        Each :class:`QueuedInput` is dispatched based on its
+        ``kind``: ``slash`` entries go through :meth:`_handle_command`
+        so they never reach the model as a prompt; ``prompt`` entries
+        re-enter the agent via :meth:`_run_turn`. If a slash command
+        causes the runtime to be replaced (e.g. ``/clear`` /
+        ``/resume`` / ``/connect``), we keep draining because the
+        command dispatcher has already updated ``self._runtime`` and
+        reset the prompt session.
+
+        The loop stops at the first empty pop; ``self._queue`` is
+        the single source of truth.
+        """
+
+        while True:
+            item = self._queue.pop()
+            if item is None:
+                return
+            print_user_submitted(item.text, brightness=self._brightness)
+            if item.kind == "slash":
+                await self._handle_command(item.text)
+                if self._runtime is None:
+                    # A command (e.g. ``/exit``) closed the REPL.
+                    return
+                continue
+            await self._run_turn(item.text)
 
     async def _agent_events(self, line: str):
         """Yield agent events for ``line``, collecting attachments first.
