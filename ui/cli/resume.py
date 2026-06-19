@@ -11,6 +11,7 @@ from typing import Any
 from core.runtime_state import RuntimeState
 from services.context.message_store import MessageStore
 from services.context.transcript import JsonlTranscriptStore, VALID_MESSAGE_ROLES
+from infrastructure.filesystem.onecode_paths import sessions_dir
 from services.tools.file_state import FileStateCache
 from ui.cli.types import CliRuntime
 from ui.cli.views.common import preview
@@ -26,7 +27,7 @@ class SessionSummary:
 
 
 def list_session_summaries(workspace: Path) -> tuple[SessionSummary, ...]:
-    root = workspace / ".onecode"
+    root = sessions_dir(workspace)
     if not root.exists():
         return ()
     summaries = [
@@ -90,7 +91,7 @@ def summarize_session(messages_path: Path) -> SessionSummary | None:
 
 def resolve_resume_target(workspace: Path, target: str) -> JsonlTranscriptStore:
     workspace = workspace.resolve()
-    sessions_root = (workspace / ".onecode").resolve()
+    sessions_root = sessions_dir(workspace).resolve()
     target_path = Path(target).expanduser()
     if not target_path.is_absolute():
         target_path = workspace / target_path
@@ -98,7 +99,7 @@ def resolve_resume_target(workspace: Path, target: str) -> JsonlTranscriptStore:
     if target_path.suffix.lower() == ".jsonl" or target_path.is_file():
         messages_path = target_path
     else:
-        messages_path = workspace / ".onecode" / target / "messages.jsonl"
+        messages_path = sessions_dir(workspace) / target / "messages.jsonl"
     messages_path = messages_path.resolve()
     _ensure_inside_sessions_root(messages_path, sessions_root)
 
@@ -213,7 +214,7 @@ def _ensure_inside_sessions_root(messages_path: Path, sessions_root: Path) -> No
         messages_path.relative_to(sessions_root)
     except ValueError:
         raise ValueError(
-            f"Resume target must be inside current workspace .onecode: {messages_path}"
+            f"Resume target must be inside current workspace .onecode/sessions: {messages_path}"
         ) from None
 
 

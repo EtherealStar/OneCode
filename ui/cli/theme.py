@@ -57,6 +57,16 @@ def _base_palette() -> dict[str, str]:
         "onecode.model": "green",
         "onecode.session": "magenta",
         "onecode.metric": "bold",
+        # Rich Table / Markdown table renderables reference these
+        # default styles by name. Keep them foreground-only so CLI
+        # output still inherits the terminal host background.
+        "table.header": "bold",
+        "table.footer": "",
+        "table.cell": "",
+        "table.title": "bold",
+        "table.caption": "dim",
+        "markdown.table.border": "dim",
+        "markdown.table.header": "bold",
     }
 
 

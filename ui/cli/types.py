@@ -10,6 +10,7 @@ from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.providers.factory import create_model_client
+from infrastructure.filesystem.onecode_paths import sessions_dir
 from prompts.assembler import DynamicPromptAssembler
 from services.attachments import AttachmentCollector, AttachmentContextPreparer
 from services.background_tasks import BackgroundTaskManager
@@ -46,6 +47,7 @@ from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolDescriptor
 from tools.agent import descriptor as agent_descriptor
+from ui.cli.session_memory import BackgroundSessionMemoryExtractor
 from utils.toolResultStorage import ToolResultStorage
 
 
@@ -195,7 +197,15 @@ class CliRuntime:
             current_model_context=self.current_model_context,
             hooks=self.hooks,
             compaction_service=self.compaction_service,
-            session_memory_extractor=session_memory_extractor,
+            session_memory_extractor=(
+                BackgroundSessionMemoryExtractor(
+                    session_memory_extractor,
+                    self.background_task_manager,
+                )
+                if session_memory_extractor is not None
+                and self.background_task_manager is not None
+                else session_memory_extractor
+            ),
             session_memory_updater=session_memory_updater,
             error_log_recorder=self.error_log_recorder,
         )
@@ -234,7 +244,7 @@ class CliRuntime:
         ):
             subagent_runner = SubagentRunner(
                 workspace=self.workspace,
-                transcript_root=self.workspace / ".onecode",
+                transcript_root=sessions_dir(self.workspace),
                 parent_message_store=self.message_store,
                 current_model_context=current_model_context,
                 model_client=model_client,
@@ -339,7 +349,15 @@ class CliRuntime:
             current_model_context=current_model_context,
             hooks=self.hooks,
             compaction_service=self.compaction_service,
-            session_memory_extractor=session_memory_extractor,
+            session_memory_extractor=(
+                BackgroundSessionMemoryExtractor(
+                    session_memory_extractor,
+                    self.background_task_manager,
+                )
+                if session_memory_extractor is not None
+                and self.background_task_manager is not None
+                else session_memory_extractor
+            ),
             session_memory_updater=session_memory_updater,
             error_log_recorder=self.error_log_recorder,
         )
@@ -367,3 +385,9 @@ class CommandResult:
     renderable: object | None = None
     presentation: CommandPresentation = "inline"
     interaction: CommandInteraction | None = None
+    reset_main_view: bool = False
+    # Messages a successful command asks the REPL to replay into the main
+    # scrollback using the normal static-output renderers. This is purely a
+    # UI replay request (e.g. session resume); it is not a source of truth
+    # for the model context, which lives in the runtime's MessageStore.
+    replay_messages: tuple[dict[str, Any], ...] = field(default_factory=tuple)

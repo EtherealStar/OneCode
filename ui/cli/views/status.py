@@ -38,7 +38,7 @@ def render_status(runtime: CliRuntime) -> Group:
     table.add_row("session", runtime.state.session_id)
     table.add_row("provider", runtime.provider_label)
     table.add_row("model", runtime.model)
-    table.add_row("turns", f"{runtime.state.turn_count}/{runtime.state.max_turns}")
+    table.add_row("turns", _turns_summary(runtime))
     table.add_row("last transition", transition)
     table.add_row(
         "usage",
@@ -76,7 +76,6 @@ def render_usage(runtime: CliRuntime) -> Group:
     table.add_row("output tokens", str(usage.output_tokens))
     table.add_row("cache read tokens", str(usage.cache_read_input_tokens))
     table.add_row("cache write tokens", str(usage.cache_creation_input_tokens))
-    table.add_row("turns", f"{runtime.state.turn_count}/{runtime.state.max_turns}")
     if runtime.compaction_service is not None:
         config = runtime.compaction_service.config
         table.add_row(
@@ -101,6 +100,12 @@ def render_usage(runtime: CliRuntime) -> Group:
     else:
         table.add_row("last compact", "none")
     return titled_section("Usage", table, style="onecode.metric")
+
+
+def _turns_summary(runtime: CliRuntime) -> str:
+    if runtime.state.max_turns is None:
+        return f"{runtime.state.turn_count}/unlimited"
+    return f"{runtime.state.turn_count}/{runtime.state.max_turns}"
 
 
 def _mcp_summary(runtime: CliRuntime) -> str:
