@@ -54,8 +54,8 @@ def adjust_start_index_to_preserve_tool_pairs(messages, start_index) -> int
 flowchart TD
   User["append_user / append_assistant / append_tool_results / append_attachments"] --> Mem["MessageStore 内存链"]
   Mem --> Tr["JsonlTranscriptStore"]
-  Tr --> Jsonl[".onecode/&lt;session&gt;/messages.jsonl"]
-  Tr -->|tool_result content > 50KB| Ext[".onecode/&lt;session&gt;/tool-results/&lt;id&gt;.txt"]
+  Tr --> Jsonl[".onecode/sessions/&lt;session&gt;/messages.jsonl"]
+  Tr -->|tool_result content > 50KB| Ext[".onecode/sessions/&lt;session&gt;/tool-results/&lt;id&gt;.txt"]
 
   Mem -->|current_messages| Engine["ContextEngine.build_for_model"]
   Engine --> Prep["ContextPreparer 链"]
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 持久化路径
 
-- 消息：`.onecode/<session_id>/messages.jsonl`
-- 外置 tool result：`.onecode/<session_id>/tool-results/<id>.txt`
+- 消息：`.onecode/sessions/<session_id>/messages.jsonl`
+- 外置 tool result：`.onecode/sessions/<session_id>/tool-results/<id>.txt`
 
 transcript 是会话恢复和上下文治理的事实来源，但不是完整 durable result store 的替代品。

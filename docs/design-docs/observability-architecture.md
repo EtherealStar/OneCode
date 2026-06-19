@@ -47,12 +47,12 @@ flowchart TD
   Loop["loop / executor / hooks / subagent / compaction / memory / mcp / background"] --> Rec["TraceRecorder.event/span"]
   Rec --> San["sanitize_attributes"]
   San --> Sink["JsonlTraceSink (缓冲, flush 1s, atexit)"]
-  Sink --> File[".onecode/&lt;session&gt;/trace.jsonl"]
+  Sink --> File[".onecode/sessions/&lt;session&gt;/trace.jsonl"]
 
   Err["不可恢复错误 / ProviderError / MCP 错误"] --> ErrRec["ErrorLogRecorder.record_error"]
   ErrRec --> San2["sanitize + Bearer/sk- 脱敏"]
   San2 --> ErrSink["JsonlErrorLogSink"]
-  ErrSink --> ErrFile[".onecode/&lt;session&gt;/errors.jsonl"]
+  ErrSink --> ErrFile[".onecode/sessions/&lt;session&gt;/errors.jsonl"]
 ```
 
 ## 关键机制
@@ -84,5 +84,5 @@ trace 保存短小 runtime 事实，不承载完整 stack 或 debug 文本；err
 
 ## 持久化路径
 
-- trace：`{workspace}/.onecode/<session_id>/trace.jsonl`
-- error log：`{workspace}/.onecode/<session_id>/errors.jsonl`
+- trace：`{workspace}/.onecode/sessions/<session_id>/trace.jsonl`
+- error log：`{workspace}/.onecode/sessions/<session_id>/errors.jsonl`

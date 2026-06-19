@@ -41,7 +41,7 @@ flowchart TD
   Run --> Def{"subagent_type 是否为 None?"}
   Def -->|否| Clean["内置定义 + 干净消息链(单条 prompt)"]
   Def -->|是| Fork["fork: 深拷贝父链 + 占位 tool_result + directive\n继承父 ContextSnapshot.system_prompt"]
-  Clean --> Assemble["新建 RuntimeState/MessageStore/ToolRegistry/ContextEngine/Executor/AgentLoop"]
+  Clean --> Assemble["新建 RuntimeState/ephemeral MessageStore/ToolRegistry/ContextEngine/Executor/AgentLoop"]
   Fork --> Assemble
   Assemble --> Drain["continue_stream() → _drain_loop"]
   Drain --> Result["SubagentResult(final_text, usage, ...)"]
@@ -52,7 +52,7 @@ flowchart TD
 
 ### Child runtime 装配
 
-`SubagentRunner.run()` 为每次调用创建独立的 `RuntimeState`、`MessageStore`（独立 session 与 transcript）、`ToolRegistry`、`ContextEngine`、`RegistryToolExecutor`、`AgentLoop`，共享父级的 workspace、transcript root、model client、sandbox guard、permission policy、permission prompter、trace recorder 和 base descriptors。child 的中间消息写入 child transcript，不写回父 `MessageStore`；父链只收到 `agent` 工具的最终 `ToolExecutionResult`。
+`SubagentRunner.run()` 为每次调用创建独立的 `RuntimeState`、ephemeral `MessageStore`（只保留运行期内存消息链，不写 `.onecode/sessions/<child_session_id>/messages.jsonl`）、`ToolRegistry`、`ContextEngine`、`RegistryToolExecutor`、`AgentLoop`，共享父级的 workspace、model client、sandbox guard、permission policy、permission prompter、trace recorder 和 base descriptors。child 的中间消息只存在于 child runtime 内存中，不写回父 `MessageStore`，也不会成为可 `/resume` 的用户会话；父链只收到 `agent` 工具的最终 `ToolExecutionResult`。
 
 ### Fork 机制
 
@@ -79,7 +79,7 @@ fork 由 `subagent_type is None` 决定（不是 `request.mode`）。`build_fork
 
 ### Trace
 
-runner 写入 `subagent_start`、`subagent_completed`、`subagent_error`，metadata 含 parent/child session、agent type、是否 fork、是否 read-only、usage、tool result count 和 duration（见 `observability-architecture.md`）。
+runner 写入 `subagent_start`、`subagent_completed`、`subagent_error`，metadata 含 parent/child session、agent type、是否 fork、是否 read-only、usage、tool result count 和 duration（见 `observability-architecture.md`）。`child_session_id` 仅用于 trace、后台任务输出和父级 tool result 关联，不代表存在可恢复的 child transcript。
 
 ## 当前限制
 
