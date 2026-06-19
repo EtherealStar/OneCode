@@ -83,7 +83,7 @@ flowchart TD
 
 ### 受保护目录与可疑路径
 
-`PROTECTED_PROJECT_DIRS = (.git, .vscode, .idea, .onecode)`，大小写不敏感按路径段匹配。例外：读取 `.onecode/<session_id>/tool-results/...`、`.onecode/memory/` 下的长期记忆路径。可疑 Windows 路径检测绝对 Windows 形态和保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`），仅在 guard 非 allow 时纳入 ask。
+`PROTECTED_PROJECT_DIRS = (.git, .vscode, .idea, .onecode)`，大小写不敏感按路径段匹配。例外：读取 `.onecode/sessions/<session_id>/tool-results/...`、`.onecode/memory/` 下的长期记忆路径。可疑 Windows 路径检测绝对 Windows 形态和保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`），仅在 guard 非 allow 时纳入 ask。
 
 ### 特殊 agent 硬强制
 
@@ -95,7 +95,7 @@ flowchart TD
 
 ### record_response 与 UI
 
-`request_for_decision` 默认 options 为 allow once / allow session directory / deny。CLI 还支持对 bash 写 project 规则（`p/project`）。`record_response`：allow + projectSettings updates → 写 project settings；allow + session scope → 对非 deny 的 guard policy 调用 `allow_directory`（directory 取自身，file 取 parent）；once 不写 session grant。`PermissionPrompter` 是 async 协议；非交互 executor 未注入 prompter 时，ask 变为结构化 `permission_ask_required` 错误，保持 fail closed。
+`request_for_decision` 默认 options 为 allow once / allow session directory / deny。CLI 权限请求只消费这三项：once 不写 session grant；session scope 对非 deny 的 guard policy 调用 `allow_directory`（directory 取自身，file 取 parent）；deny 直接返回拒绝。权限请求 prompt 不写 project settings，也不提供 bash project 快捷授权。项目级 allow/deny/ask 规则只能由 `/permissions add|remove|replace ...` 构造 `PermissionUpdate(destination="projectSettings")` 并写入 project settings。`record_response` 仍能处理 `projectSettings` update，以保持权限层通用入口；当前 CLI 运行时权限请求不会产生这类 update。`PermissionPrompter` 是 async 协议；非交互 executor 未注入 prompter 时，ask 变为结构化 `permission_ask_required` 错误，保持 fail closed。
 
 ### Registry 可见性
 

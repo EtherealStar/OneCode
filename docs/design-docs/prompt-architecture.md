@@ -55,13 +55,18 @@ flowchart TD
 
 1. `identity`（固定）
 2. `behavior_rules`（固定 7 条）
-3. `instruction_memory`（ONECODE.md 规则，来自 `InstructionMemoryLoader`）
-4. `long_term_memory`（MEMORY.md 索引与使用说明）
-5. `workspace_state`（cwd、工具列表、files_read）
-6. `available_tools`（可见 tool descriptor）
-7. `available_skills`（技能目录，≤8000 字符预算，只列 name/description/when_to_use）
-8. `mcp_server_instructions`（来自 `state.metadata`）
-9+. `tool_prompt:{name}`（各工具的 `prompt` 字段）
+3. `engineering_practices`（固定工程行为约束：读代码、控制范围、避免过早抽象）
+4. `risk_and_safety`（固定风险与安全约束：高风险动作确认、prompt injection 防护）
+5. `verification_and_reporting`（固定验证与汇报约束：失败诊断、运行检查、如实报告）
+6. `instruction_memory`（ONECODE.md 规则，来自 `InstructionMemoryLoader`）
+7. `long_term_memory`（MEMORY.md 索引与使用说明）
+8. `workspace_state`（cwd、工具列表、files_read）
+9. `available_tools`（可见 tool descriptor）
+10. `available_skills`（技能目录，≤8000 字符预算，只列 name/description/when_to_use）
+11. `mcp_server_instructions`（来自 `state.metadata`）
+12+. `tool_prompt:{name}`（各工具的 `prompt` 字段）
+
+前三个工程行为 section 是固定文案，只指导模型如何执行任务和沟通结果；它们不替代 guard、permission policy、工具输入校验或执行入口的安全检查。
 
 ### 单一可见工具视图
 

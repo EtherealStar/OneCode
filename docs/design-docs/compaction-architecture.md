@@ -79,7 +79,7 @@ flowchart TD
 
 ### Session memory
 
-`SessionMemory` 字段：`content`、`last_summarized_message_uuid`、`updated_at`、`covered_turn_count`、`source`。`SessionMemoryStore` 读写 `.onecode/<session_id>/session-memory.md`，只服务当前会话压缩后的连续性，不是跨会话长期记忆。
+`SessionMemory` 字段：`content`、`last_summarized_message_uuid`、`updated_at`、`covered_turn_count`、`source`。`SessionMemoryStore` 读写 `.onecode/sessions/<session_id>/session-memory.md`，只服务当前会话压缩后的连续性，不是跨会话长期记忆。
 
 两种生成模式（loop 中二选一）：
 
@@ -111,5 +111,5 @@ compaction service 不生成 session memory；它在 session-memory compact 前�
 
 ## 持久化路径
 
-- session memory：`.onecode/<session_id>/session-memory.md`
-- shared tool result storage：`.onecode/<session_id>/tool-results/<result_id>.txt`
+- session memory：`.onecode/sessions/<session_id>/session-memory.md`
+- shared tool result storage：`.onecode/sessions/<session_id>/tool-results/<result_id>.txt`

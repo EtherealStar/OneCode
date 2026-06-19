@@ -241,7 +241,7 @@ Code agent 做了很多不可见决策：为什么调用某个工具，为什么
 - transition reason。
 - transcript 和大结果路径。
 
-OneCode 用结构化 trace（`TraceRecorder` → `.onecode/<session>/trace.jsonl`）记录短小 runtime 事实，用独立 error log（`ErrorLogRecorder` → `errors.jsonl`）记录未恢复失败的调试证据，两者分离且统一脱敏。UI、debug mode 和测试 harness 都应复用这套结构化记录，而不是各自解析文本日志。
+OneCode 用结构化 trace（`TraceRecorder` → `.onecode/sessions/<session>/trace.jsonl`）记录短小 runtime 事实，用独立 error log（`ErrorLogRecorder` → `errors.jsonl`）记录未恢复失败的调试证据，两者分离且统一脱敏。UI、debug mode 和测试 harness 都应复用这套结构化记录，而不是各自解析文本日志。
 
 ### 12. 简洁是演化速度的保护层
 
