@@ -154,7 +154,7 @@ def render_clear(old_session_id: str, new_session_id: str) -> Text:
     return Text(
         (
             f"{SYMBOLS.success} Started new session {new_session_id}. "
-            f"Previous session {old_session_id} is still in .onecode."
+            f"Previous session {old_session_id} is still in .onecode/sessions."
         ),
         style="onecode.success",
     )
@@ -168,17 +168,6 @@ def render_resume(session_id: str, messages_path: Path, workspace: Path) -> Text
         ),
         style="onecode.success",
     )
-
-
-def render_restored_messages(messages: Iterable[dict[str, Any]]) -> Group:
-    lines: list[Text] = []
-    for message in messages:
-        line = _restored_message_line(message)
-        if line is not None:
-            lines.append(line)
-    if not lines:
-        lines.append(Text("(no restored messages)", style="onecode.subtle"))
-    return Group(*lines)
 
 
 def render_compact(result: Any, runtime: CliRuntime) -> Group:
@@ -240,53 +229,6 @@ def _message_detail(message: dict[str, Any]) -> str:
             return f"<tool call: {', '.join(names)}>"
 
     return preview(message.get("content"))
-
-
-def _restored_message_line(message: dict[str, Any]) -> Text | None:
-    role = message.get("role")
-    if role == "user":
-        # 历史用户行用反色（reverse）显示，与 assistant 输出在视觉上区分。
-        return Text(f"> {preview(message.get('content'))}", style="reverse")
-    if role == "assistant":
-        tool_calls = _tool_call_names(message)
-        if tool_calls:
-            return Text(f"assistant: <tool call: {', '.join(tool_calls)}>")
-        return Text(f"assistant: {preview(message.get('content'))}")
-    if role == "tool_result":
-        status = "error" if message.get("is_error") is True else "ok"
-        tool_name = message.get("tool_name") or "unknown_tool"
-        call_id = message.get("tool_call_id") or "unknown_call"
-        return Text(f"[{tool_name} {call_id} {status}]", style="onecode.subtle")
-    if role == "attachment":
-        attachment_type = (
-            message.get("attachment_type")
-            or message.get("type")
-            or "attachment"
-        )
-        path = message.get("path") or message.get("source") or ""
-        return Text(
-            f"attachment: {attachment_type} {preview(path)}".strip(),
-            style="onecode.subtle",
-        )
-    return None
-
-
-def _tool_call_names(message: dict[str, Any]) -> list[str]:
-    names: list[str] = []
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for call in tool_calls:
-            if not isinstance(call, dict):
-                continue
-            name = call.get("name")
-            function = call.get("function")
-            if not isinstance(name, str) and isinstance(function, dict):
-                function_name = function.get("name")
-                if isinstance(function_name, str):
-                    name = function_name
-            if isinstance(name, str):
-                names.append(name)
-    return names
 
 
 def _trace_attribute(name: str, attributes: dict[str, Any]) -> str:
