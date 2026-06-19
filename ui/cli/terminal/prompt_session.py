@@ -8,14 +8,21 @@ It is a non-full-screen :class:`prompt_toolkit.Application` that:
 - floats a completion menu for ``/``-command and ``@``-file
   completion (:class:`ui.cli.terminal.completer.InlineCompleter`),
 - treats **Enter** as "submit" and **Tab** as "fill but don't
-  submit" when the completion menu is open,
-- supports queueing: while ``queue_mode`` is set, ``Enter`` during a
-  running agent turn pushes the line onto the queue instead of
-  starting a new turn.
+  submit" when the completion menu is open.
 
 The prompt session returns a structured :class:`PromptSubmission`
 rather than a bare string so the REPL loop can distinguish
-submit / queue / cancel / exit without magic strings.
+submit / cancel / exit without magic strings.
+
+Note on running-turn input: queueing is **not** this module's
+responsibility. The agent run-time path is implemented in
+:class:`ui.cli.terminal.stream_session.StreamingSession` (see
+``docs/exec-plans/active/cli-running-input-queue.md``), which
+hosts its own prompt_toolkit input box at the bottom of the
+dynamic region and pushes submissions onto the shared
+:class:`InputQueue`. ``PromptSession`` only ever reads the
+queue to construct the underlying :class:`InputQueue` reference
+passed at construction; it never calls ``queue.push`` itself.
 
 Enter/Tab semantics use prompt_toolkit's native
 :attr:`Buffer.complete_state` as the single source of truth for "what
@@ -61,7 +68,6 @@ class SubmissionKind(str, Enum):
     """How a prompt submission was triggered."""
 
     SUBMIT = "submit"
-    QUEUE = "queue"
     CANCEL = "cancel"
     EXIT = "exit"
 
@@ -135,6 +141,19 @@ def _highlighted_completion(buffer: Buffer) -> Completion | None:
     return None
 
 
+def _completion_kind(completion: Completion) -> str | None:
+    item = getattr(completion, "_suggestion_item", None)
+    kind = getattr(item, "kind", None)
+    return kind if isinstance(kind, str) else None
+
+
+def _apply_completion_for_edit(buffer: Buffer, completion: Completion) -> None:
+    buffer.apply_completion(completion)
+    kind = _completion_kind(completion)
+    if kind == "file" and not buffer.text.endswith(" "):
+        buffer.insert_text(" ")
+
+
 class PromptSession:
     """A reusable wrapper around a prompt_toolkit Application."""
 
@@ -143,7 +162,7 @@ class PromptSession:
         runtime: CliRuntime | None,
         queue: InputQueue,
         *,
-        bottom_hint: str = "Enter to send · Tab to fill · ↑↓ to choose · Ctrl-C to cancel",
+        bottom_hint: str = "",
         exit_confirm_window_seconds: float = 1.5,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -160,11 +179,10 @@ class PromptSession:
     async def read(
         self,
         *,
-        queue_mode: bool,
         input=None,  # type: ignore[no-untyped-def]
         output=None,  # type: ignore[no-untyped-def]
     ) -> PromptSubmission:
-        """Block until the user submits, queues, cancels, or exits.
+        """Block until the user submits, cancels, or exits.
 
         ``input``/``output`` are injection points for tests, which
         pass a :func:`prompt_toolkit.input.create_pipe_input` pipe and
@@ -173,7 +191,7 @@ class PromptSession:
         """
 
         result: list[PromptSubmission | None] = [None]
-        app = self._build_application(queue_mode, result, input=input, output=output)
+        app = self._build_application(result, input=input, output=output)
         await app.run_async()
         # Ctrl-C/Ctrl-D handlers always set a result; a clean exit
         # without a handler firing is treated as a cancel.
@@ -183,7 +201,6 @@ class PromptSession:
 
     def _build_application(
         self,
-        queue_mode: bool,
         result: list[PromptSubmission | None],
         *,
         input=None,  # type: ignore[no-untyped-def]
@@ -197,13 +214,12 @@ class PromptSession:
         )
         hint = _PromptHint(self._bottom_hint)
         self._active_hint = hint
-        gutter = "▌ " if queue_mode else "> "
         buffer_control = BufferControl(
             buffer=buffer,
-            input_processors=[BeforeInput(gutter, style="class:prompt-gutter")],
+            input_processors=[BeforeInput("> ", style="class:prompt-gutter")],
             include_default_input_processors=True,
         )
-        bindings = self._build_key_bindings(buffer, queue_mode, result, hint)
+        bindings = self._build_key_bindings(buffer, result, hint)
 
         prompt_window = Window(
             content=buffer_control,
@@ -213,10 +229,11 @@ class PromptSession:
         suggestion_panel = _suggestion_panel(buffer)
         body = HSplit(
             [
+                _spacer_window(),
                 _border_window(),
                 prompt_window,
                 suggestion_panel,
-                _hint_window(hint.text),
+                _hint_window(buffer, hint.text),
                 _border_window(),
             ]
         )
@@ -234,7 +251,6 @@ class PromptSession:
     def _build_key_bindings(
         self,
         buffer: Buffer,
-        queue_mode: bool,
         result: list[PromptSubmission | None],
         hint: "_PromptHint",
     ) -> KeyBindings:
@@ -249,8 +265,16 @@ class PromptSession:
         def _on_enter(event) -> None:  # type: ignore[no-untyped-def]
             completion = _highlighted_completion(buffer)
             if completion is not None:
-                # Menu open + Enter → accept the highlighted item and
-                # submit it immediately.
+                kind = _completion_kind(completion)
+                if kind in {"file", "directory"}:
+                    # File mentions are usually followed by a natural-language
+                    # request, so accepting them keeps the prompt open.
+                    _apply_completion_for_edit(buffer, completion)
+                    hint.reset()
+                    event.app.invalidate()
+                    return
+                # Command/session completion is a complete input target:
+                # accept the highlighted item and submit it immediately.
                 buffer.apply_completion(completion)
                 text = buffer.text.strip()
                 if text:
@@ -258,11 +282,6 @@ class PromptSession:
                 return
             text = buffer.text.strip()
             if not text:
-                return
-            if queue_mode:
-                # Agent is running: queue the line and report it back.
-                self._queue.push(text)
-                finish(PromptSubmission(SubmissionKind.QUEUE, text), event)
                 return
             finish(PromptSubmission(SubmissionKind.SUBMIT, text), event)
 
@@ -274,7 +293,7 @@ class PromptSession:
             if completion is not None:
                 # Menu open + Tab → fill the input with the item but do
                 # NOT submit. The next Enter submits it.
-                buffer.apply_completion(completion)
+                _apply_completion_for_edit(buffer, completion)
                 return
             # No menu: trigger completion so the user sees suggestions.
             buffer.start_completion(select_first=False)
@@ -371,15 +390,29 @@ def _border_window() -> Window:
     )
 
 
-def _hint_window(hint: Callable[[], str]) -> ConditionalContainer:
+def _spacer_window() -> Window:
+    return Window(height=Dimension(min=1, max=1), char="")
+
+
+def _hint_window(buffer: Buffer, hint: Callable[[], str]) -> ConditionalContainer:
     window = Window(
         height=Dimension(min=1, max=1),
-        content=FormattedTextControl(lambda: [("class:prompt-hint", hint())]),
+        content=FormattedTextControl(lambda: [("class:prompt-hint", _hint_text(buffer, hint))]),
         style="class:prompt-hint",
     )
-    # Always shown; ConditionalContainer keeps the door open for
-    # hiding the hint on very short terminals later.
-    return ConditionalContainer(window, filter=Condition(lambda: True))
+    return ConditionalContainer(
+        window,
+        filter=Condition(lambda: bool(_hint_text(buffer, hint))),
+    )
+
+
+def _hint_text(buffer: Buffer, hint: Callable[[], str]) -> str:
+    text = hint()
+    if text:
+        return text
+    if _suggestion_rows(buffer):
+        return "Enter to accept · Tab to fill · ↑↓ to choose"
+    return ""
 
 
 class _PromptHint:
