@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.text import Text
 
+from ui.cli.terminal.markdown_rendering import render_cached_markdown
 from ui.cli.tool_renderers import (
     render_fallback_tool_result,
     render_tool_result,
@@ -120,14 +120,32 @@ def print_assistant_start() -> None:
 def print_assistant_markdown(text: str) -> None:
     """Commit a complete assistant reply as Markdown.
 
-    Called once when streaming finishes. The ``onecode>`` prefix was
-    already printed by :func:`print_assistant_start`, so we just
-    print the Markdown body on a fresh row.
+    Called once when streaming finishes. The function prints the
+    ``onecode>`` prefix on a fresh row, then the Markdown body. We
+    print the prefix here (rather than relying on a separate
+    :func:`print_assistant_start` call) so callers cannot forget the
+    prefix and leave the committed assistant text without an
+    identity marker.
+
+    The body is rendered through :func:`render_cached_markdown` so
+    replays of the same assistant message (e.g. after ``/clear`` or
+    session resume) hit the text cache instead of re-lexing.
     """
 
     if not text:
         return
-    print_static(Markdown(text))
+    static_console().print(
+        Text("onecode> ", style=assistant_prefix_style()),
+        end="",
+    )
+    width = static_console().width or 80
+    cached_lines = render_cached_markdown(text, width=width)
+    if cached_lines:
+        # Print the rendered lines verbatim; this preserves any
+        # colour / table layout we already computed. An empty result
+        # (e.g. whitespace-only input) prints nothing.
+        body = "\n".join(cached_lines)
+        print_static(Text(body))
 
 
 def print_assistant_inline(text: str) -> None:
@@ -184,13 +202,20 @@ def print_tool_result(
     call_id: str,
     workspace: Path | None = None,
 ) -> None:
-    """Print the result line for a finished tool call."""
+    """Print the result line for a finished tool call.
+
+    The line is wrapped in the unified ``⎿`` container used by every
+    tool result in the static region. Specific tool renderers in
+    :mod:`ui.cli.tool_renderers` must not embed the container
+    themselves; the framework owns it so nesting and styling stay
+    consistent across tools.
+    """
 
     if hasattr(result, "tool_call_id"):
         line = render_tool_result(result, workspace=workspace) if workspace is not None else render_fallback_tool_result(result)
     else:
         line = render_fallback_tool_result(result)
-    print_static(Text(f"  {line}", style="onecode.subtle"))
+    print_static(Text(f"  ⎿  {line}", style="onecode.subtle"))
 
 
 def print_untrusted_mcp_notice(name: str, detail: str) -> None:
