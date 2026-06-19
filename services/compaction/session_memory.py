@@ -48,12 +48,20 @@ class SessionMemoryExtractionDecision:
     tool_call_delta: int
 
 
+@dataclass(frozen=True)
+class SessionMemoryExtractionJob:
+    messages: tuple[dict[str, Any], ...]
+    decision: SessionMemoryExtractionDecision
+    parent_session_id: str
+    parent_tool_call_id: str
+
+
 class SessionMemorySubagentRunner(Protocol):
     async def run(self, request: SubagentRequest) -> SubagentResult: ...
 
 
 class SessionMemoryStore:
-    """Read and write `.onecode/<session_id>/session-memory.md` only."""
+    """Read and write `.onecode/sessions/<session_id>/session-memory.md` only."""
 
     def __init__(self, session_dir: Path | str) -> None:
         self._session_dir = Path(session_dir)
@@ -144,6 +152,8 @@ class SessionMemoryExtractionService:
         self._policy = policy or SessionMemoryExtractionPolicy()
         self._trace_recorder = trace_recorder or TraceRecorder.noop()
         self._lock = asyncio.Lock()
+        self._active_done = asyncio.Event()
+        self._active_done.set()
 
     @property
     def store(self) -> SessionMemoryStore:
@@ -162,13 +172,43 @@ class SessionMemoryExtractionService:
         tool_calls: tuple[Any, ...],
         usage: Any | None = None,
     ) -> None:
-        """Run extraction when the message/tool growth threshold is reached."""
+        """Evaluate extraction only.
+
+        Production CLI wiring injects a background scheduler that calls
+        ``prepare_extraction_job`` and runs the returned job in a dream task.
+        This method intentionally does not run the fork child synchronously.
+        """
+
+        job = self.prepare_extraction_job(
+            messages,
+            state,
+            assistant_message=assistant_message,
+            tool_calls=tool_calls,
+            usage=usage,
+        )
+        if job is not None:
+            _merge_extraction_metadata(
+                state,
+                {"last_status": "not_scheduled", "running": False},
+            )
+            self._active_done.set()
+
+    def prepare_extraction_job(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+        *,
+        assistant_message: dict[str, Any],
+        tool_calls: tuple[Any, ...],
+        usage: Any | None = None,
+    ) -> SessionMemoryExtractionJob | None:
+        """Return a background extraction job when thresholds are met."""
 
         _ = assistant_message, usage
         if state.metadata.get("query_source") == "compact":
-            return
+            return None
         if state.metadata.get("memory_extraction_agent") is True:
-            return
+            return None
 
         decision = should_extract_memory(
             messages,
@@ -188,31 +228,68 @@ class SessionMemoryExtractionService:
         )
         if not decision.should_extract:
             self._trace_decision("skipped", decision)
-            return
+            return None
         if self._lock.locked():
             _merge_extraction_metadata(
                 state,
                 {"last_status": "skipped_running", "running": True},
             )
             self._trace_decision("skipped_running", decision)
-            return
+            return None
 
+        started_at = _now()
+        _merge_extraction_metadata(
+            state,
+            {
+                "last_status": "scheduled",
+                "last_started_at": started_at,
+                "running": True,
+                "path": str(self._store.path),
+            },
+        )
+        self._active_done.clear()
+        self._trace_decision("scheduled", decision)
+        return SessionMemoryExtractionJob(
+            messages=tuple(messages),
+            decision=decision,
+            parent_session_id=state.session_id,
+            parent_tool_call_id=f"session-memory-{state.turn_count}",
+        )
+
+    def record_background_task(self, state: RuntimeState, task_id: str) -> None:
+        _merge_extraction_metadata(
+            state,
+            {
+                "background_task_id": task_id,
+                "last_status": "scheduled",
+                "running": True,
+            },
+        )
+
+    def record_background_cancelled(self, state: RuntimeState) -> None:
+        _merge_extraction_metadata(
+            state,
+            {
+                "last_status": "killed",
+                "last_completed_at": _now(),
+                "running": False,
+            },
+        )
+        self._active_done.set()
+
+    async def run_extraction_job(
+        self,
+        job: SessionMemoryExtractionJob,
+        state: RuntimeState,
+    ) -> dict[str, Any]:
+        """Run a prepared extraction job in a background task."""
+
+        current_decision = job.decision
         async with self._lock:
-            current_decision = should_extract_memory(
-                messages,
-                state,
-                self._policy,
-                last_response_had_tool_calls=bool(tool_calls),
-            )
-            if not current_decision.should_extract:
-                self._trace_decision("skipped_after_lock", current_decision)
-                return
-            started_at = _now()
             _merge_extraction_metadata(
                 state,
                 {
                     "last_status": "running",
-                    "last_started_at": started_at,
                     "running": True,
                     "path": str(self._store.path),
                 },
@@ -224,8 +301,8 @@ class SessionMemoryExtractionService:
                         current_memory=self._store.read(),
                     ),
                     subagent_type=None,
-                    parent_session_id=state.session_id,
-                    parent_tool_call_id=f"session-memory-{state.turn_count}",
+                    parent_session_id=job.parent_session_id,
+                    parent_tool_call_id=job.parent_tool_call_id,
                     metadata={
                         "purpose": "session_memory_extraction",
                         "allowed_memory_path": str(self._store.path.resolve()),
@@ -259,6 +336,25 @@ class SessionMemoryExtractionService:
                         "child_session_id": result.session_id,
                     },
                 )
+                return {
+                    "summary": "Session memory updated.",
+                    "result_session_id": result.session_id,
+                    "memory_path": str(self._store.path),
+                }
+            except asyncio.CancelledError:
+                _merge_extraction_metadata(
+                    state,
+                    {
+                        "last_status": "killed",
+                        "last_completed_at": _now(),
+                        "running": False,
+                    },
+                )
+                self._trace_recorder.event(
+                    "session_memory_extraction_cancelled",
+                    {"path": self._store.path},
+                )
+                raise
             except Exception as exc:
                 _merge_extraction_metadata(
                     state,
@@ -276,15 +372,22 @@ class SessionMemoryExtractionService:
                         "path": self._store.path,
                     },
                 )
+                return {
+                    "summary": "Session memory update failed.",
+                    "error_type": type(exc).__name__,
+                    "memory_path": str(self._store.path),
+                }
+            finally:
+                self._active_done.set()
 
     async def wait_for_current_extraction(self, state: RuntimeState) -> None:
         """Wait for an in-flight extraction before compaction consumes memory."""
 
-        if not self._lock.locked():
+        if self._active_done.is_set() and not self._lock.locked():
             return
         _merge_extraction_metadata(state, {"last_status": "waiting", "running": True})
-        async with self._lock:
-            _merge_extraction_metadata(state, {"running": False})
+        await self._active_done.wait()
+        _merge_extraction_metadata(state, {"running": False})
 
     def _trace_decision(
         self,

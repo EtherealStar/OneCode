@@ -33,7 +33,7 @@ class JsonlTranscriptStore:
     """按 session 将内部消息缓冲并定时追加写入 JSONL。
 
     参数:
-    - root_dir: 会话根目录，通常是项目根目录下的 `.onecode`。
+    - root_dir: 会话根目录，通常是项目根目录下的 `.onecode/sessions`。
     - session_id: 当前运行时会话 UUID，会成为子目录名。
     - cwd: 记录到 JSONL 的当前工作目录；不传时使用当前进程目录。
     - flush_interval_seconds: 自动 flush 的间隔；测试可调用 `flush()` 立即落盘。
@@ -247,6 +247,64 @@ class JsonlTranscriptStore:
                 )
                 self._flush_timer.daemon = True
                 self._flush_timer.start()
+
+
+class InMemoryTranscriptStore:
+    """Transcript-store compatible sink that never writes session files.
+
+    This is used for short-lived internal child runtimes. Their live
+    conversation still belongs in ``MessageStore`` while the child is running,
+    but the transcript is an implementation detail and should not appear as a
+    resumable user session.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        self._records: list[LoadedTranscriptMessage] = []
+
+    @property
+    def session_dir(self) -> Path:
+        return Path("<memory>") / self.session_id
+
+    @property
+    def messages_path(self) -> Path:
+        return self.session_dir / "messages.jsonl"
+
+    @property
+    def tool_results_dir(self) -> Path:
+        return self.session_dir / "tool-results"
+
+    @property
+    def tool_result_storage(self) -> ToolResultStorage:
+        return ToolResultStorage(self.session_dir)
+
+    def switch_session(self, session_id: str) -> None:
+        self.session_id = session_id
+        self._records.clear()
+
+    def append_message(
+        self,
+        message: dict[str, Any],
+        *,
+        message_uuid: str,
+        parent_uuid: str | None,
+    ) -> None:
+        self._records.append(
+            LoadedTranscriptMessage(
+                uuid=message_uuid,
+                parent_uuid=parent_uuid,
+                session_id=self.session_id,
+                timestamp=_utc_timestamp(),
+                sequence=len(self._records),
+                message=deepcopy(message),
+            )
+        )
+
+    def load_messages(self) -> tuple[LoadedTranscriptMessage, ...]:
+        return tuple(self._records)
+
+    def flush(self) -> None:
+        return None
 
 
 def _utc_timestamp() -> str:

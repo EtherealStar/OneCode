@@ -18,6 +18,7 @@ from services.tools.types import (
     is_guard_policy_allowed,
 )
 from tools.write_file.prompt import PROMPT
+from utils.text_io import read_text_file, write_text_file
 
 
 MAX_DIFF_CHARS = 4_000
@@ -108,7 +109,7 @@ def _handle(
 
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        write_text_file(path, content)
         return ToolExecutionResult(
             tool_call_id="",
             tool_name="write_file",
@@ -124,8 +125,8 @@ def _handle(
     if cached_result is not None:
         return cached_result
 
-    before = path.read_text(encoding="utf-8", errors="replace")
-    path.write_text(content, encoding="utf-8")
+    before = read_text_file(path)
+    write_text_file(path, content)
     diff, truncated = _short_diff(before, content)
     result_content = f"Updated {path} ({line_count} line(s))."
     if diff:
@@ -178,7 +179,7 @@ def _validate_cached_file_state(
     if current_mtime_ns == cached.mtime_ns:
         return None
 
-    current = path.read_text(encoding="utf-8", errors="replace")
+    current = read_text_file(path)
     if current != cached.content:
         return ToolExecutionResult(
             tool_call_id="",

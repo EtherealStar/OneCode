@@ -4,6 +4,7 @@ from services.compaction.service import ContextCompactionService
 from services.compaction.session_memory import (
     SessionMemory,
     SessionMemoryExtractionDecision,
+    SessionMemoryExtractionJob,
     SessionMemoryExtractionPolicy,
     SessionMemoryExtractionService,
     SessionMemoryStore,
@@ -31,6 +32,7 @@ __all__ = [
     "ContextCompactionService",
     "SessionMemory",
     "SessionMemoryExtractionDecision",
+    "SessionMemoryExtractionJob",
     "SessionMemoryExtractionPolicy",
     "SessionMemoryExtractionService",
     "SessionMemoryStore",

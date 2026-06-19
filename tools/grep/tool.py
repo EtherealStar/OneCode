@@ -30,6 +30,7 @@ from services.tools.types import (
     is_guard_policy_allowed,
 )
 from tools.grep.prompt import PROMPT
+from utils.text_io import decode_text
 
 
 DEFAULT_HEAD_LIMIT = 250
@@ -56,14 +57,13 @@ class SubprocessRipgrepRunner:
         completed = subprocess.run(
             [executable, *args],
             cwd=cwd,
-            text=True,
             capture_output=True,
             check=False,
         )
         return RipgrepResult(
             returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=decode_text(completed.stdout),
+            stderr=decode_text(completed.stderr),
         )
 
 

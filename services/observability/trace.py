@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import contextvars
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 import json
@@ -217,7 +218,15 @@ class TraceSpan:
         _ = exc_type, traceback
         self.end(error=exc)
         if self._token is not None:
-            _CURRENT_SPAN_ID.reset(self._token)
+            try:
+                _CURRENT_SPAN_ID.reset(self._token)
+            except ValueError:
+                # Async generators can be closed from a different
+                # context than the one that entered the span, for
+                # example when the CLI cancels a streaming turn. Trace
+                # cleanup must not turn cancellation into a runtime
+                # failure.
+                contextvars.copy_context().run(_CURRENT_SPAN_ID.set, self.parent_span_id)
             self._token = None
         return False
 

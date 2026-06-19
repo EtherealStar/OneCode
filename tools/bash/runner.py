@@ -9,6 +9,8 @@ import subprocess
 import time
 from typing import Protocol
 
+from utils.text_io import decode_text
+
 
 DEFAULT_TIMEOUT_MS = 120_000
 MAX_TIMEOUT_MS = 600_000
@@ -43,9 +45,6 @@ class GitBashRunner:
             completed = subprocess.run(
                 [str(bash), "--noprofile", "--norc", "-lc", command],
                 cwd=cwd,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 capture_output=True,
                 check=False,
                 timeout=timeout_ms / 1000,
@@ -54,16 +53,16 @@ class GitBashRunner:
             duration_ms = int((time.monotonic() - start) * 1000)
             return BashRunResult(
                 exit_code=124,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "Command timed out.",
+                stdout=decode_text(exc.stdout),
+                stderr=decode_text(exc.stderr) or "Command timed out.",
                 duration_ms=duration_ms,
                 timed_out=True,
             )
         duration_ms = int((time.monotonic() - start) * 1000)
         return BashRunResult(
             exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=decode_text(completed.stdout),
+            stderr=decode_text(completed.stderr),
             duration_ms=duration_ms,
         )
 

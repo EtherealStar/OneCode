@@ -86,11 +86,7 @@ class SubagentRunner:
             self._configure_memory_extraction_child(child_state, request)
         if is_long_term_memory_extraction:
             self._configure_long_term_memory_extraction_child(child_state, request)
-        child_store = MessageStore(
-            transcript_root=self._transcript_root,
-            session_id=child_state.session_id,
-            cwd=self._workspace,
-        )
+        child_store = MessageStore.ephemeral(session_id=child_state.session_id)
         seed_result = self._seed_child_messages(
             child_store,
             definition,
@@ -177,11 +173,7 @@ class SubagentRunner:
         child_state = RuntimeState(max_turns=definition.max_turns or 20)
         _copy_shared_runtime_metadata(request, child_state)
         child_state.metadata["hidden_tools"] = {"agent", "skill"}
-        child_store = MessageStore(
-            transcript_root=self._transcript_root,
-            session_id=child_state.session_id,
-            cwd=self._workspace,
-        )
+        child_store = MessageStore.ephemeral(session_id=child_state.session_id)
         child_store.seed_messages(({"role": "user", "content": request.prompt},))
 
         permission_policy = self._permission_policy.with_scoped_allowed_tools(

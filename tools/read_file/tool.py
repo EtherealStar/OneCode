@@ -18,6 +18,7 @@ from services.tools.types import (
     is_guard_policy_allowed,
 )
 from tools.read_file.prompt import PROMPT
+from utils.text_io import read_text_file
 
 DEFAULT_LIMIT = 2000
 
@@ -117,7 +118,7 @@ def _handle(
             metadata={"error": "file_not_found", "path": str(path)},
         )
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = read_text_file(path)
     lines = text.splitlines()
     offset = int(tool_input.get("offset", 1))
     limit = int(tool_input.get("limit", DEFAULT_LIMIT))

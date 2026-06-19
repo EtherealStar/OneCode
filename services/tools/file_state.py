@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import difflib
 from pathlib import Path
 
+from utils.text_io import read_text_file
+
 
 MAX_DIFF_CHARS = 4_000
 
@@ -55,7 +57,7 @@ class FileStateCache:
             return None
         try:
             stat = resolved.stat()
-            content = resolved.read_text(encoding="utf-8", errors="replace")
+            content = read_text_file(resolved)
         except OSError:
             return None
         state = FileState(
@@ -86,7 +88,7 @@ class FileStateCache:
             if current_mtime == cached.mtime_ns:
                 continue
             try:
-                current = path.read_text(encoding="utf-8", errors="replace")
+                current = read_text_file(path)
             except OSError:
                 continue
             self.snapshot_path(path, partial=False)

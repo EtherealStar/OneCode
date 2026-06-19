@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import json
 from typing import Any
 
 from core.runtime_state import RuntimeState
@@ -62,7 +61,7 @@ def _project_attachment_message(message: dict[str, Any]) -> tuple[dict[str, Any]
 def _project_file(
     attachment: dict[str, Any],
     message: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], ...]:
     metadata = (
         message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
     )
@@ -78,29 +77,28 @@ def _project_file(
         arguments["offset"] = offset
     if isinstance(limit, int):
         arguments["limit"] = limit
+    details = "\n".join(f"- {key}: {value}" for key, value in arguments.items())
+    notice = (
+        "[attachment file]\n"
+        f"Synthetic call id: {call_id}\n"
+        "Equivalent tool: read_file\n"
+        f"{details}\n\n"
+        "Result:\n"
+        f"{attachment.get('content', '')}"
+    )
+    if attachment.get("truncated") is True:
+        notice += (
+            "\n\n[Attachment content was truncated; use read_file if more detail is needed.]"
+        )
     return (
         {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "arguments": json.dumps(arguments, ensure_ascii=False),
-                    },
-                }
-            ],
-            "metadata": {"synthetic": True, "source": "attachment"},
-        },
-        {
-            "role": "tool_result",
-            "tool_call_id": call_id,
-            "tool_name": "read_file",
-            "content": str(attachment.get("content", "")),
-            "is_error": False,
-            "metadata": {"synthetic": True, "source": "attachment"},
+            "role": "user",
+            "content": notice,
+            "metadata": {
+                "synthetic": True,
+                "source": "attachment",
+                "attachment_type": "file",
+            },
         },
     )
 
