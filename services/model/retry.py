@@ -1,4 +1,30 @@
-"""Provider-neutral retry engine for model streams."""
+"""Provider-neutral retry engine for model streams.
+
+This runner is intentionally **non-buffering**: events yielded by the
+underlying provider operation are forwarded to the caller the instant
+they arrive. The previous design collected the full attempt into a
+``list[ModelStreamEvent]`` and only replayed it after the attempt
+finished, which prevented OneCode's UI from showing a real-time
+streaming response.
+
+The new contract is:
+
+- ``stream()`` forwards every ``ModelStreamEvent`` it receives from the
+  operation immediately. The caller sees a ``content_delta`` as soon as
+  the provider emits it.
+- If a ``ProviderError`` is raised after at least one event has already
+  been yielded, the partial output is **already visible to the caller**;
+  the runner does not pretend the failed attempt never happened.
+- The runner still owns the retry policy (exponential backoff, max
+  retries, jitter, error logging). It still calls ``on_retry`` so the
+  CLI can show a visible transition.
+- ``RetryExhaustedError`` is still raised when ``max_retries`` is hit
+  for a retryable error.
+
+The runner never hides streaming text from the caller. If a failed
+attempt streamed partial content, that content reached the caller and
+the UI committed it. The retry semantics are visible, not silent.
+"""
 
 from __future__ import annotations
 
@@ -81,10 +107,15 @@ class ModelRetryRunner:
     ) -> AsyncIterator[ModelStreamEvent]:
         attempt = 1
         while True:
-            buffer: list[ModelStreamEvent] = []
+            # We don't accumulate events in a buffer any more — they
+            # are forwarded to the caller as soon as the provider
+            # yields them. This is the only way the CLI can show real
+            # live streaming text.
+            forwarded_any = False
             try:
                 async for event in operation():
-                    buffer.append(event)
+                    forwarded_any = True
+                    yield event
             except ProviderError as exc:
                 if not self._should_retry(exc) or attempt > self.policy.max_retries:
                     if attempt > self.policy.max_retries and self._should_retry(exc):
@@ -95,13 +126,17 @@ class ModelRetryRunner:
                                 "max_retries": self.policy.max_retries,
                                 "error_type": exc.error_type,
                                 "provider_id": exc.provider_id,
+                                "partial_output_visible": forwarded_any,
                             },
                         )
                         exhausted.__cause__ = exc
                         self.error_log_recorder.record_error(
                             exhausted,
                             source="model_retry",
-                            attributes={"attempt": attempt},
+                            attributes={
+                                "attempt": attempt,
+                                "partial_output_visible": forwarded_any,
+                            },
                         )
                         raise exhausted from exc
                     raise
@@ -116,6 +151,7 @@ class ModelRetryRunner:
                         "error_type": exc.error_type,
                         "provider_id": exc.provider_id,
                         "status_code": exc.status_code,
+                        "partial_output_visible": forwarded_any,
                     },
                 )
                 self.error_log_recorder.record_error(
@@ -125,6 +161,7 @@ class ModelRetryRunner:
                         "attempt": decision.attempt,
                         "max_retries": decision.max_retries,
                         "delay_seconds": decision.delay_seconds,
+                        "partial_output_visible": forwarded_any,
                     },
                 )
                 if on_retry is not None:
@@ -135,8 +172,7 @@ class ModelRetryRunner:
                 attempt += 1
                 continue
 
-            for event in buffer:
-                yield event
+            # Operation completed without raising; we are done.
             return
 
     def _should_retry(self, error: ProviderError) -> bool:

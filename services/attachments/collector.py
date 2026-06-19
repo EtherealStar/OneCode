@@ -24,6 +24,7 @@ from services.tools.types import (
     ToolDescriptor,
     ToolTarget,
 )
+from utils.text_io import read_text_file
 
 
 MAX_DIRECTORY_ENTRIES = 1_000
@@ -95,7 +96,7 @@ class AttachmentFileReader:
         if not path.exists():
             return ReadResult(ok=False, error="file_not_found")
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_file(path)
         except OSError as exc:
             return ReadResult(ok=False, error=type(exc).__name__)
         if offset is None and limit is None:

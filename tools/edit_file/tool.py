@@ -16,6 +16,7 @@ from services.tools.types import (
     is_guard_policy_allowed,
 )
 from tools.edit_file.prompt import PROMPT
+from utils.text_io import read_text_file, write_text_file
 
 
 INPUT_SCHEMA: dict[str, Any] = {
@@ -117,7 +118,7 @@ def _handle(
                 metadata={"error": "file_not_found", "path": str(path)},
             )
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_string, encoding="utf-8")
+        write_text_file(path, new_string)
         return ToolExecutionResult(
             tool_call_id="",
             tool_name="edit_file",
@@ -136,7 +137,7 @@ def _handle(
             metadata={"error": "file_not_read", "path": str(path)},
         )
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = read_text_file(path)
     occurrence_count = text.count(old_string)
     if occurrence_count == 0:
         return ToolExecutionResult(
@@ -168,7 +169,7 @@ def _handle(
         if replace_all
         else text.replace(old_string, new_string, 1)
     )
-    path.write_text(updated, encoding="utf-8")
+    write_text_file(path, updated)
 
     return ToolExecutionResult(
         tool_call_id="",

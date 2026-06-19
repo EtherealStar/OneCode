@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from services.context.transcript import JsonlTranscriptStore
+from services.context.transcript import InMemoryTranscriptStore, JsonlTranscriptStore
 from services.context.recovery import restore_transcript_active_chain
 from services.tools.types import ToolExecutionResult
 
@@ -26,7 +26,7 @@ class MessageStore:
     def __init__(
         self,
         *,
-        transcript_store: JsonlTranscriptStore | None = None,
+        transcript_store: Any | None = None,
         transcript_root: Path | str = ".onecode",
         session_id: str | None = None,
         cwd: Path | None = None,
@@ -194,6 +194,16 @@ class MessageStore:
         self._transcript_store.switch_session(new_session_id)
 
     @classmethod
+    def ephemeral(
+        cls,
+        *,
+        session_id: str,
+    ) -> "MessageStore":
+        """Create a message store whose transcript never writes to disk."""
+
+        return cls(transcript_store=InMemoryTranscriptStore(session_id))
+
+    @classmethod
     def from_transcript(
         cls,
         transcript_store: JsonlTranscriptStore,
@@ -202,7 +212,7 @@ class MessageStore:
         """从 JSONL transcript 恢复内存消息存储。
 
         参数:
-        - transcript_store: 指向既有 `.onecode/<session_id>/messages.jsonl`
+        - transcript_store: 指向既有 `.onecode/sessions/<session_id>/messages.jsonl`
           的 transcript store。
         - state: 当前运行时状态。恢复成功后会把 `state.session_id` 替换为
           transcript 文件中的 session UUID。

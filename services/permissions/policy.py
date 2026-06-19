@@ -658,9 +658,13 @@ def _is_session_tool_result_read(policy: GuardPolicy, state: RuntimeState) -> bo
     for index, part in enumerate(parts):
         if part != ".onecode":
             continue
-        if index + 2 >= len(parts):
+        if index + 3 >= len(parts):
             continue
-        if parts[index + 1] == session_id.lower() and parts[index + 2] == "tool-results":
+        if (
+            parts[index + 1] == "sessions"
+            and parts[index + 2] == session_id.lower()
+            and parts[index + 3] == "tool-results"
+        ):
             return True
     return False
 

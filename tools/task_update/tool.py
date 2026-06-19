@@ -207,10 +207,15 @@ async def _handle(
         )
 
     changed = _changed_fields(parsed, dependency_changes)
+    content = f"Task #{updated.id} updated: {', '.join(changed) if changed else 'no changes'}"
+    if parsed.status == "completed" and existing.status != "completed":
+        content += (
+            "\nTask completed. Use task_list if you need to check remaining or newly unblocked work."
+        )
     return ToolExecutionResult(
         tool_call_id=runtime.tool_call_id,
         tool_name="task_update",
-        content=f"Task #{updated.id} updated: {', '.join(changed) if changed else 'no changes'}",
+        content=content,
         metadata={
             "task_id": updated.id,
             "task_list_id": task_list_id,
