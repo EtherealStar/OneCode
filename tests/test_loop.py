@@ -134,11 +134,28 @@ class FollowupToolExecutor:
             )
 
 
+@dataclass
+class NonBlockingSessionMemoryExtractor:
+    called: bool = False
+
+    async def maybe_extract_after_model_response(
+        self,
+        messages: tuple[dict[str, Any], ...],
+        state: RuntimeState,
+        *,
+        assistant_message: dict[str, Any],
+        tool_calls: tuple[Any, ...],
+        usage: Any | None = None,
+    ) -> None:
+        _ = messages, state, assistant_message, tool_calls, usage
+        self.called = True
+
+
 def make_loop(
     responses: list[LLMResponse],
     *,
     transcript_root: Path,
-    max_turns: int = 20,
+    max_turns: int | None = None,
 ) -> tuple[AgentLoop, MessageStore, FakeModelClient, FakeToolExecutor]:
     state = RuntimeState(max_turns=max_turns)
     message_store = MessageStore(
@@ -215,6 +232,40 @@ def test_loop_stops_without_tool_calls(tmp_path: Path) -> None:
     assert message_store.current_messages()[-1] == assistant_message("done")
 
 
+def test_loop_returns_completed_after_session_memory_scheduler_returns(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    message_store = MessageStore(
+        transcript_root=tmp_path / ".onecode",
+        session_id=state.session_id,
+        flush_interval_seconds=60,
+    )
+    model_client = FakeModelClient(
+        [
+            LLMResponse(
+                assistant_message=assistant_message("done"),
+                final_text="done",
+            )
+        ]
+    )
+    extractor = NonBlockingSessionMemoryExtractor()
+    loop = AgentLoop(
+        state=state,
+        message_store=message_store,
+        context_engine=ContextEngine(message_store),
+        model_client=model_client,
+        tool_executor=FakeToolExecutor(),
+        session_memory_extractor=extractor,
+    )
+
+    events = collect_events(loop, "hello")
+
+    assert extractor.called is True
+    assert events[-1].type == "completed"
+    assert events[-1].text == "done"
+
+
 def test_loop_persists_attachment_but_model_sees_projection(tmp_path: Path) -> None:
     attachment = AttachmentMessage(
         attachment={
@@ -259,7 +310,7 @@ def test_loop_persists_attachment_but_model_sees_projection(tmp_path: Path) -> N
     assert stored[0]["role"] == "user"
     assert stored[1]["role"] == "attachment"
     snapshot_roles = [message["role"] for message in model_client.snapshots[0].messages]
-    assert snapshot_roles == ["user", "assistant", "tool_result"]
+    assert snapshot_roles == ["user", "user"]
 
 
 def test_loop_continues_when_tool_calls_present(tmp_path: Path) -> None:
@@ -410,6 +461,36 @@ def test_loop_max_turns(tmp_path: Path) -> None:
     assert len(tool_executor.calls) == 1
 
 
+def test_loop_default_turns_are_unlimited(tmp_path: Path) -> None:
+    tool_call = ToolCall(id="call-1", name="loop", input={})
+    responses = [
+        LLMResponse(
+            assistant_message={"role": "assistant", "content": []},
+            final_text="",
+            tool_calls=(tool_call,),
+        )
+        for _ in range(21)
+    ]
+    responses.append(
+        LLMResponse(
+            assistant_message=assistant_message("done"),
+            final_text="done",
+        )
+    )
+    loop, _message_store, model_client, tool_executor = make_loop(
+        responses,
+        transcript_root=tmp_path / ".onecode",
+    )
+
+    result = run_to_final_text(loop, "keep going")
+
+    assert result == "done"
+    assert loop.state.last_transition == TransitionReason.COMPLETED
+    assert loop.state.turn_count == 22
+    assert len(model_client.snapshots) == 22
+    assert len(tool_executor.calls) == 21
+
+
 def test_loop_records_interaction_model_and_transition_trace(tmp_path: Path) -> None:
     state = RuntimeState()
     message_store = MessageStore(
@@ -496,9 +577,19 @@ def test_loop_reactive_compacts_once_after_context_limit(tmp_path: Path) -> None
     assert len(model_client.snapshots) == 2
 
 
-def test_loop_retries_retryable_provider_error_and_hides_partial_delta(
+def test_loop_retries_retryable_provider_error_and_surfaces_partial_delta(
     tmp_path: Path,
 ) -> None:
+    """A retryable provider error mid-stream must not hide the partial text.
+
+    The new contract: ``assistant_delta`` from the failed attempt is
+    delivered live, a ``rate_limit_retry`` transition marks the
+    interruption, and the final persisted message is the successful
+    attempt's assistant text. The failed attempt's partial text
+    therefore does *not* appear as a persisted message — but the
+    consumer saw it.
+    """
+
     state = RuntimeState()
     message_store = MessageStore(
         transcript_root=tmp_path / ".onecode",
@@ -539,23 +630,42 @@ def test_loop_retries_retryable_provider_error_and_hides_partial_delta(
 
     events = collect_events(loop, "recover")
 
+    # Live streaming means the consumer sees the failed attempt's
+    # partial delta too. The retry runner no longer hides it.
     assert [event.text for event in events if event.type == "assistant_delta"] == [
-        "final"
+        "partial",
+        "final",
     ]
-    assert "partial" not in json.dumps(message_store.current_messages())
-    assert any(
-        event.type == "transition"
-        and event.transition == TransitionReason.RATE_LIMIT_RETRY.value
+    # The retry transition is surfaced to the caller.
+    retry_transition = next(
+        event
         for event in events
+        if event.type == "transition"
+        and event.transition == TransitionReason.RATE_LIMIT_RETRY.value
     )
+    assert retry_transition.metadata.get("partial_output_visible") is True
+    # The persisted transcript only contains the successful attempt's
+    # assistant message; failed-attempt partial text never reaches
+    # the message store.
+    assert "partial" not in json.dumps(message_store.current_messages())
+    assert message_store.current_messages()[-1] == assistant_message("final")
     assert events[-1].type == "completed"
     assert events[-1].text == "final"
     assert len(model_client.snapshots) == 2
 
 
-def test_loop_escalates_max_output_tokens_before_persisting_truncated_output(
+def test_loop_escalates_max_output_tokens_and_persists_truncated_output(
     tmp_path: Path,
 ) -> None:
+    """Truncated output is visible live and persisted before continuation.
+
+    The user has already seen the truncated text by the time the
+    ``message_completed`` event arrives, so we must not pretend it
+    never happened. The new behaviour: live-stream ``cut``, persist
+    the truncated assistant message as-is, escalate the model's
+    ``max_output_tokens``, and continue on the next attempt.
+    """
+
     state = RuntimeState()
     message_store = MessageStore(
         transcript_root=tmp_path / ".onecode",
@@ -592,8 +702,11 @@ def test_loop_escalates_max_output_tokens_before_persisting_truncated_output(
 
     events = collect_events(loop, "long answer")
 
+    # The truncated text was streamed live and the continuation text
+    # is streamed on the next attempt.
     assert [event.text for event in events if event.type == "assistant_delta"] == [
-        "complete"
+        "cut",
+        "complete",
     ]
     assert any(
         event.type == "transition"
@@ -604,11 +717,13 @@ def test_loop_escalates_max_output_tokens_before_persisting_truncated_output(
     assert model_client.snapshots[1].usage_hints["request_overrides"] == {
         "max_output_tokens": 64000
     }
+    # Truncated assistant was persisted (the user already saw it); the
+    # continuation's message replaces it in the next turn.
     assert [message["role"] for message in message_store.current_messages()] == [
         "user",
         "assistant",
     ]
-    assert "cut" not in json.dumps(message_store.current_messages())
+    assert message_store.current_messages()[-1] == assistant_message("complete")
     assert events[-1].text == "complete"
 
 

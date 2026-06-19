@@ -151,6 +151,26 @@ def test_read_file_returns_line_numbered_workspace_content(tmp_path: Path) -> No
     assert cached.mtime_ns == target.stat().st_mtime_ns
 
 
+def test_read_file_replaces_invalid_utf8_bytes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "a.txt"
+    target.write_bytes(b"ok\nbad:\xff\nemoji:\xf0\x9f\x98\x80\n")
+    executor, state = make_executor(workspace)
+
+    result = execute_one(
+        executor,
+        state,
+        "read_file",
+        {"file_path": "a.txt"},
+    )
+
+    assert result.is_error is False
+    assert "1\tok" in result.content
+    assert "2\tbad:" in result.content
+    assert "3\temoji:" in result.content
+
+
 def test_read_file_handler_does_not_record_files_read_directly(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

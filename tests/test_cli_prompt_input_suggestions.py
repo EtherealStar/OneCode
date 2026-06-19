@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_messages_path, sessions_dir
 from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
@@ -32,7 +33,7 @@ class FakeLoop:
 def make_runtime(tmp_path: Path) -> CliRuntime:
     state = RuntimeState(session_id="session-cli")
     message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -75,7 +76,7 @@ def test_command_suggestions_filter_by_prefix(tmp_path: Path) -> None:
 
 def test_resume_suggestions_list_session_ids(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
-    messages_path = tmp_path / ".onecode" / "session-old" / "messages.jsonl"
+    messages_path = session_messages_path(tmp_path, "session-old")
     messages_path.parent.mkdir(parents=True)
     messages_path.write_text("", encoding="utf-8")
 

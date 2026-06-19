@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+from infrastructure.filesystem.onecode_paths import session_dir, sessions_dir
 from services.errors import OneCodeError, ErrorCategory
 from services.observability.error_log import ErrorLogRecorder, JsonlErrorLogSink
 
@@ -13,7 +14,7 @@ def test_jsonl_error_log_writes_sanitized_records(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     sink = JsonlErrorLogSink(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         session_id,
         flush_interval_seconds=60,
     )
@@ -54,7 +55,7 @@ def test_jsonl_error_log_writes_sanitized_records(tmp_path: Path) -> None:
 
 def test_error_log_switch_session_writes_new_file(tmp_path: Path) -> None:
     sink = JsonlErrorLogSink(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         "session-a",
         flush_interval_seconds=60,
     )
@@ -65,15 +66,15 @@ def test_error_log_switch_session_writes_new_file(tmp_path: Path) -> None:
     recorder.record_error(RuntimeError("second"), source="test")
     recorder.flush()
 
-    first = tmp_path / ".onecode" / "session-a" / "errors.jsonl"
-    second = tmp_path / ".onecode" / "session-b" / "errors.jsonl"
+    first = session_dir(tmp_path, "session-a") / "errors.jsonl"
+    second = session_dir(tmp_path, "session-b") / "errors.jsonl"
     assert "first" in first.read_text(encoding="utf-8")
     assert "second" in second.read_text(encoding="utf-8")
 
 
 def test_error_log_records_mcp_server_attribute(tmp_path: Path) -> None:
     sink = JsonlErrorLogSink(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         "session-x",
         flush_interval_seconds=60,
     )

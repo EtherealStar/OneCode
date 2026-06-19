@@ -14,6 +14,8 @@ from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 from tools.write_file import descriptor as write_file_descriptor
 from ui.cli.permissions import CliPermissionPrompter, render_permission_panel
+from ui.cli.permissions import _confirm_options
+from ui.cli.terminal.permission_prompt import _build_choices
 
 
 def _request(workspace: Path, descriptor, tool_input: dict[str, object]):
@@ -152,6 +154,14 @@ def test_cli_permission_prompter_parses_allow_session_and_deny(
     denied = asyncio.run(deny_prompter.request_permission(request))
     assert denied.action == "deny"
 
+    once_prompter = CliPermissionPrompter(
+        input_func=lambda prompt: "y",
+        output_func=lambda output: None,
+    )
+    once = asyncio.run(once_prompter.request_permission(request))
+    assert once.action == "allow"
+    assert once.scope == "once"
+
 
 def test_bash_permission_panel_renders_command_and_targets(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -169,10 +179,10 @@ def test_bash_permission_panel_renders_command_and_targets(tmp_path: Path) -> No
     assert "description: write output" in panel
     assert "read_only: False" in panel
     assert "target: out.txt" in panel
-    assert "[p] allow this command prefix for this project" in panel
+    assert "[p]" not in panel
 
 
-def test_bash_permission_prompter_builds_project_update(tmp_path: Path) -> None:
+def test_bash_permission_prompter_does_not_build_project_update(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     request = _request(
@@ -187,11 +197,37 @@ def test_bash_permission_prompter_builds_project_update(tmp_path: Path) -> None:
 
     response = asyncio.run(prompter.request_permission(request))
 
-    assert response.action == "allow"
-    assert response.scope == "project"
-    assert len(response.permission_updates) == 1
-    update = response.permission_updates[0]
-    assert update.destination == "projectSettings"
-    assert update.behavior == "allow"
-    assert update.rules[0].tool_name == "bash"
-    assert update.rules[0].rule_content == "npm run:*"
+    assert response.action == "deny"
+    assert response.permission_updates == ()
+
+
+def test_confirm_options_are_three_choices_for_bash(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    request = _request(
+        workspace,
+        bash_descriptor(),
+        {"command": "npm run test", "description": "test"},
+    )
+
+    options = _confirm_options(request)
+
+    assert [option.value for option in options] == ["y", "s", "n"]
+
+
+def test_tty_permission_choices_follow_request_options(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    request = _request(workspace, read_file_descriptor(), {"file_path": str(outside)})
+
+    choices = _build_choices(request)
+
+    assert len(choices) == 3
+    assert [choice.shortcut for choice in choices] == ["1", "2", "3"]
+    assert choices[0].response.action == "allow"
+    assert choices[0].response.scope == "once"
+    assert choices[1].response.action == "allow"
+    assert choices[1].response.scope == "session"
+    assert choices[2].response.action == "deny"
+    assert all(choice.response.permission_updates == () for choice in choices)

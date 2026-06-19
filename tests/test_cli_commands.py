@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_messages_path, session_dir, sessions_dir
 from services.background_tasks import BackgroundTaskManager
 from services.compaction import SessionMemoryStore
 from services.context.current_model_context import CurrentModelContext
@@ -152,7 +154,7 @@ class FakeUntrustedMcpManager:
 def make_runtime(tmp_path: Path) -> CliRuntime:
     state = RuntimeState(session_id="session-cli")
     message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -323,11 +325,12 @@ def test_clear_command_starts_new_session_without_deleting_old(tmp_path: Path) -
     runtime.message_store.flush_transcript()
 
     assert result.should_exit is False
+    assert result.reset_main_view is True
     assert runtime.state.session_id != old_session
     assert runtime.message_store.current_messages() == (
         {"role": "user", "content": "new"},
     )
-    assert (tmp_path / ".onecode" / old_session / "messages.jsonl").exists()
+    assert session_messages_path(tmp_path, old_session).exists()
     assert "Started new session" in output
 
 
@@ -470,10 +473,83 @@ def test_permissions_command_is_read_only(tmp_path: Path) -> None:
     assert not project_store.settings_path.exists()
 
 
+def test_permissions_command_adds_project_rules(tmp_path: Path) -> None:
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=project_store)
+    runtime = replace(make_runtime(tmp_path), permission_policy=policy)
+
+    result, output = run_command(runtime, "/permissions add allow bash(npm run:*)")
+
+    assert result.should_exit is False
+    assert "Added project allow permission rule" in output
+    settings = json.loads(project_store.settings_path.read_text(encoding="utf-8"))
+    assert settings["permissions"]["allow"] == ["bash(npm run:*)"]
+
+
+def test_permissions_command_adds_deny_rule(tmp_path: Path) -> None:
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=project_store)
+    runtime = replace(make_runtime(tmp_path), permission_policy=policy)
+
+    _result, _output = run_command(runtime, "/permissions add deny edit_file")
+
+    settings = json.loads(project_store.settings_path.read_text(encoding="utf-8"))
+    assert settings["permissions"]["deny"] == ["edit_file"]
+
+
+def test_permissions_command_removes_project_rules(tmp_path: Path) -> None:
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=project_store)
+    runtime = replace(make_runtime(tmp_path), permission_policy=policy)
+    run_command(runtime, "/permissions add allow bash(npm run:*)")
+
+    result, output = run_command(runtime, "/permissions remove allow bash(npm run:*)")
+
+    assert result.should_exit is False
+    assert "Removed project allow permission rule" in output
+    settings = json.loads(project_store.settings_path.read_text(encoding="utf-8"))
+    assert settings["permissions"]["allow"] == []
+
+
+def test_permissions_command_replaces_project_rules(tmp_path: Path) -> None:
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=project_store)
+    runtime = replace(make_runtime(tmp_path), permission_policy=policy)
+    run_command(runtime, "/permissions add ask read_file(old/*)")
+
+    result, output = run_command(runtime, "/permissions replace ask read_file(secret/*)")
+
+    assert result.should_exit is False
+    assert "Replaced project ask permission rule" in output
+    settings = json.loads(project_store.settings_path.read_text(encoding="utf-8"))
+    assert settings["permissions"]["ask"] == ["read_file(secret/*)"]
+
+
+def test_permissions_command_rejects_invalid_project_rule_without_writing(
+    tmp_path: Path,
+) -> None:
+    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    policy = PermissionPolicy(project_store=project_store)
+    runtime = replace(make_runtime(tmp_path), permission_policy=policy)
+
+    _result, output = run_command(runtime, "/permissions add allow bad(rule")
+
+    assert "must end with an unescaped ')'" in output
+    assert not project_store.settings_path.exists()
+
+
+def test_permissions_command_requires_project_store(tmp_path: Path) -> None:
+    runtime = replace(make_runtime(tmp_path), permission_policy=PermissionPolicy())
+
+    _result, output = run_command(runtime, "/permissions add allow bash(npm run:*)")
+
+    assert "Project permission settings are not enabled" in output
+
+
 def test_memory_command_renders_session_and_long_term_state(tmp_path: Path) -> None:
     runtime = replace(
         make_runtime(tmp_path),
-        session_memory_store=SessionMemoryStore(tmp_path / ".onecode" / "session-cli"),
+        session_memory_store=SessionMemoryStore(session_dir(tmp_path, "session-cli")),
     )
 
     _result, output = run_command(runtime, "/memory")

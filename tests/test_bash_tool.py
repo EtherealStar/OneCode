@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from core.runtime_state import RuntimeState
 from services.guard import SandboxBoundary, SandboxGuard
@@ -10,7 +11,7 @@ from services.permissions import PermissionPolicy, PermissionResponse
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolExecutionResult, ToolRuntime
-from tools.bash.runner import BashRunResult
+from tools.bash.runner import BashRunResult, GitBashRunner
 from tools.bash.tool import _handle_with_runner, descriptor
 
 
@@ -66,6 +67,32 @@ def test_bash_descriptor_schema_and_prompt() -> None:
     assert "command" in item.input_schema["properties"]
     assert item.input_schema["additionalProperties"] is False
     assert "Tree-sitter" in item.prompt
+
+
+def test_git_bash_runner_decodes_bytes_without_locale(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fake_run(args, **kwargs):
+        assert "text" not in kwargs
+        assert kwargs["capture_output"] is True
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"\xe4\xb8\xad\xe6\x96\x87\nbad:\xff\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr("tools.bash.runner.subprocess.run", fake_run)
+
+    result = GitBashRunner(tmp_path / "bash.exe").run(
+        "printf ok",
+        cwd=tmp_path,
+        timeout_ms=1000,
+    )
+
+    assert result.exit_code == 0
+    assert "中文" in result.stdout
+    assert "bad:" in result.stdout
 
 
 def test_bash_classifies_readonly_and_write_commands() -> None:

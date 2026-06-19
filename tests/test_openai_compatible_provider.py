@@ -315,6 +315,36 @@ def test_chat_completions_projects_internal_tool_results() -> None:
     ]
 
 
+def test_chat_completions_keeps_synthetic_attachment_context_user_side() -> None:
+    transport = FakeTransport(
+        post_response={"choices": [{"message": {"content": "ok"}}]},
+    )
+    client = OpenAICompatibleChatCompletionsClient(
+        resolved_config(),
+        async_transport=transport,
+    )
+    snapshot = ContextSnapshot(
+        system_prompt="",
+        messages=(
+            {
+                "role": "user",
+                "content": "[attachment file]\nEquivalent tool: read_file\nResult:\n1\tcontents",
+                "metadata": {
+                    "synthetic": True,
+                    "source": "attachment",
+                    "attachment_type": "file",
+                },
+            },
+        ),
+    )
+
+    collect_stream(client, snapshot)
+
+    payload = transport.post_calls[0][2]
+    assert payload["messages"][0]["role"] == "user"
+    assert "tool_calls" not in payload["messages"][0]
+
+
 def test_chat_completions_omits_empty_tools() -> None:
     transport = FakeTransport(
         post_response={"choices": [{"message": {"content": "ok"}}]},

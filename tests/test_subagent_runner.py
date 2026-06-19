@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_messages_path, sessions_dir
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.guard import SandboxBoundary, SandboxGuard
@@ -27,6 +28,7 @@ from services.tools.types import (
     ToolRuntime,
     ToolTarget,
 )
+from ui.cli.resume import list_session_summaries
 
 
 @dataclass
@@ -80,7 +82,7 @@ def make_runner(
     workspace.mkdir(exist_ok=True)
     parent_state = RuntimeState(session_id="parent-session")
     parent_store = parent_store or MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=parent_state.session_id,
         cwd=workspace,
         flush_interval_seconds=60,
@@ -89,7 +91,7 @@ def make_runner(
     model = FakeModelClient(responses)
     runner = SubagentRunner(
         workspace=workspace,
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         parent_message_store=parent_store,
         current_model_context=current_context or CurrentModelContext(),
         model_client=model,
@@ -135,11 +137,12 @@ def test_general_purpose_subagent_uses_clean_messages(tmp_path: Path) -> None:
     assert parent_store.current_messages() == (
         {"role": "user", "content": "parent secret"},
     )
+    assert not session_messages_path(tmp_path, result.session_id).exists()
 
 
 def test_fork_subagent_inherits_parent_prompt_and_messages(tmp_path: Path) -> None:
     parent_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id="parent-session",
         flush_interval_seconds=60,
     )
@@ -179,6 +182,47 @@ def test_fork_subagent_inherits_parent_prompt_and_messages(tmp_path: Path) -> No
     )
     assert "continue from here" in model.snapshots[0].messages[-1]["content"]
     assert parent_store.current_messages()[-1]["role"] == "assistant"
+    assert not session_messages_path(tmp_path, result.session_id).exists()
+
+
+def test_fork_subagent_does_not_create_resumable_session(tmp_path: Path) -> None:
+    parent_store = MessageStore(
+        transcript_root=sessions_dir(tmp_path),
+        session_id="parent-session",
+        flush_interval_seconds=60,
+    )
+    parent_store.append_user("parent context")
+    parent_store.append_assistant(
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "call-agent", "name": "agent"}],
+        }
+    )
+    parent_store.flush_transcript()
+    current_context = CurrentModelContext(
+        ContextSnapshot(system_prompt="PARENT_PROMPT", messages=())
+    )
+    runner, _model, _parent_store, _policy = make_runner(
+        tmp_path,
+        [LLMResponse(assistant_message=assistant("fork done"), final_text="fork done")],
+        parent_store=parent_store,
+        current_context=current_context,
+    )
+
+    result = run(
+        runner.run(
+            SubagentRequest(
+                prompt="continue from here",
+                subagent_type=None,
+                parent_session_id="parent-session",
+                parent_tool_call_id="call-agent",
+            )
+        )
+    )
+
+    session_ids = {summary.session_id for summary in list_session_summaries(tmp_path)}
+    assert "parent-session" in session_ids
+    assert result.session_id not in session_ids
 
 
 def test_child_registry_hides_agent_even_when_base_descriptors_include_it(
@@ -225,7 +269,7 @@ def test_compact_fork_child_has_no_tools_and_never_prompts(tmp_path: Path) -> No
         return ToolExecutionResult(tool_call_id="", tool_name="edit_file", content="ran")
 
     parent_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id="parent-session",
         flush_interval_seconds=60,
     )

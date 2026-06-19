@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,7 +16,7 @@ from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolExecutionResult, ToolRuntime
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
-from tools.grep.tool import RipgrepResult, _handle_with_runner
+from tools.grep.tool import RipgrepResult, SubprocessRipgrepRunner, _handle_with_runner
 
 
 class FakeRipgrepRunner:
@@ -280,6 +281,29 @@ def test_grep_ripgrep_errors_are_structured(tmp_path: Path) -> None:
     assert json.loads(missing.content)["error"] == "ripgrep_not_found"
     assert json.loads(bad_regex.content)["error"] == "ripgrep_error"
     assert bad_regex.metadata["returncode"] == 2
+
+
+def test_subprocess_ripgrep_runner_decodes_bytes_without_locale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(args, **kwargs):
+        assert "text" not in kwargs
+        assert kwargs["capture_output"] is True
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"a.txt:1:\xe4\xb8\xad\xe6\x96\x87\nbad:\xff\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(shutil, "which", lambda name: "rg.exe")
+    monkeypatch.setattr("tools.grep.tool.subprocess.run", fake_run)
+
+    result = SubprocessRipgrepRunner().run(["needle", "."], tmp_path)
+
+    assert result.returncode == 0
+    assert "a.txt:1:" in result.stdout
+    assert "bad:" in result.stdout
 
 
 def test_grep_real_ripgrep_smoke(tmp_path: Path) -> None:

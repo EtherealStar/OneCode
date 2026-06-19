@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_messages_path, sessions_dir
 from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.file_state import FileStateCache
@@ -45,7 +46,7 @@ class FakeLoop:
 def make_runtime(tmp_path: Path, session_id: str = "session-current") -> CliRuntime:
     state = RuntimeState(session_id=session_id)
     message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -70,7 +71,7 @@ def write_transcript(tmp_path: Path, session_id: str) -> Path:
     target.write_text("content\n", encoding="utf-8")
     state = RuntimeState(session_id=session_id)
     message_store = MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -96,7 +97,7 @@ def write_transcript(tmp_path: Path, session_id: str) -> Path:
     )
     message_store.append_assistant({"content": "restored answer"})
     message_store.flush_transcript()
-    return tmp_path / ".onecode" / session_id / "messages.jsonl"
+    return session_messages_path(tmp_path, session_id)
 
 
 def test_resolve_resume_target_accepts_session_id(tmp_path: Path) -> None:
@@ -117,6 +118,19 @@ def test_resolve_resume_target_accepts_messages_jsonl_path(tmp_path: Path) -> No
     assert transcript_store.messages_path == messages_path
 
 
+def test_resolve_resume_target_rejects_legacy_session_path(tmp_path: Path) -> None:
+    legacy_path = tmp_path / ".onecode" / "session-old" / "messages.jsonl"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text("", encoding="utf-8")
+
+    try:
+        resolve_resume_target(tmp_path, str(legacy_path))
+    except ValueError as exc:
+        assert ".onecode/sessions" in str(exc)
+    else:
+        raise AssertionError("legacy .onecode/<session-id> path should be rejected")
+
+
 def test_resume_command_replaces_runtime_and_restores_messages(
     tmp_path: Path,
 ) -> None:
@@ -126,15 +140,14 @@ def test_resume_command_replaces_runtime_and_restores_messages(
 
     result = dispatch_command(runtime, f"/resume {messages_path}")
 
-    output = strip_ansi(renderer.render_to_text(result.renderable))
     assert result.runtime is not None
     assert result.runtime.state.session_id == "session-old"
-    assert result.presentation == "page"
+    assert result.presentation == "inline"
     snapshot = asyncio.run(
         result.runtime.loop.context_engine.build_for_model(result.runtime.state)
     )
     target = str(tmp_path / "restored.txt")
-    assert result.runtime.message_store.current_messages() == (
+    restored_messages = (
         {"role": "user", "content": "restore this"},
         {
             "content": "",
@@ -153,14 +166,19 @@ def test_resume_command_replaces_runtime_and_restores_messages(
         },
         {"content": "restored answer", "role": "assistant"},
     )
+    assert result.runtime.message_store.current_messages() == restored_messages
+    # The restored messages are handed to the REPL for static replay rather
+    # than rendered into a transient history page.
+    assert result.replay_messages == restored_messages
     assert "# Behavior Rules\n" in snapshot.system_prompt
     assert "# Tool: read_file\n" in snapshot.system_prompt
     assert target in result.runtime.state.metadata["files_read"]
+    # The renderable is now only the resume notice, not the history body.
+    output = strip_ansi(renderer.render_to_text(result.renderable))
     assert "Restored session session-old" in output
     assert "Session History" not in output
-    assert "[read_file call_read ok]" in output
-    assert "restored answer" in output
-    assert "1 content" not in output
+    assert "[read_file call_read ok]" not in output
+    assert "restored answer" not in output
 
 
 def test_resume_missing_target_keeps_current_runtime(
