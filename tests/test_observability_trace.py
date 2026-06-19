@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextvars
 import json
 from pathlib import Path
 
 import pytest
 
+from infrastructure.filesystem.onecode_paths import sessions_dir
 from services.observability import JsonlTraceSink, TraceRecorder
 from services.observability.sanitize import sanitize_attributes
 
@@ -19,7 +21,7 @@ def read_jsonl(path: Path) -> list[dict]:
 
 def test_jsonl_sink_writes_event_and_span_records(tmp_path: Path) -> None:
     sink = JsonlTraceSink(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         "session-trace",
         flush_interval_seconds=60,
     )
@@ -49,7 +51,7 @@ def test_jsonl_sink_writes_event_and_span_records(tmp_path: Path) -> None:
 
 
 def test_span_records_error_and_reraises(tmp_path: Path) -> None:
-    sink = JsonlTraceSink(tmp_path / ".onecode", "session-error")
+    sink = JsonlTraceSink(sessions_dir(tmp_path), "session-error")
     recorder = TraceRecorder(session_id="session-error", sink=sink)
 
     with pytest.raises(RuntimeError):
@@ -62,6 +64,26 @@ def test_span_records_error_and_reraises(tmp_path: Path) -> None:
     assert end_record["record_type"] == "span_end"
     assert end_record["attributes"]["error_type"] == "RuntimeError"
     assert end_record["attributes"]["error_message"] == "provider failed"
+
+
+def test_span_exit_tolerates_different_context_on_async_cancellation(
+    tmp_path: Path,
+) -> None:
+    sink = JsonlTraceSink(sessions_dir(tmp_path), "session-cancel")
+    recorder = TraceRecorder(session_id="session-cancel", sink=sink)
+    entered_context = contextvars.Context()
+
+    span = entered_context.run(lambda: recorder.span("stream").__enter__())
+
+    span.__exit__(None, None, None)
+    recorder.flush()
+
+    records = read_jsonl(sink.trace_path)
+    assert [record["record_type"] for record in records] == [
+        "span_start",
+        "span_end",
+    ]
+    assert records[-1]["name"] == "stream"
 
 
 def test_sanitizer_redacts_sensitive_metadata_and_paths(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from services.attachments.projector import AttachmentProjector
 from services.attachments.types import AttachmentMessage
 
 
-def test_projects_file_attachment_to_synthetic_read_file_pair() -> None:
+def test_projects_file_attachment_to_provider_safe_user_context() -> None:
     attachment = AttachmentMessage(
         attachment={
             "type": "file",
@@ -20,18 +20,15 @@ def test_projects_file_attachment_to_synthetic_read_file_pair() -> None:
 
     projected = AttachmentProjector().project((attachment,), RuntimeState())
 
-    assert [message["role"] for message in projected] == [
-        "assistant",
-        "tool_result",
-    ]
-    assistant, result = projected
-    call = assistant["tool_calls"][0]
-    assert call["id"] == "attachment_read_att_123"
-    assert call["function"]["name"] == "read_file"
-    assert result["tool_call_id"] == call["id"]
-    assert result["tool_name"] == "read_file"
-    assert result["content"] == "1\tone"
-    assert result["metadata"]["synthetic"] is True
+    assert [message["role"] for message in projected] == ["user"]
+    user = projected[0]
+    assert "attachment_read_att_123" in user["content"]
+    assert "Equivalent tool: read_file" in user["content"]
+    assert "- file_path: D:\\study\\OneCode\\note.txt" in user["content"]
+    assert "1\tone" in user["content"]
+    assert "tool_calls" not in user
+    assert user["metadata"]["synthetic"] is True
+    assert user["metadata"]["attachment_type"] == "file"
 
 
 def test_projector_drops_raw_attachment_role() -> None:

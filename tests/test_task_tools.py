@@ -165,3 +165,28 @@ def test_task_completed_hook_can_block_status_change(tmp_path: Path) -> None:
     assert result.is_error is True
     assert "completion requires review" in result.content
     assert store.get_task("task-session", "1").status == "pending"
+
+
+def test_task_update_completed_result_suggests_checking_remaining_work(
+    tmp_path: Path,
+) -> None:
+    executor, state, store = make_executor(tmp_path)
+    store.create_task("task-session", subject="Review", description="A")
+
+    completed = execute_one(
+        executor,
+        state,
+        "task_update",
+        {"taskId": "1", "status": "completed"},
+    )
+    repeated = execute_one(
+        executor,
+        state,
+        "task_update",
+        {"taskId": "1", "status": "completed"},
+    )
+
+    assert completed.is_error is False
+    assert "Task completed. Use task_list" in completed.content
+    assert repeated.is_error is False
+    assert "Task completed. Use task_list" not in repeated.content

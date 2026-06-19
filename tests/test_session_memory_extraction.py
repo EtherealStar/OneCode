@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from services.background_tasks import BackgroundTaskManager
 from services.compaction import (
     SessionMemoryExtractionPolicy,
     SessionMemoryExtractionService,
@@ -28,6 +29,7 @@ from services.subagents.types import SubagentRequest, SubagentResult
 from services.tools.types import ToolCall
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
+from ui.cli.session_memory import BackgroundSessionMemoryExtractor
 
 
 def run(coro):
@@ -149,7 +151,7 @@ class FakeMemoryRunner:
         )
 
 
-def test_extraction_service_runs_fork_request_with_memory_metadata(
+def test_extraction_service_prepares_and_runs_background_job(
     tmp_path: Path,
 ) -> None:
     state = RuntimeState(session_id="session-memory")
@@ -166,14 +168,18 @@ def test_extraction_service_runs_fork_request_with_memory_metadata(
     )
     messages = message_chain("x" * 300)
 
-    run(
-        service.maybe_extract_after_model_response(
-            messages,
-            state,
-            assistant_message=messages[-1],
-            tool_calls=(),
-        )
+    job = service.prepare_extraction_job(
+        messages,
+        state,
+        assistant_message=messages[-1],
+        tool_calls=(),
     )
+
+    assert job is not None
+    assert runner.requests == []
+    assert state.metadata["session_memory_extraction"]["last_status"] == "scheduled"
+
+    run(service.run_extraction_job(job, state))
 
     assert len(runner.requests) == 1
     request = runner.requests[0]
@@ -181,6 +187,49 @@ def test_extraction_service_runs_fork_request_with_memory_metadata(
     assert request.metadata["purpose"] == "session_memory_extraction"
     assert request.metadata["allowed_memory_path"] == str(store.path.resolve())
     assert state.metadata["session_memory_extraction"]["last_status"] == "success"
+
+
+def test_background_session_memory_extractor_schedules_dream_without_waiting(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        state = RuntimeState(session_id="session-memory")
+        store = SessionMemoryStore(tmp_path / ".onecode" / state.session_id)
+        runner = FakeMemoryRunner()
+        service = SessionMemoryExtractionService(
+            store,
+            subagent_runner=runner,
+            policy=SessionMemoryExtractionPolicy(
+                minimum_message_tokens_to_init=10,
+                minimum_tokens_between_update=10,
+                tool_calls_between_updates=3,
+            ),
+        )
+        manager = BackgroundTaskManager(workspace=tmp_path)
+        adapter = BackgroundSessionMemoryExtractor(service, manager)
+        messages = message_chain("x" * 300)
+
+        await adapter.maybe_extract_after_model_response(
+            messages,
+            state,
+            assistant_message=messages[-1],
+            tool_calls=(),
+        )
+
+        tasks = manager.list_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].type == "dream"
+        assert tasks[0].description == "updating session memory"
+        metadata = state.metadata["session_memory_extraction"]
+        assert metadata["last_status"] == "scheduled"
+        assert metadata["background_task_id"] == tasks[0].id
+
+        await adapter.wait_for_current_extraction(state)
+
+        assert len(runner.requests) == 1
+        assert state.metadata["session_memory_extraction"]["last_status"] == "success"
+
+    run(scenario())
 
 
 @dataclass

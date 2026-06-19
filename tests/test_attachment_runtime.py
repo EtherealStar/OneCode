@@ -38,7 +38,11 @@ def test_context_engine_projects_attachments_before_provider() -> None:
     snapshot = asyncio.run(engine.build_for_model(state))
 
     assert all(message["role"] != "attachment" for message in snapshot.messages)
-    assert any(message["role"] == "tool_result" for message in snapshot.messages)
+    assert any(
+        message["role"] == "user"
+        and "Equivalent tool: read_file" in message.get("content", "")
+        for message in snapshot.messages
+    )
     assert store.current_messages()[-1]["role"] == "attachment"
 
 

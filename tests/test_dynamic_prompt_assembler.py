@@ -75,6 +75,9 @@ def test_dynamic_prompt_includes_stable_sections_and_workspace_state(
 
     assert prompt.startswith("# Identity\n")
     assert "# Behavior Rules\n" in prompt
+    assert "# Engineering Practices\n" in prompt
+    assert "# Risk and Safety\n" in prompt
+    assert "# Verification and Reporting\n" in prompt
     assert "# Workspace State\n" in prompt
     assert f"cwd: {tmp_path.resolve()}" in prompt
     assert "available tools: a_tool, empty_tool, z_tool" in prompt
@@ -86,6 +89,39 @@ def test_dynamic_prompt_includes_stable_sections_and_workspace_state(
     assert "Use a first." in prompt
     assert "Use z carefully." in prompt
     assert "session-hidden" not in prompt
+
+
+def test_fixed_behavior_sections_are_ordered_before_dynamic_context(
+    tmp_path: Path,
+) -> None:
+    assembler = DynamicPromptAssembler(tmp_path)
+
+    prompt = assembler.assemble(RuntimeState())
+
+    ordered_titles = [
+        "# Identity",
+        "# Behavior Rules",
+        "# Engineering Practices",
+        "# Risk and Safety",
+        "# Verification and Reporting",
+        "# Workspace State",
+        "# Available Tools",
+    ]
+    positions = [prompt.index(title) for title in ordered_titles]
+
+    assert positions == sorted(positions)
+    assert "prompt injection" in prompt
+    assert "verify the behavior" in prompt
+    assert "scoped to what the user asked for" in prompt
+    disallowed_reference_terms = (
+        "Claude Code",
+        "Anthropic",
+        "/issue",
+        "/share",
+        "Fast mode",
+    )
+    for term in disallowed_reference_terms:
+        assert term not in prompt
 
 
 def test_section_cache_reuses_unchanged_sections_and_invalidates_workspace(
@@ -130,6 +166,32 @@ def test_registry_visible_descriptors_drive_schema_and_prompt_sections() -> None
     assert visible_names == ["allowed"]
     assert [schema["function"]["name"] for schema in schemas] == ["allowed"]
     assert prompts == ("allowed prompt",)
+
+
+def test_dynamic_prompt_includes_task_guidance_only_when_task_tools_visible(
+    tmp_path: Path,
+) -> None:
+    state = RuntimeState()
+    registry = ToolRegistry(
+        [
+            make_descriptor("task_create", prompt="create task prompt"),
+            make_descriptor("task_update", prompt="update task prompt"),
+            make_descriptor("read_file", prompt="read prompt"),
+        ]
+    )
+    assembler = DynamicPromptAssembler(tmp_path, tool_registry=registry)
+
+    prompt = assembler.assemble(state)
+
+    assert "# Task Guidance" in prompt
+    assert "multi-step, recoverable, blocked, or cross-session work" in prompt
+    assert prompt.index("# Task Guidance") < prompt.index("# Tool: task_create")
+
+    state.metadata["hidden_tools"] = {"task_create", "task_update"}
+    prompt_without_tasks = assembler.assemble(state)
+
+    assert "# Task Guidance" not in prompt_without_tasks
+    assert "# Tool: read_file" in prompt_without_tasks
 
 
 def test_context_engine_default_prompt_is_dynamic(tmp_path: Path) -> None:

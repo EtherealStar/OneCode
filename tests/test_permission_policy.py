@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_tool_results_dir
 from services.guard import SandboxBoundary, SandboxGuard
 from services.permissions import (
     PermissionPolicy,
@@ -272,6 +273,58 @@ def test_memory_directory_write_does_not_ask_for_protected_onecode_dir(
     )
 
     assert decision.action == "allow"
+
+
+def test_session_tool_results_read_does_not_ask_for_protected_onecode_dir(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = RuntimeState(session_id="session-read")
+    target = session_tool_results_dir(workspace, state.session_id) / "call-1.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("stored", encoding="utf-8")
+    descriptor = read_file_descriptor()
+    guard = SandboxGuard(SandboxBoundary(cwd=workspace))
+    runtime = ToolRuntime(state=state, guard=guard)
+    tool_input = {"file_path": str(target)}
+    classification = descriptor.classify_input(tool_input, runtime)
+
+    decision = PermissionPolicy().evaluate(
+        tool_call=ToolCall(id="call-1", name="read_file", input=tool_input),
+        descriptor=descriptor,
+        classification=classification,
+        guard_policies=(guard.check_path(str(target), operation="read", kind="file"),),
+        state=state,
+    )
+
+    assert decision.action == "allow"
+
+
+def test_legacy_session_tool_results_path_is_still_protected(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = RuntimeState(session_id="session-read")
+    target = workspace / ".onecode" / state.session_id / "tool-results" / "call-1.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("stored", encoding="utf-8")
+    descriptor = read_file_descriptor()
+    guard = SandboxGuard(SandboxBoundary(cwd=workspace))
+    runtime = ToolRuntime(state=state, guard=guard)
+    tool_input = {"file_path": str(target)}
+    classification = descriptor.classify_input(tool_input, runtime)
+
+    decision = PermissionPolicy().evaluate(
+        tool_call=ToolCall(id="call-1", name="read_file", input=tool_input),
+        descriptor=descriptor,
+        classification=classification,
+        guard_policies=(guard.check_path(str(target), operation="read", kind="file"),),
+        state=state,
+    )
+
+    assert decision.action == "ask"
 
 
 def test_long_term_memory_extraction_agent_can_only_write_memory_markdown(

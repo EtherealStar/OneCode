@@ -92,9 +92,9 @@ def test_grep_modes_render_key_counts(tmp_path: Path) -> None:
         workspace=tmp_path,
     )
 
-    assert files == "[grep] Found 4 file(s)"
-    assert count == "[grep] Found 12 match(es) across 3 file(s)"
-    assert content == "[grep] Found 7 line(s) across 2 file(s)"
+    assert files == "[grep] Found 4 files"
+    assert count == "[grep] Found 12 matches across 3 files"
+    assert content == "[grep] Found 7 matches across 2 files"
 
 
 def test_grep_truncation_mentions_pagination(tmp_path: Path) -> None:
@@ -114,7 +114,7 @@ def test_grep_truncation_mentions_pagination(tmp_path: Path) -> None:
     )
 
     assert text == (
-        "[grep] Found 40 match(es) across 10 file(s), "
+        "[grep] Found 40 matches across 10 files, "
         "showing first 5 after offset 2"
     )
 
@@ -134,7 +134,7 @@ def test_glob_truncated_summary(tmp_path: Path) -> None:
         workspace=tmp_path,
     )
 
-    assert text == "[glob] Found 31 file(s), showing 10"
+    assert text == "[glob] Found 31 files, showing 10"
 
 
 def test_bash_success_and_timed_out_error(tmp_path: Path) -> None:

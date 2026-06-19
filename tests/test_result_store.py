@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import session_dir, session_messages_path, session_tool_results_dir
 from utils.toolResultStorage import ToolResultStorage
 from services.guard import SandboxBoundary, SandboxGuard
 from services.permissions import PermissionPolicy
@@ -96,7 +97,7 @@ def test_result_store_uses_stable_hash_suffix_for_changed_content(tmp_path) -> N
 
 def test_executor_persists_oversized_result_when_store_is_injected(tmp_path) -> None:
     state = RuntimeState(session_id="session-store")
-    result_store = ToolResultStorage(tmp_path / ".onecode" / state.session_id)
+    result_store = ToolResultStorage(session_dir(tmp_path, state.session_id))
 
     def handler(
         tool_input: dict,
@@ -155,7 +156,7 @@ def test_permission_policy_exempts_current_session_tool_results_read(tmp_path) -
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     state = RuntimeState(session_id="session-1")
-    tool_results = workspace / ".onecode" / state.session_id / "tool-results"
+    tool_results = session_tool_results_dir(workspace, state.session_id)
     tool_results.mkdir(parents=True)
     target = tool_results / "call-1.txt"
     target.write_text("stored", encoding="utf-8")
@@ -182,7 +183,7 @@ def test_permission_policy_still_protects_other_onecode_files(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     state = RuntimeState(session_id="session-1")
-    target = workspace / ".onecode" / state.session_id / "messages.jsonl"
+    target = session_messages_path(workspace, state.session_id)
     target.parent.mkdir(parents=True)
     target.write_text("{}", encoding="utf-8")
 

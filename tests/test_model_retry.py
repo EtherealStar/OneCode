@@ -23,7 +23,15 @@ def test_retry_delay_honors_retry_after() -> None:
     assert retry_delay_seconds(4, retry_after_seconds=7.5) == 7.5
 
 
-def test_retry_runner_buffers_failed_attempt_partial_deltas() -> None:
+def test_retry_runner_forwards_partial_deltas_then_retries() -> None:
+    """Partial deltas from a failed attempt must reach the caller live.
+
+    The retry runner no longer buffers attempt output. Whatever the
+    provider has already streamed when it raises a retryable error is
+    already visible to the caller; the retry then continues with the
+    next attempt.
+    """
+
     calls = 0
     sleeps: list[float] = []
 
@@ -59,8 +67,11 @@ def test_retry_runner_buffers_failed_attempt_partial_deltas() -> None:
 
     assert calls == 2
     assert sleeps == [0.5]
+    # The "partial" delta from the failed attempt is delivered live and
+    # the successful attempt then appends "final".
     assert [event.text for event in events if event.type == "content_delta"] == [
-        "final"
+        "partial",
+        "final",
     ]
     assert events[-1].type == "message_completed"
 

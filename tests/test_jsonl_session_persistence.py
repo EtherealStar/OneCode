@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
+from infrastructure.filesystem.onecode_paths import (
+    session_dir,
+    session_messages_path,
+    sessions_dir,
+)
 from services.context.message_store import MessageStore
 from services.context.transcript import JsonlTranscriptStore
 from services.tools.types import ToolExecutionResult
@@ -28,7 +33,7 @@ def make_store(
     state: RuntimeState,
 ) -> MessageStore:
     return MessageStore(
-        transcript_root=tmp_path / ".onecode",
+        transcript_root=sessions_dir(tmp_path),
         session_id=state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -52,7 +57,7 @@ def test_message_store_persists_messages_with_parent_chain(tmp_path: Path) -> No
     )
     message_store.flush_transcript()
 
-    messages_path = tmp_path / ".onecode" / state.session_id / "messages.jsonl"
+    messages_path = session_messages_path(tmp_path, state.session_id)
     records = read_jsonl(messages_path)
 
     assert [record["type"] for record in records] == ["message", "message", "message"]
@@ -82,8 +87,8 @@ def test_large_tool_result_is_externalized_and_restored(tmp_path: Path) -> None:
     )
     message_store.flush_transcript()
 
-    session_dir = tmp_path / ".onecode" / state.session_id
-    records = read_jsonl(session_dir / "messages.jsonl")
+    current_session_dir = session_dir(tmp_path, state.session_id)
+    records = read_jsonl(current_session_dir / "messages.jsonl")
     record_message = records[0]["message"]
     metadata = record_message["metadata"]
 
@@ -92,12 +97,12 @@ def test_large_tool_result_is_externalized_and_restored(tmp_path: Path) -> None:
     assert metadata["original_tool_call_id"] == "call/read:1"
     assert metadata["original_size_bytes"] == len(large_content.encode("utf-8"))
     assert record_message["content"] != large_content
-    assert (session_dir / metadata["tool_result_path"]).read_text(
+    assert (current_session_dir / metadata["tool_result_path"]).read_text(
         encoding="utf-8"
     ) == large_content
 
     transcript_store = JsonlTranscriptStore(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -132,19 +137,19 @@ def test_duplicate_tool_call_id_externalized_results_do_not_overwrite(
     )
     message_store.flush_transcript()
 
-    session_dir = tmp_path / ".onecode" / state.session_id
-    records = read_jsonl(session_dir / "messages.jsonl")
+    current_session_dir = session_dir(tmp_path, state.session_id)
+    records = read_jsonl(current_session_dir / "messages.jsonl")
     first_path = records[0]["message"]["metadata"]["tool_result_path"]
     second_path = records[1]["message"]["metadata"]["tool_result_path"]
 
     assert first_path == "tool-results/call-1.txt"
     assert second_path.startswith("tool-results/call-1-")
     assert first_path != second_path
-    assert (session_dir / first_path).read_text(encoding="utf-8") == first_content
-    assert (session_dir / second_path).read_text(encoding="utf-8") == second_content
+    assert (current_session_dir / first_path).read_text(encoding="utf-8") == first_content
+    assert (current_session_dir / second_path).read_text(encoding="utf-8") == second_content
 
     transcript_store = JsonlTranscriptStore(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
@@ -180,13 +185,13 @@ def test_duplicate_tool_call_id_same_content_reuses_externalized_result(
     )
     message_store.flush_transcript()
 
-    session_dir = tmp_path / ".onecode" / state.session_id
-    records = read_jsonl(session_dir / "messages.jsonl")
+    current_session_dir = session_dir(tmp_path, state.session_id)
+    records = read_jsonl(current_session_dir / "messages.jsonl")
     first_path = records[0]["message"]["metadata"]["tool_result_path"]
     second_path = records[1]["message"]["metadata"]["tool_result_path"]
 
     assert first_path == second_path == "tool-results/call-1.txt"
-    assert sorted(path.name for path in (session_dir / "tool-results").iterdir()) == [
+    assert sorted(path.name for path in (current_session_dir / "tool-results").iterdir()) == [
         "call-1.txt"
     ]
 
@@ -198,14 +203,14 @@ def test_clear_starts_new_session_without_deleting_old_transcript(
     message_store = make_store(tmp_path, state)
     message_store.append_user("old message")
     message_store.flush_transcript()
-    old_messages_path = tmp_path / ".onecode" / "session-old" / "messages.jsonl"
+    old_messages_path = session_messages_path(tmp_path, "session-old")
 
     new_session_id = state.start_new_session()
     message_store.clear_for_new_session(new_session_id)
     message_store.append_user("new message")
     message_store.flush_transcript()
 
-    new_messages_path = tmp_path / ".onecode" / new_session_id / "messages.jsonl"
+    new_messages_path = session_messages_path(tmp_path, new_session_id)
     assert message_store.current_messages() == (
         {"role": "user", "content": "new message"},
     )
@@ -236,7 +241,7 @@ def test_replace_messages_for_compaction_appends_new_chain_without_deleting_hist
     )
     message_store.flush_transcript()
 
-    messages_path = tmp_path / ".onecode" / state.session_id / "messages.jsonl"
+    messages_path = session_messages_path(tmp_path, state.session_id)
     records = read_jsonl(messages_path)
 
     assert message_store.current_messages() == tuple(stored)
@@ -254,7 +259,7 @@ def test_replace_messages_for_compaction_appends_new_chain_without_deleting_hist
     restored_state = RuntimeState()
     restored_store = MessageStore.from_transcript(
         JsonlTranscriptStore(
-            tmp_path / ".onecode",
+            sessions_dir(tmp_path),
             state.session_id,
             cwd=tmp_path,
             flush_interval_seconds=60,
@@ -273,14 +278,14 @@ def test_restore_skips_bad_lines_and_continues_same_session(tmp_path: Path) -> N
     message_store.append_user("first")
     message_store.flush_transcript()
 
-    messages_path = tmp_path / ".onecode" / state.session_id / "messages.jsonl"
+    messages_path = session_messages_path(tmp_path, state.session_id)
     with messages_path.open("a", encoding="utf-8") as handle:
         handle.write("not json\n")
         handle.write('{"type":"message","message":{"role":"unknown"}}\n')
 
     restored_state = RuntimeState()
     transcript_store = JsonlTranscriptStore(
-        tmp_path / ".onecode",
+        sessions_dir(tmp_path),
         state.session_id,
         cwd=tmp_path,
         flush_interval_seconds=60,
