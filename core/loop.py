@@ -1,4 +1,32 @@
-"""Thin agent lifecycle loop."""
+"""Thin agent lifecycle loop.
+
+The loop's only job with respect to streaming is to forward provider
+events to the caller (and ultimately the CLI) **as they happen**. We
+deliberately do **not** collect the full attempt into a buffer before
+replaying it: that would defeat real-time streaming.
+
+State the loop keeps while a single model attempt is in flight:
+
+- ``completed_message`` — the final ``message_completed`` event so the
+  loop can persist the assistant message, derive tool calls, and run
+  output-interruption recovery once the attempt finishes.
+- ``seen_tool_calls`` — tool calls that were completed during the
+  attempt, so we still have them after the attempt ends (we don't
+  forward their JSON to the CLI inline; tool calls are only "ready"
+  when JSON parses, and we still want to gate execution on that).
+
+Everything else is forwarded to the caller live. ``content_delta``
+becomes ``assistant_delta`` *immediately*; ``tool_call_completed``
+becomes ``tool_call_ready`` *immediately*; ``tool_call_delta`` is
+forwarded as ``tool_call_delta`` so the CLI can show streaming tool
+status without pretending the tool is runnable yet.
+
+Recovery semantics (retry, max-output, reactive compact) are now
+visible to the caller instead of being hidden by a buffer. The
+``on_retry`` callback in :meth:`_run_loop_async` records a transition
+event so the UI can show ``provider stream interrupted; retrying``
+rather than silently rewinding text the user has already seen.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +35,7 @@ from typing import Any, Protocol
 
 from core.context_engine import ContextEngine
 from core.runtime_state import RuntimeState
-from core.stream_events import AgentEvent
+from core.stream_events import AgentEvent, mint_assistant_call_id
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
@@ -140,15 +168,39 @@ class AgentLoop:
     async def _run_loop_async(self) -> AsyncIterator[AgentEvent]:
         while True:
             self.state.turn_count += 1
-            if self.state.turn_count > self.state.max_turns:
+            # 为当前 turn 内即将开始的模型调用准备稳定归属 ID。同一
+            # turn 可能因为工具调用而触发多次模型调用,每次都要分配
+            # 新的 ``model_turn_index`` 和 ``assistant_call_id``,让
+            # checkpoint 渲染能区分不同 assistant message。
+            model_turn_index = self._next_model_turn_index()
+            assistant_call_id = mint_assistant_call_id(
+                self.state.session_id,
+                self.state.turn_count,
+                model_turn_index,
+            )
+            if (
+                self.state.max_turns is not None
+                and self.state.turn_count > self.state.max_turns
+            ):
                 self.state.set_transition(TransitionReason.MAX_TURNS)
                 self._record_transition(TransitionReason.MAX_TURNS)
                 text = "Stopped: maximum turn count reached."
                 yield AgentEvent(
                     type="transition",
                     transition=TransitionReason.MAX_TURNS.value,
+                    metadata={
+                        "model_turn_index": model_turn_index,
+                        "assistant_call_id": assistant_call_id,
+                    },
                 )
-                yield AgentEvent(type="completed", text=text)
+                yield AgentEvent(
+                    type="completed",
+                    text=text,
+                    metadata={
+                        "model_turn_index": model_turn_index,
+                        "assistant_call_id": assistant_call_id,
+                    },
+                )
                 return
 
             # 主循环保持薄：上下文、prompt 和工具 schema 都交给
@@ -170,9 +222,16 @@ class AgentLoop:
 
             model_attributes = self._model_attributes()
             model_attributes["turn_count"] = self.state.turn_count
+            # Local state used to drive post-attempt logic. The streaming
+            # model events themselves are NOT collected here — we forward
+            # them to the caller live.
             completed_message: ModelStreamEvent | None = None
-            model_events: list[ModelStreamEvent] = []
             pending_retry_events: list[AgentEvent] = []
+            # We still keep track of tool calls the provider finished so
+            # the executor can run them after the attempt completes.
+            completed_tool_calls: tuple = ()
+            streamed_any_text = False
+            streamed_any_tool_call = False
 
             async def on_retry(
                 error: ProviderError,
@@ -185,10 +244,13 @@ class AgentLoop:
                         type="transition",
                         transition=TransitionReason.RATE_LIMIT_RETRY.value,
                         metadata={
+                            "model_turn_index": model_turn_index,
+                            "assistant_call_id": assistant_call_id,
                             "attempt": decision.attempt,
                             "max_retries": decision.max_retries,
                             "delay_seconds": decision.delay_seconds,
                             "error_type": error.error_type,
+                            "partial_output_visible": streamed_any_text,
                         },
                     )
                 )
@@ -202,12 +264,55 @@ class AgentLoop:
                         lambda: self.model_client.stream(snapshot),
                         on_retry=on_retry,
                     ):
-                        model_events.append(model_event)
+                        # Forward every event live. We do not append to a
+                        # buffer; the caller (CLI) decides how to render.
+                        if model_event.type == "content_delta":
+                            streamed_any_text = True
+                            yield AgentEvent(
+                                type="assistant_delta",
+                                text=model_event.text,
+                                metadata={
+                                    **model_event.metadata,
+                                    "model_turn_index": model_turn_index,
+                                    "assistant_call_id": assistant_call_id,
+                                },
+                            )
+                            continue
+                        if model_event.type == "tool_call_delta":
+                            streamed_any_tool_call = True
+                            yield AgentEvent(
+                                type="tool_call_delta",
+                                metadata={
+                                    **model_event.metadata,
+                                    "model_turn_index": model_turn_index,
+                                    "assistant_call_id": assistant_call_id,
+                                },
+                            )
+                            continue
+                        if model_event.type == "tool_call_completed":
+                            yield AgentEvent(
+                                type="tool_call_ready",
+                                metadata={
+                                    "model_turn_index": model_turn_index,
+                                    "assistant_call_id": assistant_call_id,
+                                    "tool_call": model_event.tool_call,
+                                },
+                            )
+                            # Track the latest tool calls so we can
+                            # execute them after the attempt closes.
+                            if (
+                                completed_message is not None
+                                and "tool_calls" in model_event.metadata
+                            ):
+                                completed_tool_calls = tuple(
+                                    model_event.metadata.get("tool_calls") or ()
+                                )
+                            continue
                         if model_event.type == "message_completed":
                             completed_message = model_event
-                            tool_calls = self._event_tool_calls(model_event)
+                            completed_tool_calls = self._event_tool_calls(model_event)
                             end_attributes = {
-                                "tool_call_count": len(tool_calls),
+                                "tool_call_count": len(completed_tool_calls),
                                 "stop_reason": model_event.stop_reason,
                                 "output_interrupted": model_event.output_interrupted,
                             }
@@ -225,6 +330,10 @@ class AgentLoop:
                                     }
                                 )
                             model_span.end(end_attributes)
+                            # Now that the attempt is complete, surface
+                            # any retry transitions that the runner
+                            # collected between attempts.
+                            continue
             except ProviderError as exc:
                 self.trace_recorder.event(
                     "model_call_error",
@@ -239,6 +348,10 @@ class AgentLoop:
                     yield AgentEvent(
                         type="transition",
                         transition=TransitionReason.REACTIVE_COMPACT_RETRY.value,
+                        metadata={
+                            "model_turn_index": model_turn_index,
+                            "assistant_call_id": assistant_call_id,
+                        },
                     )
                     continue
                 self.error_log_recorder.record_error(
@@ -255,6 +368,12 @@ class AgentLoop:
                 )
                 raise
 
+            # Surface queued retry transitions after the successful
+            # attempt. The retry runner still owns backoff; we only
+            # expose the visibility here.
+            for retry_event in pending_retry_events:
+                yield retry_event
+
             if completed_message is None or completed_message.assistant_message is None:
                 error = ProviderError(
                     "Provider stream did not complete a message.",
@@ -270,9 +389,6 @@ class AgentLoop:
             if completed_message.usage is not None:
                 self.state.add_usage(completed_message.usage)
 
-            for retry_event in pending_retry_events:
-                yield retry_event
-
             output_recovery = self._prepare_output_interruption_recovery(
                 completed_message
             )
@@ -280,30 +396,25 @@ class AgentLoop:
                 yield AgentEvent(
                     type="transition",
                     transition=output_recovery.value,
+                    metadata={
+                        "model_turn_index": model_turn_index,
+                        "assistant_call_id": assistant_call_id,
+                    },
                 )
                 continue
 
-            for model_event in model_events:
-                if model_event.type == "content_delta":
-                    yield AgentEvent(
-                        type="assistant_delta",
-                        text=model_event.text,
-                        metadata=model_event.metadata,
-                    )
-                elif model_event.type == "tool_call_completed":
-                    yield AgentEvent(
-                        type="tool_call_ready",
-                        metadata={
-                            "tool_call": model_event.tool_call,
-                        },
-                    )
-
+            # The text deltas and tool_call_ready events have already
+            # been forwarded live. We now just record the final
+            # assistant message into the message store and announce the
+            # completion to hooks.
             self.message_store.append_assistant(completed_message.assistant_message)
-            tool_calls = self._event_tool_calls(completed_message)
+            tool_calls = completed_tool_calls or self._event_tool_calls(completed_message)
             yield AgentEvent(
                 type="assistant_message_completed",
                 text=completed_message.final_text,
                 metadata={
+                    "model_turn_index": model_turn_index,
+                    "assistant_call_id": assistant_call_id,
                     "stop_reason": completed_message.stop_reason,
                     "output_interrupted": completed_message.output_interrupted,
                 },
@@ -317,7 +428,9 @@ class AgentLoop:
             # stop reason 字段。
             if tool_calls:
                 result_blocks: list[ToolExecutionResult] = []
-                async for event in self._execute_tools(tool_calls, result_blocks):
+                async for event in self._execute_tools(
+                    tool_calls, result_blocks, model_turn_index, assistant_call_id
+                ):
                     yield event
                 self.message_store.append_tool_results(result_blocks)
                 followup_messages = tuple(
@@ -333,6 +446,10 @@ class AgentLoop:
                 yield AgentEvent(
                     type="transition",
                     transition=TransitionReason.TOOL_USE.value,
+                    metadata={
+                        "model_turn_index": model_turn_index,
+                        "assistant_call_id": assistant_call_id,
+                    },
                 )
                 continue
 
@@ -342,20 +459,40 @@ class AgentLoop:
             yield AgentEvent(
                 type="transition",
                 transition=TransitionReason.COMPLETED.value,
+                metadata={
+                    "model_turn_index": model_turn_index,
+                    "assistant_call_id": assistant_call_id,
+                },
             )
-            yield AgentEvent(type="completed", text=completed_message.final_text)
+            yield AgentEvent(
+                type="completed",
+                text=completed_message.final_text,
+                metadata={
+                    "model_turn_index": model_turn_index,
+                    "assistant_call_id": assistant_call_id,
+                },
+            )
             return
 
     async def _execute_tools(
         self,
         tool_calls: tuple,
         results: list[ToolExecutionResult],
+        model_turn_index: int,
+        assistant_call_id: str,
     ) -> AsyncIterator[AgentEvent]:
+        # 工具事件必须携带同一份稳定归属 metadata,reducer 才
+        # 能把 tool_result 归到产生该工具调用的 assistant message。
+        attribution: dict[str, Any] = {
+            "model_turn_index": model_turn_index,
+            "assistant_call_id": assistant_call_id,
+        }
         async for update in self.tool_executor.execute(tool_calls, self.state):
             if update.type == "started":
                 yield AgentEvent(
                     type="tool_started",
                     metadata={
+                        **attribution,
                         "tool_call_id": update.tool_call_id,
                         "tool_name": update.tool_name,
                         **update.metadata,
@@ -366,6 +503,7 @@ class AgentLoop:
                     type="tool_progress",
                     text=update.content,
                     metadata={
+                        **attribution,
                         "tool_call_id": update.tool_call_id,
                         "tool_name": update.tool_name,
                         **update.metadata,
@@ -373,7 +511,28 @@ class AgentLoop:
                 )
             elif update.result is not None:
                 results.append(update.result)
-                yield AgentEvent(type="tool_result", result=update.result)
+                yield AgentEvent(
+                    type="tool_result",
+                    result=update.result,
+                    metadata=dict(attribution),
+                )
+
+    def _next_model_turn_index(self) -> int:
+        """Return the next ``model_turn_index`` for the current session.
+
+        One ``turn_count`` 可能触发多次模型调用（assistant 声明工具
+        后,主循环回到 while 顶端再次调用模型)。这里用
+        ``state.metadata`` 维护一个 session 内严格递增的整数,确保
+        每次新模型调用都有新的归属 id,旧模型调用的 checkpoint 与
+        它的 assistant text / tool 事件能继续被准确绑定。
+        """
+
+        counter = self.state.metadata.get("model_turn_counter")
+        if not isinstance(counter, int):
+            counter = 0
+        counter += 1
+        self.state.metadata["model_turn_counter"] = counter
+        return counter
 
     def _event_tool_calls(
         self,
@@ -444,8 +603,9 @@ class AgentLoop:
             return TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE
 
         if self.state.max_output_recovery_count < MAX_OUTPUT_RECOVERY_RETRIES:
-            # Continuation recovery intentionally persists the truncated assistant
-            # and follows it with a terse user prompt so the model can resume.
+            # Continuation recovery persists the truncated assistant
+            # (the user has already seen it) and follows it with a
+            # terse user prompt so the model can resume.
             self.message_store.append_assistant(completed_message.assistant_message)
             self.message_store.append_user(CONTINUATION_PROMPT)
             self.state.max_output_recovery_count += 1
