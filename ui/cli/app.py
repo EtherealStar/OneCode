@@ -16,6 +16,7 @@ from core.context_engine import ContextEngine
 from core.loop import AgentLoop
 from core.runtime_state import RuntimeState
 from infrastructure.providers.factory import create_model_client
+from infrastructure.filesystem.onecode_paths import sessions_dir
 from prompts.assembler import DynamicPromptAssembler
 from services.attachments import (
     AttachmentCollector,
@@ -89,6 +90,7 @@ from tools.write_file import descriptor as write_file_descriptor
 from ui.cli import renderer
 from ui.cli.input import ConfirmOption, read_confirm_sync
 from ui.cli.permissions import CliPermissionPrompter
+from ui.cli.session_memory import BackgroundSessionMemoryExtractor
 from ui.cli.types import CliRuntime
 from utils.toolResultStorage import ToolResultStorage
 
@@ -117,7 +119,7 @@ def build_runtime(
     state = RuntimeState()
     state.metadata["workspace"] = str(workspace)
     message_store = MessageStore(
-        transcript_root=workspace / ".onecode",
+        transcript_root=sessions_dir(workspace),
         session_id=state.session_id,
         cwd=workspace,
     )
@@ -131,13 +133,13 @@ def build_runtime(
         project_store=project_permission_store,
     )
     skill_provider = LoaderSkillCatalogProvider()
-    trace_sink = JsonlTraceSink(workspace / ".onecode", state.session_id)
+    trace_sink = JsonlTraceSink(sessions_dir(workspace), state.session_id)
     trace_recorder = TraceRecorder(
         session_id=state.session_id,
         workspace=workspace,
         sink=trace_sink,
     )
-    error_log_sink = JsonlErrorLogSink(workspace / ".onecode", state.session_id)
+    error_log_sink = JsonlErrorLogSink(sessions_dir(workspace), state.session_id)
     error_log_recorder = ErrorLogRecorder(
         session_id=state.session_id,
         workspace=workspace,
@@ -257,7 +259,7 @@ def build_runtime(
     )
     subagent_runner = SubagentRunner(
         workspace=workspace,
-        transcript_root=workspace / ".onecode",
+        transcript_root=sessions_dir(workspace),
         parent_message_store=message_store,
         current_model_context=current_model_context,
         model_client=model_client,
@@ -272,6 +274,10 @@ def build_runtime(
         session_memory_store,
         subagent_runner=subagent_runner,
         trace_recorder=trace_recorder,
+    )
+    background_session_memory_extractor = BackgroundSessionMemoryExtractor(
+        session_memory_extractor,
+        background_task_manager,
     )
     long_term_memory_extractor = LongTermMemoryExtractionService(
         long_term_memory_store,
@@ -311,7 +317,7 @@ def build_runtime(
         current_model_context=current_model_context,
         hooks=hooks,
         compaction_service=compaction_service,
-        session_memory_extractor=session_memory_extractor,
+        session_memory_extractor=background_session_memory_extractor,
         error_log_recorder=error_log_recorder,
     )
     config = model_client.config

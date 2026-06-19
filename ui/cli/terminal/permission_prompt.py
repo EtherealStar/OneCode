@@ -1,17 +1,12 @@
 """TTY permission prompt for the inline REPL.
 
-Presents a permission request as a full-screen alternate-screen
-question with up/down navigation between the available choices. When a
-streaming preview app is already running, it falls back to a plain
-``run_in_terminal`` confirm to avoid nesting two full-screen apps.
+Presents a permission request as a transient, erased-when-done panel with
+up/down navigation between the policy-provided choices.
 """
 
 from __future__ import annotations
 
-import asyncio
-import sys
 from dataclasses import dataclass
-from typing import TextIO
 
 from prompt_toolkit import Application
 from prompt_toolkit.formatted_text import FormattedText
@@ -27,56 +22,26 @@ from ui.cli.permissions import (
     _prompt_line,
     render_permission_panel,
 )
-from ui.cli.terminal.transient import can_enter_alternate_screen
 
 
 @dataclass(frozen=True)
 class _PermissionChoice:
     label: str
     shortcut: str
-    response_factory: "callable"  # type: ignore[type-arg]
+    response: PermissionResponse
 
 
 def _response_for_choice(
-    value: str,
-    request: PermissionRequest,
+    option_id: str,
+    request: PermissionRequest | None = None,
 ) -> PermissionResponse:
-    """Map a confirm-option value (``y``/``s``/``p``/``n``) to a response.
+    """Map a policy option id, legacy fallback value, or shortcut to a response."""
 
-    Shared by the full-screen prompt and the plain confirm fallback so
-    both paths produce identical :class:`PermissionResponse` shapes —
-    matching what the legacy :class:`CliPermissionPrompter` returned.
-    """
-
-    if value == "y":
+    _ = request
+    if option_id in {"allow_once", "y"}:
         return PermissionResponse(action="allow", scope="once")
-    if value == "s":
+    if option_id in {"allow_session_directory", "s"}:
         return PermissionResponse(action="allow", scope="session")
-    if value == "p":
-        # Project rules only apply to bash; other tools degrade to
-        # session scope so the request still succeeds.
-        if request.descriptor.name != "bash":
-            return PermissionResponse(action="allow", scope="session")
-        from services.permissions import PermissionRuleValue, PermissionUpdate
-        from ui.cli.permissions import _bash_project_rule_content
-
-        return PermissionResponse(
-            action="allow",
-            scope="project",
-            permission_updates=(
-                PermissionUpdate(
-                    type="addRules",
-                    rules=(
-                        PermissionRuleValue(
-                            tool_name="bash",
-                            rule_content=_bash_project_rule_content(request),
-                        ),
-                    ),
-                    behavior="allow",
-                    destination="projectSettings",
-                ),
-            ),
-        )
     return PermissionResponse(
         action="deny",
         feedback="User denied the permission request.",
@@ -84,25 +49,33 @@ def _response_for_choice(
 
 
 def _build_choices(request: PermissionRequest) -> tuple[_PermissionChoice, ...]:
-    """Build the navigable choice list for the full-screen prompt."""
+    """Build the navigable choice list from policy-provided options."""
 
-    return tuple(
-        _PermissionChoice(
-            label=option.label,
-            shortcut=option.value,
-            response_factory=lambda value=option.value: _response_for_choice(
-                value, request
-            ),
+    choices: list[_PermissionChoice] = []
+    for index, option in enumerate(request.options, start=1):
+        choices.append(
+            _PermissionChoice(
+                label=option.label,
+                shortcut=str(index),
+                response=PermissionResponse(
+                    action=option.action,
+                    scope=option.scope,
+                    feedback=(
+                        "User denied the permission request."
+                        if option.action == "deny"
+                        else None
+                    ),
+                ),
+            )
         )
-        for option in _confirm_options(request)
-    )
+    return tuple(choices)
 
 
 class TtyPermissionPrompter:
-    """Alternate-screen permission prompt."""
+    """Transient TTY permission prompt."""
 
-    def __init__(self, *, stdout: TextIO | None = None) -> None:
-        self._stdout = stdout if stdout is not None else sys.stdout
+    def __init__(self) -> None:
+        pass
 
     async def request_permission(
         self,
@@ -118,8 +91,6 @@ class TtyPermissionPrompter:
             # fight over the terminal, so we suspend the active app with
             # ``run_in_terminal`` and ask via a plain confirm instead.
             return await run_in_terminal(lambda: self._blocking_confirm(request))
-        if not can_enter_alternate_screen(self._stdout):
-            return await asyncio.to_thread(self._blocking_confirm, request)
         return await self._tty_request(request)
 
     async def _tty_request(
@@ -141,9 +112,10 @@ class TtyPermissionPrompter:
                 lines.append(("class:panel", f"{line}\n"))
             lines.append(("", "\n"))
             for current, choice in enumerate(choices):
-                marker = "▶ " if current == index else "  "
+                marker = "> " if current == index else "  "
                 style = "class:selected" if current == index else "class:item"
-                lines.append((style, f"{marker}{choice.label}\n"))
+                lines.append((style, f"{marker}{choice.shortcut}. {choice.label}\n"))
+            lines.append(("", "\nEsc to cancel - Up/Down to select - Enter to confirm\n"))
             return FormattedText(lines)
 
         bindings = KeyBindings()
@@ -166,8 +138,14 @@ class TtyPermissionPrompter:
 
         @bindings.add(Keys.Enter, eager=True)
         def _on_enter(event) -> None:  # type: ignore[no-untyped-def]
-            commit(choices[index].response_factory())
+            commit(choices[index].response)
             event.app.exit()
+
+        for choice_index, choice in enumerate(choices):
+            @bindings.add(choice.shortcut, eager=True)
+            def _on_shortcut(event, choice_index=choice_index) -> None:  # type: ignore[no-untyped-def]
+                commit(choices[choice_index].response)
+                event.app.exit()
 
         @bindings.add(Keys.Escape, eager=True)
         @bindings.add(Keys.ControlC, eager=True)
@@ -180,12 +158,11 @@ class TtyPermissionPrompter:
             )
             event.app.exit()
 
-        # ``full_screen`` manages the alternate screen (DEC 1049)
-        # itself, so the panel never leaks into the static scrollback.
         window = Window(content=FormattedTextControl(get_text))
         app: Application[None] = Application(
             layout=Layout(window),
-            full_screen=True,
+            full_screen=False,
+            erase_when_done=True,
             mouse_support=False,
             key_bindings=bindings,
             input=input,
@@ -217,5 +194,5 @@ class TtyPermissionPrompter:
             )
         for option in options:
             if choice == option.value or choice in option.aliases:
-                return _response_for_choice(option.value, request)
+                return _response_for_choice(option.value)
         return PermissionResponse(action="deny", feedback="Unrecognized choice.")

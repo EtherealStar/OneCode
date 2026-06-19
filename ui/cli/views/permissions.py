@@ -17,9 +17,13 @@ from ui.cli.views.common import display_path, preview, titled_section
 def render_permissions(runtime: CliRuntime) -> Group:
     session = _session_table(runtime)
     project = _project_table(runtime)
+    hint = Text(
+        "edit: /permissions add|remove|replace allow|deny|ask <rule>",
+        style="onecode.subtle",
+    )
     return titled_section(
         "Permissions",
-        Group(session, Text(), project),
+        Group(session, Text(), project, Text(), hint),
         style="onecode.permission",
     )
 

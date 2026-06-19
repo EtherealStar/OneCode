@@ -10,6 +10,13 @@ from threading import Thread
 from typing import Any, Callable, Iterable
 
 from services.tasks import TaskStoreError, resolve_task_list_id
+from infrastructure.filesystem.onecode_paths import sessions_dir
+from services.permissions import (
+    PermissionBehavior,
+    PermissionUpdate,
+    PermissionUpdateType,
+    permission_rule_value_from_string,
+)
 from ui.cli import renderer
 from ui.cli.resume import list_session_summaries
 from ui.cli.resume import resolve_resume_target as _resolve_resume_target
@@ -50,7 +57,12 @@ def command_registry() -> tuple[CommandSpec, ...]:
         CommandSpec("status", "Show runtime status.", _status),
         CommandSpec("usage", "Show token and turn usage.", _usage),
         CommandSpec("memory", "Show session and long-term memory state.", _memory),
-        CommandSpec("permissions", "Show read-only permission grants and rules.", _permissions),
+        CommandSpec(
+            "permissions",
+            "Show permission grants or edit project rules.",
+            _permissions,
+            "[add|remove|replace allow|deny|ask <rule...>]",
+        ),
         CommandSpec("skills", "Show visible skills.", _skills),
         CommandSpec("tasks", "Show durable and background tasks.", _tasks),
         CommandSpec("mcp", "Show MCP servers and discovered tools.", _mcp),
@@ -137,8 +149,56 @@ def _memory(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult
 
 
 def _permissions(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
-    _ = invocation
-    return CommandResult(renderable=renderer.render_permissions(runtime), presentation="page")
+    if not invocation.args:
+        return CommandResult(
+            renderable=renderer.render_permissions(runtime),
+            presentation="page",
+        )
+    parsed = _parse_permissions_args(invocation.arg_text)
+    if parsed is None:
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Usage: /permissions add|remove|replace allow|deny|ask <rule...>"
+            )
+        )
+    action, behavior_text, raw_rules = parsed
+    update_type = _permission_update_type(action)
+    if update_type is None:
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Permission update must be add, remove, or replace."
+            )
+        )
+    behavior = _permission_behavior(behavior_text)
+    if behavior is None:
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Permission behavior must be allow, deny, or ask."
+            )
+        )
+    policy = runtime.permission_policy
+    project_store = policy.project_store if policy is not None else None
+    if project_store is None:
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Project permission settings are not enabled for this runtime."
+            )
+        )
+    try:
+        rules = tuple(
+            permission_rule_value_from_string(raw_rule)
+            for raw_rule in raw_rules
+        )
+        update = PermissionUpdate(
+            type=update_type,
+            rules=rules,
+            behavior=behavior,
+            destination="projectSettings",
+        )
+        project_store.apply_update(update)
+    except Exception as exc:
+        return CommandResult(renderable=renderer.render_error(str(exc)))
+    return CommandResult(renderable=_render_permission_update(update))
 
 
 def _skills(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
@@ -217,6 +277,7 @@ def _clear(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     return CommandResult(
         runtime=cleared,
         renderable=renderer.render_clear(old_session_id, new_session_id),
+        reset_main_view=True,
     )
 
 
@@ -238,15 +299,13 @@ def _resume(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult
         return CommandResult(renderable=renderer.render_error(str(exc)))
     return CommandResult(
         runtime=resumed,
-        renderable=renderer.render_group(
-            renderer.render_resume(
-                resumed.state.session_id,
-                resumed.message_store.transcript_store.messages_path,
-                resumed.workspace,
-            ),
-            renderer.render_restored_messages(resumed.message_store.current_messages()),
+        renderable=renderer.render_resume(
+            resumed.state.session_id,
+            resumed.message_store.transcript_store.messages_path,
+            resumed.workspace,
         ),
-        presentation="page",
+        presentation="inline",
+        replay_messages=resumed.message_store.current_messages(),
     )
 
 
@@ -267,7 +326,7 @@ def _exit(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
 
 
 def _resume_candidates(runtime: CliRuntime, text: str) -> Iterable[str]:
-    root = runtime.workspace / ".onecode"
+    root = sessions_dir(runtime.workspace)
     if not root.exists():
         return ()
     prefix = text.strip()
@@ -345,3 +404,79 @@ def _run_async_blocking(awaitable: Any) -> Any:
     if "error" in result:
         raise result["error"]
     return result.get("value")
+
+
+def _permission_update_type(value: str) -> PermissionUpdateType | None:
+    mapping: dict[str, PermissionUpdateType] = {
+        "add": "addRules",
+        "remove": "removeRules",
+        "replace": "replaceRules",
+    }
+    return mapping.get(value.lower())
+
+
+def _parse_permissions_args(arg_text: str) -> tuple[str, str, tuple[str, ...]] | None:
+    head = arg_text.strip().split(maxsplit=2)
+    if len(head) < 3:
+        return None
+    rules = _split_permission_rules(head[2])
+    if not rules:
+        return None
+    return head[0], head[1], rules
+
+
+def _split_permission_rules(text: str) -> tuple[str, ...]:
+    rules: list[str] = []
+    start: int | None = None
+    depth = 0
+    escaped = False
+    for index, char in enumerate(text):
+        if start is None:
+            if char.isspace():
+                continue
+            start = index
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "(":
+            depth += 1
+            continue
+        if char == ")" and depth > 0:
+            depth -= 1
+            continue
+        if char.isspace() and depth == 0:
+            assert start is not None
+            rules.append(text[start:index])
+            start = None
+    if start is not None:
+        rules.append(text[start:].strip())
+    return tuple(rule for rule in rules if rule)
+
+
+def _permission_behavior(value: str) -> PermissionBehavior | None:
+    mapping: dict[str, PermissionBehavior] = {
+        "allow": "allow",
+        "deny": "deny",
+        "ask": "ask",
+    }
+    return mapping.get(value.lower())
+
+
+def _render_permission_update(update: PermissionUpdate):
+    from rich.text import Text
+    from services.permissions import permission_rule_value_to_string
+    from ui.cli.theme import SYMBOLS
+
+    action = {
+        "addRules": "Added",
+        "removeRules": "Removed",
+        "replaceRules": "Replaced",
+    }[update.type]
+    rules = ", ".join(permission_rule_value_to_string(rule) for rule in update.rules)
+    return Text(
+        f"{SYMBOLS.success} {action} project {update.behavior} permission rule(s): {rules}",
+        style="onecode.success",
+    )

@@ -1,8 +1,8 @@
 """Full-screen ``/status``-style pages shown on the alternate screen.
 
 A *page* is a Rich renderable that should occupy the whole terminal
-window while the user reads it, with ``Esc`` (or ``q`` / ``Enter``)
-returning to the inline REPL. Pages are rendered inside a
+window while the user reads it, with ``Esc`` returning to the inline REPL.
+Pages are rendered inside a
 ``full_screen`` :class:`prompt_toolkit.Application`, which manages the
 alternate screen (DEC 1049) itself — so the user's static scrollback
 is preserved unchanged and the page content never leaks into it.
@@ -83,8 +83,6 @@ class TransientPage:
         bindings = KeyBindings()
 
         @bindings.add(Keys.Escape, eager=True)
-        @bindings.add("q", eager=True)
-        @bindings.add(Keys.Enter, eager=True)
         @bindings.add(Keys.ControlC, eager=True)
         def _close(event) -> None:  # type: ignore[no-untyped-def]
             event.app.exit()
@@ -121,7 +119,7 @@ class TransientPage:
             from prompt_toolkit.formatted_text import FormattedText
 
             return FormattedText(
-                [("class:page-footer", " Esc/q to return · ↑↓ to scroll ")]
+                [("class:page-footer", " Esc to return · ↑↓ to scroll ")]
             )
 
         body = Window(content=FormattedTextControl(body_text))

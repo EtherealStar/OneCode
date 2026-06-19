@@ -48,7 +48,7 @@ class InlineCompleter(Completer):
         items = tuple(suggestions_for(runtime, text, cursor))
         self._last_items = items
         for item in items:
-            yield Completion(
+            completion = Completion(
                 item.replacement,
                 start_position=_start_position(text, cursor, item),
                 display=item.display,
@@ -56,6 +56,8 @@ class InlineCompleter(Completer):
                 style="class:completion",
                 selected_style="class:completion-selected",
             )
+            setattr(completion, "_suggestion_item", item)
+            yield completion
 
     @property
     def last_items(self) -> tuple[SuggestionItem, ...]:

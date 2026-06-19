@@ -9,8 +9,6 @@ from typing import Callable
 from services.permissions import (
     PermissionRequest,
     PermissionResponse,
-    PermissionRuleValue,
-    PermissionUpdate,
 )
 from ui.cli.input import ConfirmOption, read_confirm_sync
 
@@ -56,24 +54,6 @@ class CliPermissionPrompter:
             return PermissionResponse(action="allow", scope="once")
         if normalized in {"s", "session"}:
             return PermissionResponse(action="allow", scope="session")
-        if normalized in {"p", "project"} and request.descriptor.name == "bash":
-            return PermissionResponse(
-                action="allow",
-                scope="project",
-                permission_updates=(
-                    PermissionUpdate(
-                        type="addRules",
-                        rules=(
-                            PermissionRuleValue(
-                                tool_name="bash",
-                                rule_content=_bash_project_rule_content(request),
-                            ),
-                        ),
-                        behavior="allow",
-                        destination="projectSettings",
-                    ),
-                ),
-            )
         return PermissionResponse(
             action="deny",
             feedback="User denied the permission request.",
@@ -187,10 +167,7 @@ def _bash_panel(request: PermissionRequest) -> str:
             f"read_only: {request.classification.read_only}",
             f"timeout_ms: {tool_input.get('timeout_ms', 'default')}",
             *_target_lines(request),
-            _options_line(
-                "allow matching directory targets for this session",
-                project_label="allow this command prefix for this project",
-            ),
+            _options_line("allow matching directory targets for this session"),
         ]
     )
 
@@ -219,36 +196,24 @@ def _target_lines(request: PermissionRequest) -> list[str]:
     return lines
 
 
-def _options_line(session_label: str, *, project_label: str | None = None) -> str:
+def _options_line(session_label: str) -> str:
     parts = [f"[y] allow once", f"[s] {session_label}"]
-    if project_label is not None:
-        parts.append(f"[p] {project_label}")
     parts.append("[n] deny")
     return "  ".join(parts)
 
 
 def _prompt_line(request: PermissionRequest) -> str:
-    if request.descriptor.name == "bash":
-        return "Allow? [y] once  [s] session directory  [p] project rule  [n] deny: "
+    _ = request
     return "Allow? [y] once  [s] session directory  [n] deny: "
 
 
 def _confirm_options(request: PermissionRequest) -> tuple[ConfirmOption, ...]:
-    options = [
+    _ = request
+    return (
         ConfirmOption("y", "y once", aliases=("yes",)),
         ConfirmOption("s", "s session", aliases=("session",)),
-    ]
-    if request.descriptor.name == "bash":
-        options.append(ConfirmOption("p", "p project", aliases=("project",)))
-    options.append(ConfirmOption("n", "n deny", aliases=("no", "deny")))
-    return tuple(options)
-
-
-def _bash_project_rule_content(request: PermissionRequest) -> str:
-    command = " ".join(str(request.tool_input.get("command", "")).split())
-    if command.startswith("npm run "):
-        return "npm run:*"
-    return command
+        ConfirmOption("n", "n deny", aliases=("no", "deny")),
+    )
 
 
 def _preview(value: object, *, limit: int = 240) -> str:
