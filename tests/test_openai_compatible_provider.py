@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
+from infrastructure.config.env import provider_env_prefix
 from infrastructure.providers.catalog import BUILTIN_PROVIDERS, get_provider_definition
 from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
 from infrastructure.providers.connection import ProviderConnectionService
@@ -112,13 +113,15 @@ def write_env(
     extra_headers: str | None = None,
     default_params: str | None = None,
 ) -> Path:
+    prefix = provider_env_prefix(provider_id)
     lines = [
         f"ONECODE_PROVIDER_ID={provider_id}",
-        f"ONECODE_MODEL={model}",
-        f"ONECODE_API_KEY={api_key}",
+        f"#{provider_id}",
+        f"{prefix}_MODEL={model}",
+        f"{prefix}_API_KEY={api_key}",
     ]
     if base_url is not None:
-        lines.append(f"ONECODE_BASE_URL={base_url}")
+        lines.append(f"{prefix}_BASE_URL={base_url}")
     if timeout_seconds is not None:
         lines.append(f"ONECODE_TIMEOUT_SECONDS={timeout_seconds}")
     if extra_headers is not None:
@@ -201,7 +204,7 @@ def test_load_provider_config_requires_dotenv_file(tmp_path: Path) -> None:
 def test_load_provider_config_requires_api_key(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "ONECODE_PROVIDER_ID=openai\nONECODE_MODEL=gpt-test\n",
+        "ONECODE_PROVIDER_ID=openai\n#openai\nOPENAI_MODEL=gpt-test\n",
         encoding="utf-8",
     )
 
@@ -209,7 +212,7 @@ def test_load_provider_config_requires_api_key(tmp_path: Path) -> None:
         load_provider_config(env_path)
 
     assert exc_info.value.error_type == "configuration_error"
-    assert "ONECODE_API_KEY" in str(exc_info.value)
+    assert "OPENAI_API_KEY" in str(exc_info.value)
 
 
 def test_load_provider_config_requires_custom_base_url(tmp_path: Path) -> None:

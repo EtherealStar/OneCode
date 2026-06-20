@@ -8,7 +8,7 @@ from infrastructure.config.env import load_provider_config
 from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
-from ui.cli.connect import ProviderEnvUpdate, write_provider_env
+from ui.cli.connect import ProviderEnvUpdate, existing_key_for_provider, write_provider_env
 from ui.cli.types import CliRuntime
 
 
@@ -55,7 +55,7 @@ def make_runtime(tmp_path: Path) -> CliRuntime:
     )
 
 
-def test_write_provider_env_preserves_unrelated_lines_and_removes_old_base_url(
+def test_write_provider_env_updates_provider_block_without_overwriting_others(
     tmp_path: Path,
 ) -> None:
     env_path = tmp_path / ".env"
@@ -64,10 +64,15 @@ def test_write_provider_env_preserves_unrelated_lines_and_removes_old_base_url(
             [
                 "# keep this",
                 "OTHER_SETTING=yes",
-                "ONECODE_PROVIDER_ID=custom",
-                "ONECODE_MODEL=old",
-                "ONECODE_API_KEY=old-secret",
-                "ONECODE_BASE_URL=https://old.example/v1",
+                "ONECODE_PROVIDER_ID=openai",
+                "#openai",
+                "OPENAI_BASE_URL=https://api.openai.com/v1",
+                "OPENAI_MODEL=gpt-test",
+                "OPENAI_API_KEY=openai-secret",
+                "#deepseek",
+                "DEEPSEEK_BASE_URL=https://old.example",
+                "DEEPSEEK_MODEL=old",
+                "DEEPSEEK_API_KEY=old-secret",
             ]
         ),
         encoding="utf-8",
@@ -79,6 +84,7 @@ def test_write_provider_env_preserves_unrelated_lines_and_removes_old_base_url(
             provider_id="deepseek",
             model="deepseek-chat",
             api_key="secret with spaces",
+            base_url="https://api.deepseek.com",
         ),
     )
 
@@ -86,10 +92,15 @@ def test_write_provider_env_preserves_unrelated_lines_and_removes_old_base_url(
     config = load_provider_config(env_path)
     assert "# keep this" in text
     assert "OTHER_SETTING=yes" in text
-    assert "ONECODE_BASE_URL" not in text
+    assert "ONECODE_MODEL" not in text
+    assert "ONECODE_API_KEY" not in text
+    assert "OPENAI_API_KEY=openai-secret" in text
+    assert "DEEPSEEK_BASE_URL=https://api.deepseek.com" in text
+    assert 'DEEPSEEK_API_KEY="secret with spaces"' in text
     assert config.provider_id == "deepseek"
     assert config.model == "deepseek-chat"
     assert config.api_key == "secret with spaces"
+    assert config.base_url == "https://api.deepseek.com"
 
 
 def test_write_provider_env_writes_required_base_url(tmp_path: Path) -> None:
@@ -108,6 +119,25 @@ def test_write_provider_env_writes_required_base_url(tmp_path: Path) -> None:
     config = load_provider_config(env_path)
     assert config.provider_id == "custom"
     assert config.base_url == "https://example.test/v1"
+    assert config.model == "custom-model"
+    assert config.api_key == "secret"
+
+
+def test_existing_key_for_provider_reads_provider_specific_block(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join(
+            [
+                "ONECODE_PROVIDER_ID=openai",
+                "#deepseek",
+                "DEEPSEEK_MODEL=deepseek-chat",
+                "DEEPSEEK_API_KEY=deepseek-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert existing_key_for_provider(env_path, "deepseek") == "deepseek-secret"
 
 
 def test_runtime_with_model_config_rebinds_model_client(
@@ -130,4 +160,3 @@ def test_runtime_with_model_config_rebinds_model_client(
     assert rebound.model_client is new_client
     assert rebound.loop.model_client is new_client
     assert rebound.memory_selector is not runtime.memory_selector
-

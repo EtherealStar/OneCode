@@ -15,6 +15,7 @@ class ProviderDefinition:
     default_headers: dict[str, str] = field(default_factory=dict)
     notes: str | None = None
     requires_base_url: bool = False
+    api_key_required: bool = True
 
 
 BUILTIN_PROVIDERS: dict[str, ProviderDefinition] = {
@@ -48,15 +49,13 @@ BUILTIN_PROVIDERS: dict[str, ProviderDefinition] = {
         display_name="Gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
     ),
-    "claude-openai-compatible": ProviderDefinition(
-        id="claude-openai-compatible",
-        display_name="Claude OpenAI-compatible",
-        base_url="",
-        notes=(
-            "Claude native API is not OpenAI Chat Completions compatible; "
-            "configure an OpenAI-compatible gateway base URL."
-        ),
-        requires_base_url=True,
+    "ollama": ProviderDefinition(
+        id="ollama",
+        display_name="Ollama",
+        base_url="http://localhost:11434",
+        models_path="/api/tags",
+        api_key_required=False,
+        notes="Local Ollama instance. API key not required.",
     ),
     "custom": ProviderDefinition(
         id="custom",
@@ -73,7 +72,7 @@ CONNECT_PROVIDER_ORDER = (
     "minimax",
     "siliconflow",
     "gemini",
-    "claude-openai-compatible",
+    "ollama",
     "custom",
 )
 

@@ -41,8 +41,9 @@ def load_provider_config(env_path: str | Path = ".env") -> ResolvedProviderConfi
 
     provider_id = _required_string(values, "ONECODE_PROVIDER_ID")
     provider = _get_provider(provider_id)
+    prefix = provider_env_prefix(provider.id)
     base_url = normalize_base_url(
-        _optional_string(values, "ONECODE_BASE_URL") or provider.base_url
+        _optional_string(values, f"{prefix}_BASE_URL") or provider.base_url
     )
     if provider.requires_base_url and not base_url:
         raise ProviderError(
@@ -55,14 +56,17 @@ def load_provider_config(env_path: str | Path = ".env") -> ResolvedProviderConfi
 
     headers = dict(provider.default_headers)
     headers.update(_string_mapping(values, "ONECODE_EXTRA_HEADERS"))
-    secret = _required_string(values, "ONECODE_API_KEY")
+    if provider.api_key_required:
+        secret = _required_string(values, f"{prefix}_API_KEY")
+    else:
+        secret = _optional_string(values, f"{prefix}_API_KEY") or ""
 
     return ResolvedProviderConfig(
         provider,
         provider.id,
         provider.display_name,
         base_url,
-        _required_string(values, "ONECODE_MODEL"),
+        _required_string(values, f"{prefix}_MODEL"),
         secret,
         timeout_seconds=_optional_float(values, "ONECODE_TIMEOUT_SECONDS", default=60.0),
         headers=headers,
@@ -70,6 +74,10 @@ def load_provider_config(env_path: str | Path = ".env") -> ResolvedProviderConfi
         models_path=provider.models_path,
         chat_completions_path=provider.chat_completions_path,
     )
+
+
+def provider_env_prefix(provider_id: str) -> str:
+    return provider_id.upper().replace("-", "_")
 
 
 def normalize_base_url(base_url: str | None) -> str:
