@@ -8,7 +8,7 @@ from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
 from tools.read_file import descriptor as read_file_descriptor
-from ui.cli.suggestions import suggestions_for
+from ui.cli.suggestions import _FILE_SUGGESTION_CACHE, suggestions_for
 from ui.cli.types import CliRuntime
 
 
@@ -102,7 +102,7 @@ def test_file_suggestions_are_bounded_to_workspace(tmp_path: Path) -> None:
         outside.unlink(missing_ok=True)
 
 
-def test_file_suggestions_do_not_scan_recursively(tmp_path: Path) -> None:
+def test_file_suggestions_scan_recursively_with_bounds(tmp_path: Path) -> None:
     runtime = make_runtime(tmp_path)
     nested = tmp_path / "src" / "nested"
     nested.mkdir(parents=True)
@@ -110,4 +110,65 @@ def test_file_suggestions_do_not_scan_recursively(tmp_path: Path) -> None:
 
     assert "src/" in displays(runtime, "read @s")
     assert "src/nested/" in displays(runtime, "read @src/n")
-    assert "src/nested/deep.py" not in displays(runtime, "read @s")
+    assert "src/nested/deep.py" in displays(runtime, "read @s")
+    assert "src/nested/deep.py" in displays(runtime, "read @deep")
+
+
+def test_file_suggestions_defer_global_basename_search_for_short_prefix(
+    tmp_path: Path,
+) -> None:
+    runtime = make_runtime(tmp_path)
+    nested = tmp_path / "src" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "deep.py").write_text("", encoding="utf-8")
+
+    assert "src/nested/deep.py" not in displays(runtime, "read @d")
+    assert "src/nested/deep.py" in displays(runtime, "read @de")
+
+
+def test_file_suggestions_match_case_insensitively(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    docs = tmp_path / "Docs"
+    docs.mkdir()
+    (docs / "README.md").write_text("", encoding="utf-8")
+
+    assert "Docs/" in displays(runtime, "read @docs")
+    assert "Docs/README.md" in displays(runtime, "read @docs/read")
+    assert "Docs/README.md" in displays(runtime, "read @readme")
+
+
+def test_file_suggestions_skip_ignored_directories(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("", encoding="utf-8")
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "config.py").write_text("", encoding="utf-8")
+
+    assert ".git/" not in displays(runtime, "read @")
+    assert ".venv/" not in displays(runtime, "read @")
+    assert ".git/config" not in displays(runtime, "read @config")
+    assert ".venv/pyvenv.cfg" not in displays(runtime, "read @py")
+    assert "src/config.py" in displays(runtime, "read @config")
+
+
+def test_file_suggestions_stop_after_completed_directory_token(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    (tmp_path / "docs" / "reference").mkdir(parents=True)
+
+    assert displays(runtime, "read @docs/") == []
+
+
+def test_file_suggestions_reuse_short_lived_candidate_cache(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "alpha.py").write_text("", encoding="utf-8")
+
+    _FILE_SUGGESTION_CACHE.clear()
+    assert "src/alpha.py" in displays(runtime, "read @alpha")
+    cached = _FILE_SUGGESTION_CACHE[tmp_path.resolve()]
+    (tmp_path / "src" / "beta.py").write_text("", encoding="utf-8")
+
+    assert "src/beta.py" not in displays(runtime, "read @beta")
+    assert _FILE_SUGGESTION_CACHE[tmp_path.resolve()] is cached

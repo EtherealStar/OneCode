@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from prompt_toolkit.completion import CompleteEvent
@@ -435,6 +437,31 @@ def test_file_completion_appends_space_for_continued_editing(tmp_path: Path) -> 
     assert buffer.text == "@ui/cli/renderer.py "
 
 
+def test_enter_completes_directory_mention_without_submitting(
+    tmp_path: Path,
+) -> None:
+    from prompt_toolkit.buffer import Buffer
+
+    from ui.cli.terminal.prompt_session import _directory_mention_token_end
+
+    (tmp_path / "docs" / "reference").mkdir(parents=True)
+    buffer = Buffer(
+        completer=InlineCompleter(_FakeRuntime(tmp_path)),
+        complete_while_typing=False,
+        multiline=False,
+    )
+    buffer.text = "@docs/"
+    buffer.cursor_position = len(buffer.text)
+
+    token_end = _directory_mention_token_end(buffer)
+    assert token_end == len(buffer.text)
+    buffer.cursor_position = token_end
+    buffer.insert_text(" ")
+
+    assert buffer.text == "@docs/ "
+    assert list(buffer.completer.get_completions(buffer.document, CompleteEvent())) == []
+
+
 def test_tab_fills_without_submitting_then_enter_submits(tmp_path: Path) -> None:
     session = PromptSession(_FakeRuntime(tmp_path), InputQueue())
     # "/st" + Tab fills the box with "/status" but does NOT submit;
@@ -563,6 +590,48 @@ def test_handle_command_reset_main_view_rebuilds_prompt_and_prints_banner(
     assert output.startswith("\n" * 6)
     assert "OneCode" in output
     assert "clear notice" in output
+
+
+def test_connect_success_resets_main_view_with_new_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime = make_runtime(tmp_path)
+    new_runtime = make_runtime(tmp_path / "new")
+    new_runtime = replace(
+        new_runtime,
+        provider_label="DeepSeek",
+        model="deepseek-chat",
+    )
+    repl = InlineRepl(runtime)
+    old_prompt = repl._prompt
+    buffer = io.StringIO()
+    repl._console = Console(
+        file=buffer,
+        force_terminal=True,
+        color_system="standard",
+        width=80,
+        theme=RICH_THEME,
+    )
+    monkeypatch.setattr(repl, "_terminal_height", lambda: 2)
+
+    async def fake_run_connect_flow(runtime_arg):
+        assert runtime_arg is runtime
+        return SimpleNamespace(
+            cancelled=False,
+            runtime=new_runtime,
+            renderable=Text("已连接到 DeepSeek (deepseek-chat)。"),
+        )
+
+    monkeypatch.setattr(repl_module, "run_connect_flow", fake_run_connect_flow)
+
+    asyncio.run(repl._handle_command("/connect"))
+
+    output = buffer.getvalue()
+    assert repl._runtime is new_runtime
+    assert repl._prompt is not old_prompt
+    assert "deepseek-chat" in output
+    assert "已连接到 DeepSeek" in output
 
 
 # --- M4: streaming session ------------------------------------------------
@@ -1210,6 +1279,61 @@ def test_selector_empty_returns_none() -> None:
             return await selector.run(input=pipe, output=DummyOutput())
 
     assert asyncio.run(run()) is None
+
+
+def test_connect_text_prompt_accepts_typed_input() -> None:
+    from ui.cli.terminal.connect_flow import _prompt_text
+
+    async def run() -> str | None:
+        with create_pipe_input() as pipe:
+            pipe.send_text("sk-secret\r")
+            return await _prompt_text(
+                "请输入 API Key",
+                out=io.StringIO(),
+                secret=True,
+                input=pipe,
+                output=DummyOutput(),
+            )
+
+    assert asyncio.run(run()) == "sk-secret"
+
+
+def test_connect_text_prompt_cancels_on_escape() -> None:
+    from ui.cli.terminal.connect_flow import _prompt_text
+
+    async def run() -> str | None:
+        with create_pipe_input() as pipe:
+            pipe.send_text("\x1b")
+            return await _prompt_text(
+                "请输入 API Key",
+                out=io.StringIO(),
+                input=pipe,
+                output=DummyOutput(),
+            )
+
+    assert asyncio.run(run()) is None
+
+
+def test_connect_secret_prompt_does_not_mask_gutter() -> None:
+    from prompt_toolkit.layout.controls import BufferControl
+    from prompt_toolkit.layout.processors import BeforeInput, PasswordProcessor
+
+    from ui.cli.terminal.connect_flow import _build_text_prompt_application
+
+    result: list[str | None] = [None]
+    app = _build_text_prompt_application(
+        "请输入 API Key",
+        result,
+        secret=True,
+        input=None,
+        output=DummyOutput(),
+    )
+    input_window = app.layout.container.children[1]
+    control = input_window.content
+
+    assert isinstance(control, BufferControl)
+    assert isinstance(control.input_processors[0], PasswordProcessor)
+    assert isinstance(control.input_processors[1], BeforeInput)
 
 
 def test_page_closes_on_escape() -> None:
