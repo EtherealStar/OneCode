@@ -112,8 +112,7 @@ def print_assistant_start() -> None:
     """
 
     static_console().print(
-        Text("onecode> ", style=assistant_prefix_style()),
-        end="",
+        Text("onecode>", style=assistant_prefix_style())
     )
 
 
@@ -135,8 +134,7 @@ def print_assistant_markdown(text: str) -> None:
     if not text:
         return
     static_console().print(
-        Text("onecode> ", style=assistant_prefix_style()),
-        end="",
+        Text("onecode>", style=assistant_prefix_style())
     )
     width = static_console().width or 80
     cached_lines = render_cached_markdown(text, width=width)

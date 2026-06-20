@@ -240,11 +240,27 @@ class InlineRepl:
         )
 
     async def _run_connect_flow(self) -> CommandResult:
+        was_configured = self._runtime.configured
         result = await run_connect_flow(self._runtime)
         if result.cancelled or result.runtime is None:
             return CommandResult(renderable=result.renderable)
+            
+        runtime = result.runtime
+        if not was_configured:
+            from ui.cli.app import build_runtime
+            from ui.cli.terminal.trust_prompt import default_trust_prompt
+            try:
+                runtime = build_runtime(
+                    self._runtime.workspace,
+                    trust_prompt=default_trust_prompt,
+                    permission_prompter=self._permission_prompter,
+                    mcp_trust_mode="prompt",
+                )
+            except Exception as exc:
+                return CommandResult(renderable=renderer.render_error(f"Failed to initialize runtime: {exc}"))
+
         return CommandResult(
-            runtime=result.runtime,
+            runtime=runtime,
             renderable=result.renderable,
             reset_main_view=True,
         )

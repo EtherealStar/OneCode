@@ -547,13 +547,24 @@ def _take_new_lines(out: _io.StringIO, existing: list[str]) -> list[str]:
     rendered = out.getvalue()
     out.truncate(0)
     out.seek(0)
-    new_lines = rendered.splitlines()
     # If the rendered buffer is empty, the new content was either an
     # empty segment or ended without a trailing newline. Return an
     # empty list so the caller can keep going.
     if not rendered:
         return []
-    return new_lines
+    return [_rstrip_terminal_padding(line) for line in rendered.splitlines()]
+
+
+def _rstrip_terminal_padding(line: str) -> str:
+    """Remove Rich's terminal-width fill while preserving closing SGR codes."""
+
+    line = line.rstrip(" ")
+    match = re.search(r"((?:\x1b\[[0-9;]*m)+)$", line)
+    if match is None:
+        return line
+    suffix = match.group(1)
+    body = line[: -len(suffix)]
+    return body.rstrip(" ") + suffix
 
 
 def _split_around_table(text: str, table) -> tuple[str, str]:

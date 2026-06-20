@@ -41,7 +41,7 @@ def render_running() -> str:
 def render_assistant(text: str) -> str:
     # assistant 回复统一带 onecode> 前缀（非流式路径；流式路径在 app 层单独加一次）。
     body = text if text else "(assistant returned no text)"
-    return f"onecode> {body}"
+    return f"onecode>\n{body}"
 
 
 def render_assistant_delta(text: str) -> str:
