@@ -50,15 +50,15 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: 第一版技能来源是 bundled skills、用户目录 skills 和项目 `.onecode/skills`，不实现 MCP skills、插件 skills、legacy `.claude/commands` 或远程 skill search。
   Rationale: 用户明确要求“用户目录 + 项目 `.onecode/skills`”，并要求先实现 skill loading 和使用 skill 的主流程。收窄来源能把复杂度集中在 OneCode 架构边界：loader、catalog、Skill 工具、权限和附件投影。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: 文件技能同名时采用 `project > user > bundled` 优先级。更高优先级覆盖更低优先级，覆盖事件应写入 trace/debug metadata，测试应固定该行为。
   Rationale: 项目技能最贴近当前仓库，用户技能代表个人偏好，bundled 技能是默认能力。这个顺序符合“局部配置覆盖全局默认”的常见预期。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: Inline skill 的完整内容通过 durable `skill` attachment 注入，而不是直接塞进普通 tool result。
   Rationale: 现有附件系统已经解决“持久保存结构化上下文，但在 provider 调用前投影为合法消息”的问题。Skill 全文和文件附件一样，是 runtime 注入的结构化上下文；作为 attachment 保存可以避免 transcript 把它误记成模型真实工具读取结果。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: `ToolExecutionResult` 需要新增 follow-up message 能力，用来承载 Skill 工具调用后要追加的 attachment messages。
   Rationale: SkillTool 是普通工具，不能绕过 executor 和主循环直接写 `MessageStore`。新增 follow-up messages 可以保持工具仍通过 executor 返回，同时让 loop 统一追加工具引发的新上下文。
@@ -66,7 +66,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: `allowed-tools` 在 skill 成功调用后自动合并进权限上下文，但不能覆盖任何 deny。
   Rationale: 用户明确要求“自动允许，合并进权限上下文”。OneCode 的安全原则要求 deny-first，因此这个自动允许只能把本来需要 ask 的后续工具调用降为 allow，不能绕过 `denied_tools`、`disabled_tools`、guard deny、read-only subagent 或 internal memory extraction 限制。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: `context: fork` 的 skill 使用干净上下文加 skill prompt，不继承父消息链。
   Rationale: 用户明确要求 fork skill 用“干净上下文 + skill prompt”。这和普通 omitted `subagent_type` fork 不同，因此实现不应复用父消息链 fork，而应为 skill 创建一个动态 clean child request。
@@ -74,7 +74,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: 第一版 frontmatter 支持 `name`、`description`、`when_to_use`、`allowed-tools`、`context`、`model`、`user-invocable`、`disable-model-invocation` 和 `paths`。
   Rationale: 这些字段覆盖目录展示、模型调用、权限、inline/fork 分支和未来条件激活。`hooks`、`shell`、legacy 命令插值和远程 skill 可后置，以免在第一版引入未验证的执行面。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 
 ## Outcomes & Retrospective

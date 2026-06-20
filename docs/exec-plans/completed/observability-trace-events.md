@@ -41,27 +41,27 @@ OneCode 当前已经能运行一个真实的 code agent 循环，但用户和开
 
 - Decision: 第一版 observability 只做本地 JSONL trace 和 CLI 展示。
   Rationale: OneCode 是本地 code agent runtime。现阶段最需要的是调试、测试、回放和 UI 展示所需的事实来源。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: Trace、debug log 和 transcript 必须分离。首版只实现 trace，不实现新的 debug log。
   Rationale: Transcript 是模型对话记录，会被恢复为上下文；trace 是运行事实，不应进入模型消息。Debug log 可以比 trace 更自由地记录诊断文本，但也更容易包含敏感内容，适合作为后续单独计划。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 事件入口采用 `TraceRecorder`，调用点只依赖 recorder 协议和 span/event 方法，不直接写文件。
   Rationale: 统一入口能让本地 JSONL、测试内存 sink 和 UI 展示共享同一事实来源，避免 `core/loop.py`、executor、provider 和 CLI 各自手写日志格式。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: JSONL trace 每条记录都使用 provider-neutral 字段：`record_type`、`timestamp`、`session_id`、`trace_id`、`span_id`、`parent_span_id`、`name`、`attributes`。
   Rationale: 这些字段足够表达普通事件和 span 层级，也能保持 trace 文件稳定可读。Provider-specific 字段不能泄露到 core 层。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: Metadata 默认做隐私清洗，禁止记录源码内容、prompt 全文、工具输出全文、API key、headers、完整外部路径和任意深层对象。
   Rationale: OneCode 处理代码仓库和 `.env`，observability 默认安全比默认完整更重要。需要更多细节时，应通过显式 debug 模式或未来受控 sink 处理，而不是扩大默认 trace。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 并发工具 span 使用显式 `parent_span_id` 传递，而不是只依赖 `contextvars`。
   Rationale: Python 的 `contextvars` 适合同步调用栈和 async task，但 `ThreadPoolExecutor` 不会自动继承所有上下文语义。显式传 parent span 能让并发工具仍挂在正确的 `tool_batch` 下。
-  Date/Author: 2026-06-05 / Codex
+
 
 ## Outcomes & Retrospective
 
