@@ -48,7 +48,7 @@ provider-neutral 错误分类层，仅依赖 stdlib，供 core/services/infrastr
 
 `provider`、`provider_id`、`display_name`、`base_url`、`model`、`api_key`、`timeout_seconds`（默认 60）、`headers`、`default_params`、`models_path`（`/models`）、`chat_completions_path`（`/chat/completions`）。
 
-`load_provider_config(env_path=".env")` 读取的环境键：`ONECODE_PROVIDER_ID`、`ONECODE_MODEL`、`ONECODE_API_KEY`（必填），`ONECODE_BASE_URL`、`ONECODE_TIMEOUT_SECONDS`、`ONECODE_EXTRA_HEADERS`、`ONECODE_DEFAULT_PARAMS`（可选）。OneCode 只从 `.env` 读取，dotenv interpolation 已禁用。
+`load_provider_config(env_path=".env")` 读取 `ONECODE_PROVIDER_ID` 作为当前激活供应商，然后按 provider id 派生大写前缀读取供应商块：`<PREFIX>_MODEL`、`<PREFIX>_API_KEY`、`<PREFIX>_BASE_URL`。例如 `deepseek` 使用 `DEEPSEEK_MODEL` / `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`，`custom` 使用 `CUSTOM_*`。`ONECODE_TIMEOUT_SECONDS`、`ONECODE_EXTRA_HEADERS`、`ONECODE_DEFAULT_PARAMS` 仍为全局可选键。OneCode 只从 `.env` 读取，dotenv interpolation 已禁用。
 
 ## 核心数据流
 

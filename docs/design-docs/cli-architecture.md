@@ -163,7 +163,19 @@ flowchart TD
 
 ### Connect
 
-`/connect` 由 `connect_flow.run_connect_flow` 多步向导完成：备用屏幕里选 provider → 输入 model / API key（必要时 base URL）→ `write_provider_env()` 只更新四个 `ONECODE_*` 键 → `with_model_config()` 重建模型客户端。
+启动时 `main()` 尝试 `build_runtime()`，若 `.env` 缺必要配置抛出 `ProviderError`，则改为 `build_unconfigured_runtime()` 创建精简 runtime（`configured=False`）。REPL 主循环在 `configured=False` 时拦截所有非 `/connect`、`/exit` 输入，提示用户使用 `/connect` 配置供应商。
+
+`/connect` 由 `connect_flow.run_connect_flow` 多步向导完成（全程备用屏幕）：
+
+1. **选择 Provider**：`TransientSelector` 列出 catalog 中所有供应商（含 Ollama 和 Custom）。
+2. **Custom → 输入 Base URL**：`requires_base_url` 为 `True` 时先收集 URL。
+3. **Key 处理**：检查 `.env` 中该 provider 是否已有 API key。
+   - 有 → K/R/C 三选项（Keep 保留 / Replace 替换 / Cancel 取消）。
+   - 无 + `api_key_required` → 输入新 key。
+   - 无 + `not api_key_required`（Ollama）→ 跳过。
+4. **拉取模型列表**：`fetch_models_for_connect` 自动探测端点。Ollama 用 `/api/tags`；其他 provider 优先试 `{base_url}/v1/models`，再试 `{base_url}/models`。失败时 fallback 到手动输入模型名 + `test_model_connection` 连接测试。
+5. **模型选择器**：`TransientSelector` 展示模型列表。
+6. **保存**：`write_provider_env()` 更新 `ONECODE_*` 键 → `with_model_config()` 重建模型客户端（`configured` 变为 `True`）。
 
 ### 权限
 
@@ -177,4 +189,4 @@ TTY：`TtyPermissionPrompter` 使用可擦除临时面板，只消费 `Permissio
 
 ## 当前限制
 
-batch 路径仍为单行 stdin、纯文本 stdout，无 Markdown 渲染。动态区 live Markdown 预览有界高度（仅显示尾部若干行），完整内容在轮结束时定稿到静态区。流式过程中真正的按键级 Esc 取消依赖动态区预览 app 持有输入焦点。尚缺更细粒度 provider recovery UI 和 connect 后的在线模型目录浏览。
+batch 路径仍为单行 stdin、纯文本 stdout，无 Markdown 渲染。动态区 live Markdown 预览有界高度（仅显示尾部若干行），完整内容在轮结束时定稿到静态区。流式过程中真正的按键级 Esc 取消依赖动态区预览 app 持有输入焦点。尚缺更细粒度 provider recovery UI。
