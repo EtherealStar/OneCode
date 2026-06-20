@@ -24,10 +24,11 @@ from services.tools.types import (
     ToolDescriptor,
     ToolTarget,
 )
-from utils.text_io import read_text_file
+from utils.text_io import DEFAULT_TEXT_ENCODING, read_text_file
 
 
 MAX_DIRECTORY_ENTRIES = 1_000
+MAX_FULL_ATTACHMENT_CHARS = 200_000
 
 
 class QueuedAttachmentSource(Protocol):
@@ -40,6 +41,7 @@ class ReadResult:
     ok: bool
     content: str = ""
     error: str | None = None
+    truncated: bool = False
     metadata: dict[str, Any] | None = None
 
 
@@ -95,15 +97,27 @@ class AttachmentFileReader:
             return ReadResult(ok=False, error="path_is_directory")
         if not path.exists():
             return ReadResult(ok=False, error="file_not_found")
+        if offset is None and limit is None:
+            try:
+                text, truncated = _read_text_with_char_limit(
+                    path,
+                    max_chars=MAX_FULL_ATTACHMENT_CHARS,
+                )
+            except OSError as exc:
+                return ReadResult(ok=False, error=type(exc).__name__)
+            return ReadResult(
+                ok=True,
+                content=text,
+                truncated=truncated,
+                metadata={"path": str(path), "max_chars": MAX_FULL_ATTACHMENT_CHARS},
+            )
         try:
-            text = read_text_file(path)
+            numbered = _read_numbered_lines(path, offset=offset or 1, limit=limit)
         except OSError as exc:
             return ReadResult(ok=False, error=type(exc).__name__)
-        if offset is None and limit is None:
-            return ReadResult(ok=True, content=text, metadata={"path": str(path)})
         return ReadResult(
             ok=True,
-            content=_format_numbered_lines(text, offset=offset or 1, limit=limit),
+            content=numbered,
             metadata={"path": str(path), "offset": offset, "limit": limit},
         )
 
@@ -130,15 +144,18 @@ class AttachmentFileReader:
         if not path.is_dir():
             return DirectoryResult(ok=False, error="path_is_not_directory")
         try:
-            names = sorted(child.name for child in path.iterdir())
+            names, truncated = _bounded_directory_names(path)
         except OSError as exc:
             return DirectoryResult(ok=False, error=type(exc).__name__)
-        truncated = len(names) > MAX_DIRECTORY_ENTRIES
         return DirectoryResult(
             ok=True,
-            entries=tuple(names[:MAX_DIRECTORY_ENTRIES]),
+            entries=tuple(names),
             truncated=truncated,
-            metadata={"path": str(path), "entry_count": len(names)},
+            metadata={
+                "path": str(path),
+                "entry_count": len(names),
+                "entry_count_truncated": truncated,
+            },
         )
 
     async def _permission_decision(
@@ -287,38 +304,77 @@ class AttachmentCollector:
         )
         if not result.ok:
             return _read_error_payload(resolved, result.error or "read_failed")
-        self.file_state_cache.snapshot_path(
-            resolved.path,
-            offset=offset,
-            limit=limit,
-            partial=offset is not None or limit is not None,
-        )
+        if offset is None and limit is None and not result.truncated:
+            self.file_state_cache.snapshot_path(resolved.path)
         return {
             "type": "file",
             "path": str(resolved.path),
             "content": result.content,
             "offset": offset or 1,
             "limit": limit,
+            "truncated": result.truncated,
             "mention": resolved.mention.raw,
         }
 
 
-def _format_numbered_lines(
-    text: str,
+def _read_numbered_lines(
+    path: Path,
     *,
     offset: int,
     limit: int | None,
 ) -> str:
-    lines = text.splitlines()
-    selected = (
-        lines[offset - 1 :]
-        if limit is None
-        else lines[offset - 1 : offset - 1 + limit]
-    )
+    selected: list[tuple[int, str]] = []
+    last_line = None if limit is None else offset + limit - 1
+    with path.open(
+        "r",
+        encoding=DEFAULT_TEXT_ENCODING,
+        errors="replace",
+    ) as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if line_number < offset:
+                continue
+            if last_line is not None and line_number > last_line:
+                break
+            selected.append((line_number, line.rstrip("\r\n")))
     return "\n".join(
         f"{line_number}\t{line}"
-        for line_number, line in enumerate(selected, start=offset)
+        for line_number, line in selected
     )
+
+
+def _read_text_with_char_limit(path: Path, *, max_chars: int) -> tuple[str, bool]:
+    chunks: list[str] = []
+    remaining = max_chars
+    truncated = False
+    with path.open(
+        "r",
+        encoding=DEFAULT_TEXT_ENCODING,
+        errors="replace",
+    ) as handle:
+        while remaining > 0:
+            chunk = handle.read(min(8192, remaining))
+            if chunk == "":
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if remaining == 0 and handle.read(1) != "":
+            truncated = True
+    content = "".join(chunks)
+    if truncated:
+        content += "\n[attachment truncated]"
+    return content, truncated
+
+
+def _bounded_directory_names(path: Path) -> tuple[list[str], bool]:
+    names: list[str] = []
+    truncated = False
+    for child in path.iterdir():
+        if len(names) >= MAX_DIRECTORY_ENTRIES:
+            truncated = True
+            break
+        names.append(child.name)
+    names.sort(key=str.casefold)
+    return names, truncated
 
 
 def _resolution_error_payload(error: ResolutionError) -> dict[str, Any]:

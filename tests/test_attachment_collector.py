@@ -70,6 +70,45 @@ def test_collects_directory_attachment_sorted(tmp_path: Path) -> None:
     assert attachment["entries"] == ["a.py", "b.py"]
 
 
+def test_collects_directory_attachment_with_entry_limit(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    for index in range(1001):
+        (src / f"{index:04}.txt").write_text("", encoding="utf-8")
+
+    attachments = asyncio.run(
+        _collector(tmp_path).collect_for_user_turn(
+            "list @src",
+            RuntimeState(),
+            (),
+        )
+    )
+
+    attachment = attachments[0]["attachment"]
+    assert attachment["type"] == "directory"
+    assert len(attachment["entries"]) == 1000
+    assert attachment["truncated"] is True
+
+
+def test_line_range_attachment_does_not_cache_full_file(tmp_path: Path) -> None:
+    note = tmp_path / "note.txt"
+    note.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    cache = FileStateCache()
+    collector = _collector_with_cache(tmp_path, cache)
+
+    attachments = asyncio.run(
+        collector.collect_for_user_turn(
+            "summarize @note.txt#L2-2",
+            RuntimeState(),
+            (),
+        )
+    )
+
+    attachment = attachments[0]["attachment"]
+    assert attachment["content"] == "2\ttwo"
+    assert cache.get(note) is None
+
+
 def test_ambiguous_name_becomes_resolution_error_attachment(
     tmp_path: Path,
 ) -> None:
@@ -89,6 +128,42 @@ def test_ambiguous_name_becomes_resolution_error_attachment(
     attachment = attachments[0]["attachment"]
     assert attachment["type"] == "attachment_error"
     assert attachment["error"] == "ambiguous"
+
+
+def test_fuzzy_resolution_skips_ignored_directories(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("secret", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "config.py").write_text("public", encoding="utf-8")
+
+    attachments = asyncio.run(
+        _collector(tmp_path).collect_for_user_turn(
+            "read @config",
+            RuntimeState(),
+            (),
+        )
+    )
+
+    attachment = attachments[0]["attachment"]
+    assert attachment["type"] == "attachment_error"
+    assert attachment["error"] == "not_found"
+
+
+def test_explicit_resolution_skips_ignored_directories(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("secret", encoding="utf-8")
+
+    attachments = asyncio.run(
+        _collector(tmp_path).collect_for_user_turn(
+            "read @.git/config",
+            RuntimeState(),
+            (),
+        )
+    )
+
+    attachment = attachments[0]["attachment"]
+    assert attachment["type"] == "attachment_error"
+    assert attachment["error"] == "not_found"
 
 
 def test_detects_edited_text_file_on_next_turn(tmp_path: Path) -> None:
