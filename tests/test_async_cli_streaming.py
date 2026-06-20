@@ -216,7 +216,15 @@ def test_main_tty_builds_runtime_before_starting_repl(
     calls: list[tuple[str, object]] = []
 
     class FakeInlineRepl:
-        def __init__(self, app_runtime: CliRuntime, *, permission_prompter: object = None) -> None:
+        def __init__(
+            self,
+            app_runtime: CliRuntime,
+            *,
+            permission_prompter: object = None,
+            interaction_host: object = None,
+        ) -> None:
+            assert permission_prompter is not None
+            assert interaction_host is not None
             calls.append(("init", app_runtime))
 
         def run(self) -> int:

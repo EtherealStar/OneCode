@@ -1400,31 +1400,53 @@ def test_page_renders_onecode_styles() -> None:
     assert "value" in rendered
 
 
-# --- M5: permission response mapping --------------------------------------
+# --- M5: permission modal choices -----------------------------------------
 
 
-def test_permission_response_for_choice_session() -> None:
-    from ui.cli.terminal.permission_prompt import _response_for_choice
+def test_permission_modal_choice_session() -> None:
+    from services.permissions.types import PermissionOption
+    from ui.cli.terminal.permission_modal import build_permission_choices
 
     class _Descriptor:
         name = "read_file"
 
     class _Request:
         descriptor = _Descriptor()
+        options = (
+            PermissionOption("allow_once", "allow once", "allow", "once"),
+            PermissionOption(
+                "allow_session_directory",
+                "allow this directory for this session",
+                "allow",
+                "session",
+            ),
+            PermissionOption("deny", "deny", "deny", "once"),
+        )
 
-    response = _response_for_choice("s", _Request())
+    response = build_permission_choices(_Request())[1].response
     assert response.action == "allow"
     assert response.scope == "session"
 
 
-def test_permission_response_for_choice_deny() -> None:
-    from ui.cli.terminal.permission_prompt import _response_for_choice
+def test_permission_modal_choice_deny() -> None:
+    from services.permissions.types import PermissionOption
+    from ui.cli.terminal.permission_modal import build_permission_choices
 
     class _Descriptor:
         name = "bash"
 
     class _Request:
         descriptor = _Descriptor()
+        options = (
+            PermissionOption("allow_once", "allow once", "allow", "once"),
+            PermissionOption(
+                "allow_session_directory",
+                "allow this directory for this session",
+                "allow",
+                "session",
+            ),
+            PermissionOption("deny", "deny", "deny", "once"),
+        )
 
-    response = _response_for_choice("n", _Request())
+    response = build_permission_choices(_Request())[2].response
     assert response.action == "deny"

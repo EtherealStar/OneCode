@@ -64,6 +64,7 @@ from services.observability import (
     TraceRecorder,
 )
 from services.permissions import (
+    PermissionResponse,
     PermissionPolicy,
     ProjectPermissionSettingsStore,
     SessionPermissionStore,
@@ -89,7 +90,7 @@ from tools.task_update import descriptor as task_update_descriptor
 from tools.write_file import descriptor as write_file_descriptor
 from ui.cli import renderer
 from ui.cli.input import ConfirmOption, read_confirm_sync
-from ui.cli.permissions import CliPermissionPrompter
+from ui.cli.permissions import render_permission_request_summary
 from ui.cli.session_memory import BackgroundSessionMemoryExtractor
 from ui.cli.types import CliRuntime
 from utils.toolResultStorage import ToolResultStorage
@@ -106,6 +107,39 @@ class McpTrustPromptRequest:
     cwd: str
     explicit_env_keys: str
     base_env_keys: str
+
+
+class BatchPermissionPrompter:
+    """Line-based fallback for non-TTY permission requests."""
+
+    async def request_permission(self, request):
+        print(render_permission_request_summary(request))
+        print()
+        print("Do you want to proceed?")
+        options = (
+            ConfirmOption("1", "1 yes", aliases=("y", "yes")),
+            ConfirmOption("2", "2 session", aliases=("s", "session")),
+            ConfirmOption("3", "3 no", aliases=("n", "no", "deny")),
+        )
+        try:
+            choice = await asyncio.to_thread(
+                read_confirm_sync,
+                "Select [1] yes  [2] session  [3] no: ",
+                options,
+            )
+        except (EOFError, KeyboardInterrupt):
+            return PermissionResponse(
+                action="deny",
+                feedback="Permission prompt was interrupted.",
+            )
+        if choice == "1":
+            return PermissionResponse(action="allow", scope="once")
+        if choice == "2":
+            return PermissionResponse(action="allow", scope="session")
+        return PermissionResponse(
+            action="deny",
+            feedback="User denied the permission request.",
+        )
 
 
 def build_runtime(
@@ -224,7 +258,7 @@ def build_runtime(
         trace_recorder=trace_recorder,
     )
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
-    permission_prompter = permission_prompter or CliPermissionPrompter()
+    permission_prompter = permission_prompter or BatchPermissionPrompter()
     file_state_cache = FileStateCache()
     attachment_reader = AttachmentFileReader(
         guard=guard,
@@ -571,12 +605,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # MCP trust prompts through ``default_trust_prompt`` and start with
     # ``mcp_trust_mode="prompt"`` so the user is asked to trust project
     # stdio servers on startup rather than having them silently skipped.
+    from ui.cli.terminal.interaction_host import TerminalInteractionHost
     from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
     from ui.cli.terminal.repl import InlineRepl
     from ui.cli.terminal.trust_prompt import default_trust_prompt
 
     try:
-        permission_prompter = TtyPermissionPrompter()
+        interaction_host = TerminalInteractionHost()
+        permission_prompter = TtyPermissionPrompter(interaction_host)
         try:
             runtime = build_runtime(
                 workspace,
@@ -587,7 +623,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ProviderError:
             # .env is missing or incomplete — start in unconfigured mode.
             runtime = build_unconfigured_runtime(workspace)
-        repl = InlineRepl(runtime, permission_prompter=permission_prompter)
+        repl = InlineRepl(
+            runtime,
+            permission_prompter=permission_prompter,
+            interaction_host=interaction_host,
+        )
         return repl.run()
     except Exception as exc:
         renderer.print_renderable(renderer.render_error(str(exc)))

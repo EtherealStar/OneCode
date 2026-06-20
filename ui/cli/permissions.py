@@ -1,100 +1,53 @@
-"""Interactive CLI permission panels."""
+"""Permission request summary rendering for CLI surfaces."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import Callable
 
-from services.permissions import (
-    PermissionRequest,
-    PermissionResponse,
-)
-from ui.cli.input import ConfirmOption, read_confirm_sync
-
-InputFunc = Callable[[str], str]
-OutputFunc = Callable[[str], None]
+from services.permissions import PermissionRequest
 
 
-class CliPermissionPrompter:
-    def __init__(
-        self,
-        *,
-        input_func: InputFunc | None = None,
-        output_func: OutputFunc = print,
-    ) -> None:
-        self._input = input_func
-        self._output = output_func
+def render_permission_request_summary(request: PermissionRequest) -> str:
+    """Render the tool request details shown before permission choices.
 
-    async def request_permission(
-        self,
-        request: PermissionRequest,
-    ) -> PermissionResponse:
-        self._output(render_permission_panel(request))
-        try:
-            if self._input is None:
-                choice = await asyncio.to_thread(
-                    read_confirm_sync,
-                    _prompt_line(request),
-                    _confirm_options(request),
-                )
-            else:
-                choice = await asyncio.to_thread(
-                    self._input,
-                    _prompt_line(request),
-                )
-        except (EOFError, KeyboardInterrupt):
-            return PermissionResponse(
-                action="deny",
-                feedback="Permission prompt was interrupted.",
-            )
+    This module deliberately contains no input handling and no permission
+    response construction. TTY, batch, and tests should build responses from
+    ``request.options`` so the UI cannot add project-level grants.
+    """
 
-        normalized = choice.strip().lower()
-        if normalized in {"y", "yes"}:
-            return PermissionResponse(action="allow", scope="once")
-        if normalized in {"s", "session"}:
-            return PermissionResponse(action="allow", scope="session")
-        return PermissionResponse(
-            action="deny",
-            feedback="User denied the permission request.",
-        )
-
-
-def render_permission_panel(request: PermissionRequest) -> str:
     tool_name = request.descriptor.name
     if tool_name == "read_file":
-        return _read_file_panel(request)
+        return _read_file_summary(request)
     if tool_name == "edit_file":
-        return _edit_file_panel(request)
+        return _edit_file_summary(request)
     if tool_name == "write_file":
-        return _write_file_panel(request)
+        return _write_file_summary(request)
     if tool_name == "glob":
-        return _glob_panel(request)
+        return _glob_summary(request)
     if tool_name == "grep":
-        return _grep_panel(request)
+        return _grep_summary(request)
     if tool_name == "bash":
-        return _bash_panel(request)
-    return _fallback_panel(request)
+        return _bash_summary(request)
+    return _fallback_summary(request)
 
 
-def _read_file_panel(request: PermissionRequest) -> str:
+def _read_file_summary(request: PermissionRequest) -> str:
     return "\n".join(
         [
+            "Read_file",
             "",
-            "Read file permission requested",
             f"reason: {request.decision.reason}",
             *_target_lines(request),
-            _options_line("allow reads in this directory for this session"),
         ]
     )
 
 
-def _edit_file_panel(request: PermissionRequest) -> str:
+def _edit_file_summary(request: PermissionRequest) -> str:
     tool_input = request.tool_input
     return "\n".join(
         [
+            "Edit_file",
             "",
-            "Edit file permission requested",
             f"reason: {request.decision.reason}",
             *_target_lines(request),
             f"replace_all: {bool(tool_input.get('replace_all', False))}",
@@ -102,84 +55,78 @@ def _edit_file_panel(request: PermissionRequest) -> str:
             "Proposed edit:",
             f"- old_string: {_preview(tool_input.get('old_string', ''))}",
             f"+ new_string: {_preview(tool_input.get('new_string', ''))}",
-            _options_line("allow edits in this directory for this session"),
         ]
     )
 
 
-def _write_file_panel(request: PermissionRequest) -> str:
+def _write_file_summary(request: PermissionRequest) -> str:
     tool_input = request.tool_input
     content = str(tool_input.get("content", ""))
     return "\n".join(
         [
+            "Write_file",
             "",
-            "Write file permission requested",
             f"reason: {request.decision.reason}",
             *_target_lines(request),
             f"line_count: {_line_count(content)}",
             f"content_preview: {_preview(content)}",
-            _options_line("allow writes in this directory for this session"),
         ]
     )
 
 
-def _glob_panel(request: PermissionRequest) -> str:
+def _glob_summary(request: PermissionRequest) -> str:
     tool_input = request.tool_input
     return "\n".join(
         [
+            "Glob",
             "",
-            "Search files permission requested",
             f"reason: {request.decision.reason}",
             *_target_lines(request),
             f"pattern: {_preview(tool_input.get('pattern', ''))}",
             f"offset: {tool_input.get('offset', 0)}",
             f"head_limit: {tool_input.get('head_limit', 'default')}",
-            _options_line("allow listing this directory for this session"),
         ]
     )
 
 
-def _grep_panel(request: PermissionRequest) -> str:
+def _grep_summary(request: PermissionRequest) -> str:
     tool_input = request.tool_input
     return "\n".join(
         [
+            "Grep",
             "",
-            "Search contents permission requested",
             f"reason: {request.decision.reason}",
             *_target_lines(request),
             f"pattern: {_preview(tool_input.get('pattern', ''))}",
             f"glob: {_preview(tool_input.get('glob', ''))}",
             f"output_mode: {tool_input.get('output_mode', 'files_with_matches')}",
-            _options_line("allow searching this directory for this session"),
         ]
     )
 
 
-def _bash_panel(request: PermissionRequest) -> str:
+def _bash_summary(request: PermissionRequest) -> str:
     tool_input = request.tool_input
     return "\n".join(
         [
+            "Bash",
             "",
-            "Bash command permission requested",
             f"reason: {request.decision.reason}",
             f"command: {_preview(tool_input.get('command', ''))}",
             f"description: {_preview(tool_input.get('description', ''))}",
             f"read_only: {request.classification.read_only}",
             f"timeout_ms: {tool_input.get('timeout_ms', 'default')}",
             *_target_lines(request),
-            _options_line("allow matching directory targets for this session"),
         ]
     )
 
 
-def _fallback_panel(request: PermissionRequest) -> str:
+def _fallback_summary(request: PermissionRequest) -> str:
     return "\n".join(
         [
+            request.descriptor.name,
             "",
-            f"Permission requested: {request.descriptor.name}",
             f"reason: {request.decision.reason}",
             json.dumps(request.tool_input, ensure_ascii=False, indent=2),
-            _options_line("allow this directory for this session"),
         ]
     )
 
@@ -196,26 +143,6 @@ def _target_lines(request: PermissionRequest) -> list[str]:
     return lines
 
 
-def _options_line(session_label: str) -> str:
-    parts = [f"[y] allow once", f"[s] {session_label}"]
-    parts.append("[n] deny")
-    return "  ".join(parts)
-
-
-def _prompt_line(request: PermissionRequest) -> str:
-    _ = request
-    return "Allow? [y] once  [s] session directory  [n] deny: "
-
-
-def _confirm_options(request: PermissionRequest) -> tuple[ConfirmOption, ...]:
-    _ = request
-    return (
-        ConfirmOption("y", "y once", aliases=("yes",)),
-        ConfirmOption("s", "s session", aliases=("session",)),
-        ConfirmOption("n", "n deny", aliases=("no", "deny")),
-    )
-
-
 def _preview(value: object, *, limit: int = 240) -> str:
     text = str(value)
     text = " ".join(text.split())
@@ -228,3 +155,6 @@ def _line_count(content: str) -> int:
     if content == "":
         return 0
     return len(content.splitlines())
+
+
+__all__ = ["render_permission_request_summary"]
