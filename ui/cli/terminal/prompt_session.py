@@ -147,6 +147,23 @@ def _completion_kind(completion: Completion) -> str | None:
     return kind if isinstance(kind, str) else None
 
 
+def _directory_mention_token_end(buffer: Buffer) -> int | None:
+    text = buffer.text
+    cursor = buffer.cursor_position
+    at_index = text.rfind("@", 0, min(cursor + 1, len(text)))
+    if at_index < 0:
+        return None
+    if at_index > 0 and not text[at_index - 1].isspace():
+        return None
+    end = cursor
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    token = text[at_index + 1 : end]
+    if not token or not token.endswith("/"):
+        return None
+    return end
+
+
 def _apply_completion_for_edit(buffer: Buffer, completion: Completion) -> None:
     buffer.apply_completion(completion)
     kind = _completion_kind(completion)
@@ -263,6 +280,19 @@ class PromptSession:
 
         @bindings.add(Keys.Enter, eager=True)
         def _on_enter(event) -> None:  # type: ignore[no-untyped-def]
+            directory_mention_end = _directory_mention_token_end(buffer)
+            if directory_mention_end is not None:
+                if buffer.complete_state is not None:
+                    buffer.cancel_completion()
+                buffer.cursor_position = directory_mention_end
+                if (
+                    directory_mention_end >= len(buffer.text)
+                    or buffer.text[directory_mention_end] != " "
+                ):
+                    buffer.insert_text(" ")
+                hint.reset()
+                event.app.invalidate()
+                return
             completion = _highlighted_completion(buffer)
             if completion is not None:
                 kind = _completion_kind(completion)
