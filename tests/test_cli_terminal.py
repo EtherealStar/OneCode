@@ -163,6 +163,18 @@ def test_assistant_markdown_renders_body(captured_console: io.StringIO) -> None:
     assert "plain reply" in output
 
 
+def test_assistant_markdown_strips_rich_line_padding(
+    captured_console: io.StringIO,
+) -> None:
+    so.print_assistant_markdown("plain reply")
+    output = captured_console.getvalue()
+    body_lines = [
+        line for line in output.splitlines() if "plain reply" in line
+    ]
+
+    assert body_lines == ["plain reply"]
+
+
 def test_assistant_markdown_renders_table_header_style(
     captured_console: io.StringIO,
 ) -> None:
