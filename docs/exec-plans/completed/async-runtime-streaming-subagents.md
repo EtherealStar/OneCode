@@ -50,27 +50,27 @@ OneCode 当前会把一个用户 prompt 送入同步模型调用。CLI 先打印
 
 - Decision: 模型边界改为 async streaming first。新的主接口是 provider-neutral stream event 的 async iterator，而不是同步 `send()`。
   Rationale: 流式输出需要 runtime 能观察部分模型输出，并在 provider 生成数据时保持可取消。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 添加 `httpx` 作为 provider 调用和 streaming 的 async HTTP 依赖。
   Rationale: OneCode 需要 async POST 和 SSE line iteration。只用标准库实现可靠的 async HTTPS 与 streaming 风险更高，也会模糊 runtime 重构本身。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 替换阻塞 runtime 契约，而不是把它们保留为一等架构。
   Rationale: 用户明确希望进行大型 async 重构，并且不希望兼容压力继续保留旧的阻塞模型调用形态。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 工具 permission、guard、schema validation 和 classification 在逻辑顺序上保持 deny-first，但接口变为 awaitable。
   Rationale: Async 不能削弱安全性。这些步骤通常 CPU 开销较轻，但 hooks、UI prompt 和未来外部 policy check 都需要 await 点。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 第一版实现可以在 completed tool call block 之后执行工具，而不是在任意 partial JSON delta 后执行工具。
   Rationale: Chat Completions 会增量流式输出 tool-call arguments。只有当工具 JSON input 完整并通过校验后才能运行工具。streaming event accumulator 应在 tool call 完整后尽早暴露 completed tool call；如果 provider delta 不能提供可靠完成边界，第一版仍可以在模型 message 结束后 drain remaining tools。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 第一批代码保留同步兼容 helper，但把新增行为和 CLI 主路径接到 async stream。
   Rationale: 现有工作树有 141 个 passing tests，且大量测试夹具仍是同步形态。直接删除所有同步接口会把 provider、loop、tool executor、CLI 和 command tests 同时打碎，降低每个 milestone 的可验证性。兼容 helper 被明确列为后续删除项，不作为最终架构验收。
-  Date/Author: 2026-06-05 / Codex
+
 
 ## Outcomes & Retrospective
 

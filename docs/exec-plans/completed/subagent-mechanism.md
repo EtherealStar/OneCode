@@ -45,31 +45,31 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: `subagent_type` 省略时始终触发 fork path，不做 feature gate，也不回退到 `general-purpose`。
   Rationale: 用户要求“始终触发”。这让模型可以通过省略类型表达“从当前上下文分叉继续”，而显式 `subagent_type="general-purpose"` 才表示干净上下文的通用 agent。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 第一版只实现四个内置 agent：`fork`、`general-purpose`、`Explore` 和 `Plan`。
   Rationale: 用户明确要求“内置四类”。不实现 user/project/plugin agent loader，避免把文件格式、配置优先级和权限规则混进第一版 runtime 机制。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: fork child 的 system prompt 必须使用父轮次已渲染的原始字符串，不重新调用 prompt assembler。
   Rationale: 用户要求“字节级”。重新组装 system prompt 可能因为时间、状态、工具可见性或 future prompt section cache 差异而改变字节。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 所有 child agent 默认隐藏 `agent` 工具，fork child 也隐藏。
   Rationale: 用户在 fork 工具池问题上选择“直接隐藏”。这比保留 `agent` 后在执行时拒绝递归更简单、更安全，也符合第一版不支持嵌套 subagent 的目标。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 子 agent 共享父 session 的临时授权和同一个 permission prompter，权限询问以 bubble 方式回到父 CLI。
   Rationale: 用户要求“共享临时授权，实现 bubble”。OneCode 当前的 `SessionPermissionStore` 是内存 session 授权；第一版 child runner 应复用同一个 store、policy 和 prompter，而不是复制出独立授权状态。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: 第一版不实现 `run_in_background`，不实现 worktree 隔离。
   Rationale: 用户明确回答“不做”和“不需要”。这让第一版可以保持同步等待子 agent 完成，先验证上下文隔离、fork 继承、权限和工具裁剪。
-  Date/Author: 2026-06-05 / Codex
+
 
 - Decision: Explore 和 Plan 的只读限制必须由代码强制执行。
   Rationale: 用户要求“使用硬限制”。System prompt 仍会提醒模型只读，但真正边界必须在工具可见性、工具执行分类或 permission policy 中生效。
-  Date/Author: 2026-06-05 / Codex
+
 
 ## Outcomes & Retrospective
 

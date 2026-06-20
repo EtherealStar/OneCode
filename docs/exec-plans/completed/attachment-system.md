@@ -45,7 +45,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: 持久化结构化 attachment messages，但不持久化合成的 file-read assistant 工具调用或合成 tool results。
   Rationale: 用户明确说虚拟 file-read messages 只应临时生成。持久化 raw attachment messages 可以支持恢复和未来 UI 渲染，同时不会把“模型没有真实请求过的动作”污染进 transcript。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: `@filename` 只在当前工作目录内解析，任何指向目录外的引用都视为 unresolved 或 denied。
   Rationale: 用户说明用户输入只发生在 `cwd` 内，并且文件名解析应该搜索当前工作目录。这个选择让第一版简单，并与 OneCode 的 sandbox 模型一致。
@@ -65,11 +65,11 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 - Decision: 附件 UI 渲染明确暂缓，并在 backend 行为落地后作为技术债跟踪。
   Rationale: 用户原始阶段 3 说明 UI 渲染暂不实现，或者可以记录为技术债。backend 仍应保留足够附件 metadata，方便未来 UI 展示。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 - Decision: 文件状态缓存归属 `services/tools/file_state.py`，并由 `RegistryToolExecutor` 在 `read_file`、`edit_file`、未来 `write_file/filewrite` 成功结果后更新。
   Rationale: 已读/已写文件缓存是工具调用服务的会话事实，不是附件收集的私有状态。这样模型通过真实 file read/edit/write 工具观察或改变文件后，下一轮附件 collector 可以比较 mtime 并生成 edited text file attachment。
-  Date/Author: 2026-06-07 / User and Codex
+
 
 
 ## Outcomes & Retrospective
