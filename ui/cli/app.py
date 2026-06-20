@@ -514,6 +514,43 @@ async def _start_long_term_memory_dream(
     )
 
 
+def build_unconfigured_runtime(workspace: Path) -> CliRuntime:
+    """Create a minimal runtime when ``.env`` is missing or incomplete.
+
+    The returned runtime has ``configured=False`` so the REPL can block
+    all input except ``/connect`` and ``/exit``.
+    """
+
+    workspace = workspace.resolve()
+    state = RuntimeState()
+    state.metadata["workspace"] = str(workspace)
+    message_store = MessageStore(
+        transcript_root=sessions_dir(workspace),
+        session_id=state.session_id,
+        cwd=workspace,
+    )
+    trace_sink = JsonlTraceSink(sessions_dir(workspace), state.session_id)
+    trace_recorder = TraceRecorder(
+        session_id=state.session_id,
+        workspace=workspace,
+        sink=trace_sink,
+    )
+    error_log_sink = JsonlErrorLogSink(sessions_dir(workspace), state.session_id)
+    error_log_recorder = ErrorLogRecorder(
+        session_id=state.session_id,
+        workspace=workspace,
+        sink=error_log_sink,
+    )
+    return CliRuntime(
+        workspace=workspace,
+        state=state,
+        message_store=message_store,
+        configured=False,
+        trace_recorder=trace_recorder,
+        error_log_recorder=error_log_recorder,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     _ = argv
     workspace = Path.cwd()
@@ -540,17 +577,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         permission_prompter = TtyPermissionPrompter()
-        runtime = build_runtime(
-            workspace,
-            trust_prompt=default_trust_prompt,
-            permission_prompter=permission_prompter,
-            mcp_trust_mode="prompt",
-        )
+        try:
+            runtime = build_runtime(
+                workspace,
+                trust_prompt=default_trust_prompt,
+                permission_prompter=permission_prompter,
+                mcp_trust_mode="prompt",
+            )
+        except ProviderError:
+            # .env is missing or incomplete — start in unconfigured mode.
+            runtime = build_unconfigured_runtime(workspace)
         repl = InlineRepl(runtime, permission_prompter=permission_prompter)
         return repl.run()
-    except ProviderError as exc:
-        renderer.print_renderable(renderer.render_error(exc.message))
-        return 1
     except Exception as exc:
         renderer.print_renderable(renderer.render_error(str(exc)))
         return 1

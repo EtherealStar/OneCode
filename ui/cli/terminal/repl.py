@@ -36,6 +36,7 @@ import sys
 from typing import Awaitable, Callable
 
 from rich.console import Console
+from rich.text import Text
 
 from core.runtime_state import RuntimeState
 from ui.cli import renderer
@@ -99,6 +100,13 @@ class InlineRepl:
         # console we just created.
         self._console.print(renderer.render_banner(self._runtime))
         self._print_untrusted_mcp_notices(self._runtime)
+        if not self._runtime.configured:
+            self._console.print(
+                Text(
+                    "⚠ 尚未配置供应商。请输入 /connect 进行配置。",
+                    style="onecode.warning",
+                )
+            )
         self._agent_running = False
         while True:
             submission = await self._prompt.read()
@@ -118,12 +126,32 @@ class InlineRepl:
                 continue
             print_user_submitted(text, brightness=self._brightness)
             if text.startswith("/"):
+                # In unconfigured mode, only /connect and /exit are allowed.
+                if not self._runtime.configured:
+                    cmd_name = text.split()[0][1:].lower()
+                    if cmd_name not in {"connect", "exit"}:
+                        self._console.print(
+                            Text(
+                                "尚未配置供应商。请先使用 /connect 配置 API 供应商。",
+                                style="onecode.warning",
+                            )
+                        )
+                        continue
                 await self._handle_command(text)
                 if self._runtime is None:
                     return
                 # Some commands (e.g. ``/clear``) change the runtime;
                 # ``_handle_command`` already took care of the
                 # prompt session reset, so we just keep looping.
+                continue
+            # In unconfigured mode, block all non-command input.
+            if not self._runtime.configured:
+                self._console.print(
+                    Text(
+                        "尚未配置供应商。请先使用 /connect 配置 API 供应商。",
+                        style="onecode.warning",
+                    )
+                )
                 continue
             await self._run_turn(text)
             # Drain queued inputs in FIFO order. Each entry was
@@ -215,7 +243,11 @@ class InlineRepl:
         result = await run_connect_flow(self._runtime)
         if result.cancelled or result.runtime is None:
             return CommandResult(renderable=result.renderable)
-        return CommandResult(runtime=result.runtime, renderable=result.renderable)
+        return CommandResult(
+            runtime=result.runtime,
+            renderable=result.renderable,
+            reset_main_view=True,
+        )
 
     async def _show_page(self, renderable: object) -> None:
         """Show a renderable full-screen until the user presses Esc.

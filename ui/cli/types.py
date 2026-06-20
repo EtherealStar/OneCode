@@ -60,12 +60,13 @@ class CliRuntime:
     workspace: Path
     state: RuntimeState
     message_store: MessageStore
-    registry: ToolRegistry
-    loop: AgentLoop
-    provider_label: str
-    model: str
-    model_client: Any
-    tool_executor: ToolExecutor
+    registry: ToolRegistry | None = None
+    loop: AgentLoop | None = None
+    provider_label: str = ""
+    model: str = ""
+    model_client: Any = None
+    tool_executor: ToolExecutor | None = None
+    configured: bool = True
     permission_store: SessionPermissionStore | None = None
     permission_policy: PermissionPolicy | None = None
     permission_prompter: PermissionPrompter | None = None
@@ -375,6 +376,7 @@ class CliRuntime:
             session_memory_updater=session_memory_updater,
             long_term_memory_extractor=long_term_memory_extractor,
             memory_selector=memory_selector,
+            configured=True,
         )
 
 
