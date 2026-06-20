@@ -41,11 +41,11 @@ from rich.text import Text
 from core.runtime_state import RuntimeState
 from ui.cli import renderer
 from ui.cli.commands import dispatch_command
-from ui.cli.permissions import CliPermissionPrompter
 from ui.cli.resume import list_session_summaries, restore_runtime_from_target
 from ui.cli.suggestions import SuggestionItem
 from ui.cli.terminal.connect_flow import run_connect_flow
 from ui.cli.terminal.detect import detect_terminal_brightness
+from ui.cli.terminal.interaction_host import TerminalInteractionHost
 from ui.cli.terminal.page import TransientPage
 from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
 from ui.cli.terminal.prompt_session import PromptSession, PromptSubmission, SubmissionKind
@@ -66,15 +66,19 @@ class InlineRepl:
         self,
         runtime: CliRuntime,
         *,
-        permission_prompter: CliPermissionPrompter | None = None,
+        permission_prompter: TtyPermissionPrompter | None = None,
+        interaction_host: TerminalInteractionHost | None = None,
     ) -> None:
         self._runtime = runtime
+        self._interaction_host = interaction_host or TerminalInteractionHost()
         self._brightness = detect_terminal_brightness()
         self._queue = InputQueue()
         self._prompt = PromptSession(runtime, self._queue)
         self._agent_running = False
         self._cancel_requested = False
-        self._permission_prompter = permission_prompter or TtyPermissionPrompter()
+        self._permission_prompter = permission_prompter or TtyPermissionPrompter(
+            self._interaction_host
+        )
         # Use the brightness-aware theme so foreground colors stay
         # legible against light or dark hosts. Static region only —
         # the theme never sets a background.
@@ -317,6 +321,7 @@ class InlineRepl:
             workspace=self._runtime.workspace,
             queue=self._queue,
             runtime=self._runtime,
+            interaction_host=self._interaction_host,
         )
         try:
             events = self._agent_events(line)

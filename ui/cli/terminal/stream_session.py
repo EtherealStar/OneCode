@@ -71,8 +71,9 @@ from pathlib import Path
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
@@ -83,6 +84,7 @@ from prompt_toolkit.styles import Style
 from rich.text import Text
 
 from ui.cli.terminal.completer import InlineCompleter
+from ui.cli.terminal.interaction_host import TerminalInteractionHost
 from ui.cli.terminal.output_coordinator import TerminalOutputCoordinator
 from ui.cli.terminal.queue import InputQueue
 from ui.cli.terminal.stream_reducer import (
@@ -152,6 +154,7 @@ class StreamingSession:
         workspace: Path | None = None,
         queue: InputQueue | None = None,
         runtime: CliRuntime | None = None,
+        interaction_host: TerminalInteractionHost | None = None,
     ) -> None:
         self.state: CliStreamUiState = CliStreamUiState()
         self.coordinator: TerminalOutputCoordinator = TerminalOutputCoordinator()
@@ -160,6 +163,7 @@ class StreamingSession:
         self._workspace = workspace
         self._queue = queue
         self._runtime = runtime
+        self._interaction_host = interaction_host
         self._completer = InlineCompleter(runtime) if queue is not None else None
         self._cancel = asyncio.Event()
         self._preview_complete = asyncio.Event()
@@ -194,6 +198,8 @@ class StreamingSession:
         """
 
         app = self._build_app(input=input, output=output)
+        if self._interaction_host is not None:
+            self._interaction_host.bind_app(app)
         self.coordinator.begin_dynamic_app()
         feeder: asyncio.Task[None] | None = None
         feeder_already_awaited = False
@@ -215,6 +221,8 @@ class StreamingSession:
                     feeder_already_awaited = True
                     pass
         self.coordinator.end_dynamic_app()
+        if self._interaction_host is not None:
+            self._interaction_host.unbind_app(app)
         self._finalised = True
         if self._cancel.is_set():
             self.coordinator.queue_status_line(
@@ -325,6 +333,10 @@ class StreamingSession:
                 width = app.output.get_size().columns  # type: ignore[union-attr]
             except Exception:
                 width = 80
+            if self._interaction_host is not None:
+                permission_body = self._interaction_host.render_body(width=width)
+                if permission_body is not None:
+                    return permission_body
             # 当运行中输入框共享同一个 InputQueue 时,把队列快照
             # 传给 view 以便在动态区显示 queued preview;否则不
             # 传(None 表示空预览,不会显示额外行)。
@@ -338,6 +350,10 @@ class StreamingSession:
             )
 
         def status_text():  # type: ignore[no-untyped-def]
+            if self._interaction_host is not None:
+                permission_status = self._interaction_host.render_status()
+                if permission_status is not None:
+                    return permission_status
             return render_status_fragments(self.state)
 
         preview_window = Window(
@@ -450,14 +466,31 @@ class StreamingSession:
         """
 
         bindings = KeyBindings()
+        no_permission_modal = Condition(
+            lambda: self._interaction_host is None
+            or self._interaction_host.active_permission is None
+        )
 
-        @bindings.add(Keys.Escape, eager=True)
-        @bindings.add(Keys.ControlC, eager=True)
+        @bindings.add(Keys.Escape, eager=True, filter=no_permission_modal)
+        @bindings.add(Keys.ControlC, eager=True, filter=no_permission_modal)
         def _on_cancel(event) -> None:  # type: ignore[no-untyped-def]
-            self._cancel.set()
-            event.app.exit()
+            self._cancel_turn(event)
 
+        if self._interaction_host is not None:
+            return merge_key_bindings(
+                [
+                    self._interaction_host.key_bindings(
+                        fallback_cancel=lambda event: self._cancel_turn(event),
+                        exit_on_complete=False,
+                    ),
+                    bindings,
+                ]
+            )
         return bindings
+
+    def _cancel_turn(self, event) -> None:  # type: ignore[no-untyped-def]
+        self._cancel.set()
+        event.app.exit()
 
 
 # --- defensive helpers --------------------------------------------------

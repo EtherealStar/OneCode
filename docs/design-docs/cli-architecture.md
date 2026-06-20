@@ -22,7 +22,7 @@ TTY 路径采用 **内联终端渲染模型**（与 Claude Code / Ink 的 Static
 | `renderer.py` | Rich renderable 工厂、batch 路径 `print_renderable()` |
 | `tool_renderers.py` | 工具结果 1 行摘要 |
 | `views/` | 用户可见 Rich 状态视图 |
-| `permissions.py` | 权限请求内容格式化与 batch fallback 三选项 prompter |
+| `permissions.py` | 权限请求摘要格式化；不处理用户输入或构造 `PermissionResponse` |
 | `types.py` | `CliRuntime`、`CommandResult` |
 
 ### `terminal/` 子模块
@@ -44,7 +44,9 @@ TTY 路径采用 **内联终端渲染模型**（与 Claude Code / Ink 的 Static
 | `page.py` | 备用屏幕分页查看 renderable（`/status` 等），Esc 返回 |
 | `selector.py` | 备用屏幕列表选择（`/resume`） |
 | `connect_flow.py` | `/connect` 多步向导（备用屏幕） |
-| `permission_prompt.py` | TTY 权限确认（非全屏、可擦除的三选项临时面板） |
+| `interaction_host.py` | TTY 临时交互 host，持有权限 modal 等可擦除交互状态 |
+| `permission_modal.py` | 权限请求 modal 状态、三选项构建和 ANSI 渲染 |
+| `permission_prompt.py` | `TtyPermissionPrompter` 薄封装，把权限请求委托给 interaction host |
 | `trust_prompt.py` | MCP trust 启动期确认 |
 
 ## 入口分流
@@ -110,7 +112,7 @@ flowchart LR
 
 每条 `StaticCommit` 携带稳定的 `assistant_call_id`（由 `core/stream_events.py::mint_assistant_call_id` 派生）和 `model_turn_index`，作为 assistant message → tool call → tool result 的 UI 归属回链。reducer 在 `tool_result` 时按**声明顺序**（`declared_index`）释放，不允许"后声明但先完成"的工具越过前面的工具。
 
-权限确认不走事件流，由 `permission_prompt.TtyPermissionPrompter` 在工具执行链中 `await request_permission()`。TTY 权限请求使用非全屏、`erase_when_done=True` 的临时三选项面板；当流式预览 app 正在运行时，权限提示用 `prompt_toolkit.run_in_terminal` 临时挂起预览并以同样三选项的纯 confirm 询问，避免嵌套 prompt_toolkit app。
+权限确认不走 agent event 流，但也不由 prompter 自己打印确认文本。TTY 路径由 `terminal.interaction_host.TerminalInteractionHost` 持有临时 permission modal；`permission_prompt.TtyPermissionPrompter` 只把 `request_permission()` 委托给这个 host。流式预览 app 正在运行时，modal 直接占用当前动态区，用户用 `1/2/3`、`↑↓ + Enter` 或 `Esc` 返回 `PermissionResponse`；选择完成后 modal state 清空，动态区恢复 assistant/tool preview，不污染 scrollback。空闲状态下 host 启动一个 `full_screen=False, erase_when_done=True` 的临时 app，使用同一套 modal renderer 和 key bindings。
 
 ### Command Registry
 
@@ -179,7 +181,7 @@ flowchart TD
 
 ### 权限
 
-TTY：`TtyPermissionPrompter` 使用可擦除临时面板，只消费 `PermissionRequest.options` 中的 allow once、allow session、deny 三项。Esc 和 Ctrl-C 返回 deny。流式预览运行中用 `run_in_terminal` 纯 confirm 回退。非 TTY / batch：`render_permission_panel` + stdin `read_confirm_sync`，也只接受 once/session/deny。权限请求 prompt 不写项目规则，不生成 `projectSettings` update。
+TTY：`TerminalInteractionHost` 使用可擦除临时 permission modal，只消费 `PermissionRequest.options` 中的 allow once、allow session、deny 三项。Esc 和 Ctrl-C 返回 deny。流式预览运行中不启动嵌套 app、不打印 confirm，而是把 modal 渲染到当前动态区。非 TTY / batch：`BatchPermissionPrompter` 用 stdin 行输入 fallback，也只接受 once/session/deny。权限请求 prompt 不写项目规则，不生成 `projectSettings` update。
 
 项目级 allow/deny/ask 规则只通过 `/permissions add|remove|replace allow|deny|ask <rule>` 修改；`/permissions` 无参数仍进入备用屏幕只读查看页。备用屏幕继续用于 `/status`、`/permissions` 等查看页，不用于运行时权限请求。
 
