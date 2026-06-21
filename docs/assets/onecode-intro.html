@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneCode — 开发者入门与架构指南</title>
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&f[]=chillax@400,500,600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===========================================
+   FIXED 16:9 STAGE: MANDATORY BASE STYLES
+   =========================================== */
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:var(--stage-bg,#000)}
+.deck-viewport{position:fixed;inset:0;overflow:hidden;background:var(--stage-bg,#000)}
+.deck-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;overflow:hidden;transform-origin:0 0;background:var(--slide-bg,#fff)}
+.slide{position:absolute;inset:0;width:1920px;height:1080px;overflow:hidden;display:block;visibility:hidden;opacity:0;pointer-events:none;background:var(--slide-bg,#fff)}
+.slide.active,.slide.visible{visibility:visible;opacity:1;pointer-events:auto;z-index:1}
+img,video,canvas,svg{max-width:100%;max-height:100%}
+.deck-controls{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:1000}
+@media print{html,body{width:1920px;height:auto;overflow:visible;background:#fff}.deck-viewport{position:static;overflow:visible;background:#fff}.deck-stage{position:static;width:auto;height:auto;transform:none!important;background:none}.slide{position:relative;display:block!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;width:1920px;height:1080px;break-after:page;page-break-after:always}.slide:last-child{break-after:auto;page-break-after:auto}.deck-controls{display:none!important}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.2s!important}}
+
+/* ===========================================
+   MIDNIGHT CODEX: DESIGN TOKENS
+   =========================================== */
+:root {
+    --slide-bg: #0d1117;
+    --stage-bg: #000;
+    --text-primary: #e6edf3;
+    --text-secondary: #c9d1d9;
+    --text-muted: #8b949e;
+    --text-dim: #484f58;
+    --accent: #d2991d;
+    --accent-glow: rgba(210,153,29,0.18);
+    --surface: rgba(22,27,34,0.92);
+    --surface-hover: rgba(30,36,44,0.95);
+    --border: rgba(48,54,61,0.55);
+    --border-strong: rgba(48,54,61,0.8);
+    --grid-color: rgba(48,54,61,0.22);
+    --code-keyword: #ff7b72;
+    --code-string: #a5d6ff;
+    --code-comment: #484f58;
+    --code-func: #d2a8ff;
+    --ease-out-expo: cubic-bezier(0.16,1,0.3,1);
+    --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+}
+
+/* ===========================================
+   SLIDE LAYER: ATMOSPHERE & GRID
+   =========================================== */
+.slide { background: var(--slide-bg); }
+
+/* Deep radial ambient glow */
+.slide::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 12% 18%, var(--accent-glow) 0%, transparent 50%),
+        radial-gradient(ellipse at 85% 80%, rgba(56,139,253,0.04) 0%, transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Architectural grid overlay */
+.slide::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: 80px 80px;
+    background-position: -1px -1px;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 0.8s 0.3s var(--ease-out-expo);
+}
+.slide.active::after, .slide.visible::after { opacity: 1; }
+
+/* ===========================================
+   CORNER CHROME
+   =========================================== */
+.corner-tl, .corner-br {
+    position: absolute;
+    width: 160px;
+    height: 160px;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.6s 0.15s var(--ease-out-expo);
+}
+.slide.active .corner-tl, .slide.visible .corner-tl,
+.slide.active .corner-br, .slide.visible .corner-br { opacity: 1; }
+
+.corner-tl { left: 0; top: 0; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+.corner-br { right: 0; bottom: 0; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+
+/* ===========================================
+   TYPOGRAPHY: REVEAL UTILITIES
+   =========================================== */
+.reveal { opacity: 0; transform: translateY(22px); }
+.slide.active .reveal, .slide.visible .reveal { opacity: 1; transform: translateY(0); }
+
+.reveal-fade { opacity: 0; }
+.slide.active .reveal-fade, .slide.visible .reveal-fade { opacity: 1; }
+
+.reveal-scale { opacity: 0; transform: scale(0.94); }
+.slide.active .reveal-scale, .slide.visible .reveal-scale { opacity: 1; transform: scale(1); }
+
+.reveal-left { opacity: 0; transform: translateX(-36px); }
+.slide.active .reveal-left, .slide.visible .reveal-left { opacity: 1; transform: translateX(0); }
+
+.reveal-right { opacity: 0; transform: translateX(36px); }
+.slide.active .reveal-right, .slide.visible .reveal-right { opacity: 1; transform: translateX(0); }
+
+/* Stagger delays */
+.d0 { transition: opacity 0.55s 0.08s var(--ease-out-expo), transform 0.55s 0.08s var(--ease-out-expo); }
+.d1 { transition: opacity 0.55s 0.15s var(--ease-out-expo), transform 0.55s 0.15s var(--ease-out-expo); }
+.d2 { transition: opacity 0.55s 0.22s var(--ease-out-expo), transform 0.55s 0.22s var(--ease-out-expo); }
+.d3 { transition: opacity 0.55s 0.29s var(--ease-out-expo), transform 0.55s 0.29s var(--ease-out-expo); }
+.d4 { transition: opacity 0.55s 0.36s var(--ease-out-expo), transform 0.55s 0.36s var(--ease-out-expo); }
+.d5 { transition: opacity 0.55s 0.43s var(--ease-out-expo), transform 0.55s 0.43s var(--ease-out-expo); }
+.d6 { transition: opacity 0.55s 0.50s var(--ease-out-expo), transform 0.55s 0.50s var(--ease-out-expo); }
+.d7 { transition: opacity 0.55s 0.57s var(--ease-out-expo), transform 0.55s 0.57s var(--ease-out-expo); }
+
+/* ===========================================
+   SLIDE 1: TITLE
+   =========================================== */
+.title-code-line {
+    position: absolute;
+    left: 120px;
+    top: 105px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--code-comment);
+    z-index: 3;
+}
+.title-code-line .kw { color: var(--code-keyword); }
+.title-code-line .fn { color: var(--code-func); }
+.title-code-line .str { color: var(--code-string); }
+
+.title-main {
+    position: absolute;
+    left: 120px;
+    top: 180px;
+    right: 120px;
+    z-index: 3;
+}
+.title-main h1 {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 700;
+    font-size: 156px;
+    line-height: 0.88;
+    letter-spacing: -0.035em;
+    color: var(--text-primary);
+    margin: 0 0 16px 0;
+}
+.title-rule {
+    width: 80px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin-bottom: 28px;
+}
+.title-sub {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 31px;
+    line-height: 1.45;
+    color: var(--text-muted);
+    letter-spacing: -0.005em;
+    max-width: 860px;
+    margin: 0 0 38px 0;
+}
+.title-tags {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 9px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.tag.gold { color: var(--accent); border-color: rgba(210,153,29,0.28); background: rgba(210,153,29,0.06); }
+
+.title-meta {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    bottom: 72px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 3;
+}
+.title-meta-label {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 500;
+    font-size: 17px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+.title-meta-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+}
+.title-bottom-rule {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    bottom: 58px;
+    height: 1px;
+    background: var(--border);
+    z-index: 3;
+}
+
+/* ===========================================
+   SLIDE 2: WHAT IS ONECODE
+   =========================================== */
+.slide-header {
+    position: absolute;
+    left: 120px;
+    top: 80px;
+    z-index: 3;
+}
+.slide-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+.slide-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 52px;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* Positioning tagline */
+.positioning-block {
+    position: absolute;
+    left: 120px;
+    top: 220px;
+    right: 120px;
+    max-width: 1000px;
+    z-index: 3;
+}
+.positioning-block .big-quote {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 500;
+    font-size: 36px;
+    line-height: 1.35;
+    color: var(--text-secondary);
+    letter-spacing: -0.01em;
+    margin-bottom: 24px;
+}
+.positioning-block .big-quote span { color: var(--accent); }
+
+/* 3 pillar cards */
+.pillar-row {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 420px;
+    display: flex;
+    gap: 28px;
+    z-index: 3;
+}
+.pillar-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 30px 32px;
+}
+.pillar-icon {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-bottom: 14px;
+}
+.pillar-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 24px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 10px;
+}
+.pillar-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 17px;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+/* Architecture goals list */
+.arch-goals {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 690px;
+    display: flex;
+    gap: 20px;
+    z-index: 3;
+}
+.goal-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 15px;
+    color: var(--text-dim);
+    flex: 1;
+}
+.goal-bullet {
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* ===========================================
+   SLIDE 3: ARCHITECTURE
+   =========================================== */
+.arch-layers {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 210px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 3;
+}
+.arch-layer {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 18px 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    border-left: 4px solid var(--border);
+    transition: border-color 0.25s, background 0.25s;
+}
+.arch-layer.L1 { border-left-color: #d2991d; }
+.arch-layer.L2 { border-left-color: #d2991d; opacity: 0.92; }
+.arch-layer.L3 { border-left-color: #9b6e1a; opacity: 0.84; }
+.arch-layer.L4 { border-left-color: #6e4d12; opacity: 0.76; }
+.arch-layer.L5 { border-left-color: #4a350e; opacity: 0.68; }
+.arch-layer.L6 { border-left-color: #2d200a; opacity: 0.60; }
+
+.arch-layer-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 28px;
+    letter-spacing: 0.06em;
+}
+.arch-layer-name {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 21px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    min-width: 180px;
+}
+.arch-layer-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 15px;
+    color: var(--text-muted);
+    flex: 1;
+}
+.arch-layer-modules {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+    text-align: right;
+    min-width: 320px;
+}
+
+.arch-constraints {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    bottom: 110px;
+    z-index: 3;
+}
+.constraint-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+.constraint-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.constraint-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-dim);
+    padding: 7px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+.constraint-chip strong { color: var(--accent); font-weight: 500; }
+
+/* ===========================================
+   SLIDE 4: CORE FEATURES (4 cards)
+   =========================================== */
+.feature-grid {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 210px;
+    bottom: 100px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 24px;
+    z-index: 3;
+}
+.feat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px 34px;
+    display: flex;
+    flex-direction: column;
+}
+.feat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-bottom: 16px;
+}
+.feat-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 28px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 12px;
+}
+.feat-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    flex: 1;
+}
+.feat-highlight {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-dim);
+    margin-top: 16px;
+    letter-spacing: 0.02em;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+}
+.feat-highlight em {
+    color: var(--accent);
+    font-style: normal;
+    font-weight: 500;
+}
+
+/* ===========================================
+   SLIDE 5: CAPABILITY INTEGRATION
+   =========================================== */
+.cap-grid {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 210px;
+    bottom: 100px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: 1fr 1fr;
+    gap: 22px;
+    z-index: 3;
+}
+.cap-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 30px;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.2s, background 0.2s;
+}
+.cap-icon {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-bottom: 14px;
+}
+.cap-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 22px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+}
+.cap-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+/* ===========================================
+   SLIDE 6: GETTING STARTED
+   =========================================== */
+.steps-block {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 210px;
+    z-index: 3;
+}
+.step-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 32px;
+    margin-bottom: 26px;
+}
+.step-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.step-body { flex: 1; }
+.step-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 24px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+}
+.step-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 16px;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+.step-code {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 8px 16px;
+    background: rgba(13,17,23,0.7);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--code-string);
+    letter-spacing: 0.02em;
+}
+.step-code .prompt { color: var(--accent); }
+
+.steps-note {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    bottom: 110px;
+    z-index: 3;
+    padding: 20px 28px;
+    background: rgba(210,153,29,0.04);
+    border: 1px solid rgba(210,153,29,0.15);
+    border-radius: 8px;
+    font-family: 'Chillax', sans-serif;
+    font-size: 16px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+.steps-note strong { color: var(--accent); font-weight: 500; }
+
+/* ===========================================
+   SLIDE 7: DEVELOPMENT GUIDE
+   =========================================== */
+.dev-grid {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    top: 210px;
+    bottom: 100px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 20px;
+    z-index: 3;
+}
+.dev-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 28px;
+}
+.dev-section-title {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 600;
+    font-size: 21px;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin-bottom: 10px;
+}
+.dev-section-desc {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+.dev-cmds {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--code-string);
+    letter-spacing: 0.02em;
+    line-height: 1.7;
+    background: rgba(13,17,23,0.5);
+    padding: 12px 16px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+}
+.dev-cmds .muted { color: var(--code-comment); }
+
+/* ===========================================
+   SLIDE 8: CLOSING
+   =========================================== */
+.closing-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+    text-align: center;
+}
+.closing-headline {
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 700;
+    font-size: 96px;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+    margin-bottom: 20px;
+}
+.closing-rule {
+    width: 60px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin-bottom: 24px;
+}
+.closing-sub {
+    font-family: 'Chillax', sans-serif;
+    font-weight: 400;
+    font-size: 28px;
+    color: var(--text-muted);
+    letter-spacing: -0.005em;
+    margin-bottom: 44px;
+    max-width: 680px;
+    line-height: 1.4;
+}
+.closing-links {
+    display: flex;
+    gap: 20px;
+}
+.closing-link-card {
+    padding: 16px 36px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    letter-spacing: 0.02em;
+    transition: border-color 0.2s, background 0.2s;
+}
+.closing-link-card .hl { color: var(--accent); }
+
+.closing-license {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-dim);
+    margin-top: 36px;
+    letter-spacing: 0.04em;
+}
+
+/* ===========================================
+   PAGE NUMBER & SLIDE CHROME
+   =========================================== */
+.page-num {
+    position: absolute;
+    right: 120px;
+    bottom: 72px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    z-index: 3;
+}
+.slide-bottom-rule {
+    position: absolute;
+    left: 120px;
+    right: 120px;
+    bottom: 58px;
+    height: 1px;
+    background: var(--border);
+    z-index: 3;
+}
+
+/* ===========================================
+   NAVIGATION CONTROLS (VIEWPORT CHROME)
+   =========================================== */
+.deck-controls {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 40px;
+    padding: 8px 16px;
+    user-select: none;
+}
+.deck-controls button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 20px;
+    transition: color 0.15s, background 0.15s;
+    letter-spacing: 0.03em;
+}
+.deck-controls button:hover { color: var(--text-primary); background: var(--surface-hover); }
+.deck-controls .ctrl-progress {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    padding: 0 8px;
+}
+
+/* ===========================================
+   INLINE EDITING
+   =========================================== */
+.edit-toggle {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 1001;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s, background 0.15s;
+}
+.edit-toggle:hover, .edit-toggle.visible { opacity: 1; }
+body:hover .edit-toggle { opacity: 0.7; }
+.edit-toggle.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+
+.deck-viewport.editing .slide [data-edit] {
+    outline: 1px dashed rgba(210,153,29,0.3);
+    outline-offset: 4px;
+    border-radius: 2px;
+    cursor: text;
+    transition: outline-color 0.15s;
+}
+.deck-viewport.editing .slide [data-edit]:hover {
+    outline-color: rgba(210,153,29,0.6);
+}
+.deck-viewport.editing .slide [data-edit]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    background: rgba(210,153,29,0.04);
+}
+</style>
+</head>
+<body>
+
+<!-- ===== EDIT TOGGLE ===== -->
+<button class="edit-toggle" id="editToggle" title="Toggle edit mode (E)" aria-label="Toggle edit mode">✎</button>
+
+<!-- ===== DECK VIEWPORT ===== -->
+<div class="deck-viewport" id="viewport">
+<div class="deck-stage" id="stage">
+
+<!-- ===========================================
+     SLIDE 01 — TITLE
+     =========================================== -->
+<div class="slide active" id="s1">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="title-code-line reveal d0">
+        <span class="kw">import</span> OneCode <span class="kw">as</span> <span class="fn">runtime</span>
+    </div>
+    <div class="title-main">
+        <h1 class="reveal d1" data-edit="headline">OneCode</h1>
+        <div class="title-rule reveal d2"></div>
+        <p class="title-sub reveal d3" data-edit="subtitle">Python 代码代理运行时——基于 Harness 工程理念，<br>让 AI 在真实环境中可靠地完成长链路编码任务。</p>
+        <div class="title-tags reveal d4">
+            <span class="tag gold">harness</span>
+            <span class="tag">hooks</span>
+            <span class="tag">context-engineering</span>
+            <span class="tag">multi-provider</span>
+            <span class="tag">python3.11+</span>
+        </div>
+    </div>
+    <div class="title-meta reveal-fade d5">
+        <span class="title-meta-label" data-edit="deck-label">开发者入门与架构指南</span>
+        <span class="title-meta-num">01 — 08</span>
+    </div>
+    <div class="title-bottom-rule reveal-fade d5"></div>
+</div>
+
+<!-- ===========================================
+     SLIDE 02 — WHAT IS ONECODE?
+     =========================================== -->
+<div class="slide" id="s2">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">02 · 项目定位</div>
+        <h2 class="slide-title" data-edit="s2-title">什么是 OneCode？</h2>
+    </div>
+    <div class="positioning-block reveal d1">
+        <p class="big-quote" data-edit="s2-quote">OneCode 不是一个 CLI wrapper——<br>它是围绕 <span>agent 主循环</span>、<span>上下文治理</span>、<span>工具执行</span>、<span>安全边界</span>和<span>能力集成</span>构建的<span>可演化运行时</span>。</p>
+    </div>
+    <div class="pillar-row">
+        <div class="pillar-card reveal d2">
+            <div class="pillar-icon">01</div>
+            <div class="pillar-title">Harness 工程</div>
+            <div class="pillar-desc">大模型作为执行者，工程框架约束它、组织它、承接副作用——让 AI 受控而非失控。</div>
+        </div>
+        <div class="pillar-card reveal d3">
+            <div class="pillar-icon">02</div>
+            <div class="pillar-title">薄主循环</div>
+            <div class="pillar-desc">主循环只编排"思考—行动—观察"生命周期，不包含任何能力专用分支。</div>
+        </div>
+        <div class="pillar-card reveal d4">
+            <div class="pillar-icon">03</div>
+            <div class="pillar-title">文档即接口</div>
+            <div class="pillar-desc">架构以文档显式维护，由 AI agent 及开发者按文档执行，遵循文档比遵循 prompt 更重要。</div>
+        </div>
+    </div>
+    <div class="arch-goals">
+        <div class="goal-item reveal d5"><span class="goal-bullet">→</span> 稳定可控的工程框架，不依赖模型"自觉"</div>
+        <div class="goal-item reveal d6"><span class="goal-bullet">→</span> 所有非核心能力通过生命周期钩子接入</div>
+        <div class="goal-item reveal d7"><span class="goal-bullet">→</span> 上下文是受管理工作内存，不是无限聊天记录</div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">02 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 03 — ARCHITECTURE
+     =========================================== -->
+<div class="slide" id="s3">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">03 · 系统架构</div>
+        <h2 class="slide-title" data-edit="s3-title">六层逻辑分层</h2>
+    </div>
+    <div class="arch-layers">
+        <div class="arch-layer L1 reveal d1">
+            <span class="arch-layer-num">L1</span>
+            <span class="arch-layer-name">编排层</span>
+            <span class="arch-layer-desc">AgentLoop 主循环 · ContextEngine · RuntimeState</span>
+            <span class="arch-layer-modules">core/loop.py context_engine.py runtime_state.py</span>
+        </div>
+        <div class="arch-layer L2 reveal d2">
+            <span class="arch-layer-num">L2</span>
+            <span class="arch-layer-name">上下文与提示</span>
+            <span class="arch-layer-desc">消息链 · transcript · 压缩 · 长期记忆 · 附件投影 · 动态 prompt</span>
+            <span class="arch-layer-modules">services/context compaction memory attachments · prompts/</span>
+        </div>
+        <div class="arch-layer L3 reveal d3">
+            <span class="arch-layer-num">L3</span>
+            <span class="arch-layer-name">工具与执行</span>
+            <span class="arch-layer-desc">描述符 · 注册表 · schema 投影 · 执行管线 · 结果预算</span>
+            <span class="arch-layer-modules">services/tools/ · tools/*（12+ 内置工具）</span>
+        </div>
+        <div class="arch-layer L4 reveal d4">
+            <span class="arch-layer-num">L4</span>
+            <span class="arch-layer-name">安全与扩展</span>
+            <span class="arch-layer-desc">沙箱路径分类 · deny-first 权限 · 生命周期钩子</span>
+            <span class="arch-layer-modules">services/guard permissions hooks</span>
+        </div>
+        <div class="arch-layer L5 reveal d5">
+            <span class="arch-layer-num">L5</span>
+            <span class="arch-layer-name">能力集成</span>
+            <span class="arch-layer-desc">子 agent · skill · MCP · 任务系统 · 后台任务</span>
+            <span class="arch-layer-modules">services/subagents skills mcp tasks background_tasks</span>
+        </div>
+        <div class="arch-layer L6 reveal d6">
+            <span class="arch-layer-num">L6</span>
+            <span class="arch-layer-name">基础设施与边界</span>
+            <span class="arch-layer-desc">模型协议 · provider 适配 · 配置 · 跨平台路径 · 可观测性 · CLI</span>
+            <span class="arch-layer-modules">services/model · infrastructure/* · services/observability · ui/cli</span>
+        </div>
+    </div>
+    <div class="arch-constraints reveal d7">
+        <div class="constraint-title">依赖方向约束</div>
+        <div class="constraint-row">
+            <span class="constraint-chip"><strong>core/</strong> 不能 import 具体工具或 provider</span>
+            <span class="constraint-chip"><strong>services/tools/</strong> 不能 import 顶层 tools/</span>
+            <span class="constraint-chip"><strong>infrastructure/</strong> 不能依赖 core/</span>
+            <span class="constraint-chip"><strong>guard deny</strong> 不能被 hook 覆盖</span>
+            <span class="constraint-chip"><strong>每一层</strong> 只依赖更下层的契约</span>
+        </div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">03 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 04 — CORE FEATURES
+     =========================================== -->
+<div class="slide" id="s4">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">04 · 核心特性</div>
+        <h2 class="slide-title" data-edit="s4-title">四大核心机制</h2>
+    </div>
+    <div class="feature-grid">
+        <div class="feat-card reveal d1">
+            <div class="feat-num">01</div>
+            <div class="feat-title">Agent 主循环</div>
+            <div class="feat-desc">薄而稳定的"思考—行动—观察"循环。确定性状态转换处理错误恢复、预算控制和会话结束。每轮重建上下文，不累积历史。</div>
+            <div class="feat-highlight">编排 <em>AgentLoop</em> → <em>ContextEngine</em> → <em>ModelClient</em> → <em>ToolExecutor</em></div>
+        </div>
+        <div class="feat-card reveal d2">
+            <div class="feat-num">02</div>
+            <div class="feat-title">Hooks 扩展机制</div>
+            <div class="feat-desc">所有非核心能力通过生命周期钩子接入。在主循环关键节点注入工程约束、安全规则和业务逻辑——把仅靠 prompt 无法保证的行为兜底为代码。</div>
+            <div class="feat-highlight">新增能力 <em>不需要修改主循环</em></div>
+        </div>
+        <div class="feat-card reveal d3">
+            <div class="feat-num">03</div>
+            <div class="feat-title">上下文工程</div>
+            <div class="feat-desc">上下文是受管理的工程产物。消息链、transcript、快照每轮动态重建；多级压缩、长期记忆、@mention 附件投影协同工作，确保模型始终看到高信息密度内容。</div>
+            <div class="feat-highlight"><em>micro / auto / manual / reactive</em> 四种压缩模式</div>
+        </div>
+        <div class="feat-card reveal d4">
+            <div class="feat-num">04</div>
+            <div class="feat-title">可扩展工具体系</div>
+            <div class="feat-desc">统一工具注册表：描述符定义执行逻辑、权限边界和错误反馈。内置 12+ 工具覆盖文件、命令、检索、子 agent、后台任务等场景。Skill 和 MCP 以同样方式注册。</div>
+            <div class="feat-highlight">工具在 <em>受控环境</em> 中执行，异常转化为上下文反馈</div>
+        </div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">04 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 05 — CAPABILITY INTEGRATION
+     =========================================== -->
+<div class="slide" id="s5">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">05 · 能力集成</div>
+        <h2 class="slide-title" data-edit="s5-title">模块化能力接入</h2>
+    </div>
+    <div class="cap-grid">
+        <div class="cap-card reveal d1">
+            <div class="cap-icon">tools/agent</div>
+            <div class="cap-title">子 Agent</div>
+            <div class="cap-desc">复杂任务拆解给子 agent（内置 general-purpose / Explore / Plan）。fork child runtime，独立上下文运行。</div>
+        </div>
+        <div class="cap-card reveal d2">
+            <div class="cap-icon">tools/background_task_stop</div>
+            <div class="cap-title">后台任务</div>
+            <div class="cap-desc">长耗时 bash、agent 或 dream 任务放入后台。生命周期独立管理，完成时通过通知异步报告。</div>
+        </div>
+        <div class="cap-card reveal d3">
+            <div class="cap-icon">tools/skill</div>
+            <div class="cap-title">Skill 技能</div>
+            <div class="cap-desc">领域知识封装为可加载技能。inline（内联指令）或 fork（独立子 agent）两种模式，按需加载。</div>
+        </div>
+        <div class="cap-card reveal d4">
+            <div class="cap-icon">MCP</div>
+            <div class="cap-title">MCP 集成</div>
+            <div class="cap-desc">外部工具通过 Model Context Protocol 接入。动态发现、schema 投影、统一执行管线——与内置工具对等。</div>
+        </div>
+        <div class="cap-card reveal d5">
+            <div class="cap-icon">services/tasks</div>
+            <div class="cap-title">任务系统</div>
+            <div class="cap-desc">文件持久化的结构化任务管理。依赖图、claim 机制，支持跨会话追踪和多步骤协调。</div>
+        </div>
+        <div class="cap-card reveal d6">
+            <div class="cap-icon">infrastructure/providers</div>
+            <div class="cap-title">多 Provider</div>
+            <div class="cap-desc">模型提供方隔离在基础设施层。业务逻辑仅依赖 provider-neutral 协议，在不同厂商间无感切换。</div>
+        </div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">05 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 06 — GETTING STARTED
+     =========================================== -->
+<div class="slide" id="s6">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">06 · 快速开始</div>
+        <h2 class="slide-title" data-edit="s6-title">环境准备与启动</h2>
+    </div>
+    <div class="steps-block">
+        <div class="step-row reveal d1">
+            <div class="step-num">1</div>
+            <div class="step-body">
+                <div class="step-title">前置条件</div>
+                <div class="step-desc">Python 3.11+ · <a href="https://docs.astral.sh/uv/" style="color:var(--accent);">uv</a> 包管理器 · Git Bash（Windows）</div>
+            </div>
+        </div>
+        <div class="step-row reveal d2">
+            <div class="step-num">2</div>
+            <div class="step-body">
+                <div class="step-title">同步依赖</div>
+                <div class="step-desc">使用 uv 同步虚拟环境（含开发依赖）</div>
+                <div class="step-code"><span class="prompt">$</span> uv sync --dev</div>
+            </div>
+        </div>
+        <div class="step-row reveal d3">
+            <div class="step-num">3</div>
+            <div class="step-body">
+                <div class="step-title">环境变量</div>
+                <div class="step-desc">复制模板文件，按需配置模型 Provider（也可启动后在终端内用 /connect 命令配置）</div>
+                <div class="step-code"><span class="prompt">$</span> cp .env.example .env</div>
+            </div>
+        </div>
+        <div class="step-row reveal d4">
+            <div class="step-num">4</div>
+            <div class="step-body">
+                <div class="step-title">启动 CLI</div>
+                <div class="step-desc">激活虚拟环境后启动内联终端 REPL（Windows 使用 .\.venv\Scripts\Activate.ps1）</div>
+                <div class="step-code"><span class="prompt">$</span> uv run python -m ui.cli.app</div>
+            </div>
+        </div>
+    </div>
+    <div class="steps-note reveal d5">
+        <strong>Batch 模式：</strong>当标准输入不是 TTY 时自动进入批处理——<br>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--code-string);">echo "帮我列出当前目录的文件" | uv run python -m ui.cli.app</span>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">06 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 07 — DEVELOPMENT GUIDE
+     =========================================== -->
+<div class="slide" id="s7">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="slide-header reveal d0">
+        <div class="slide-eyebrow">07 · 开发指南</div>
+        <h2 class="slide-title" data-edit="s7-title">在 OneCode 上继续开发</h2>
+    </div>
+    <div class="dev-grid">
+        <div class="dev-section reveal d1">
+            <div class="dev-section-title">📖 推荐阅读顺序</div>
+            <div class="dev-section-desc">AGENTS.md → architecture.md → docs/design-docs/core-beliefs.md → 按需查阅模块文档</div>
+        </div>
+        <div class="dev-section reveal d2">
+            <div class="dev-section-title">🏗 项目结构</div>
+            <div class="dev-section-desc">core/（编排） · prompts/（提示） · services/（上下文/工具/安全/集成） · tools/（内置工具） · infrastructure/（边界） · ui/cli/（界面）</div>
+        </div>
+        <div class="dev-section reveal d3">
+            <div class="dev-section-title">📋 变更流程</div>
+            <div class="dev-section-desc">复杂功能先写 ExecPlan（PLANS.md）→ 放在 docs/exec-plans/active/ → 完成后归档到 completed/。技术债务跟踪：tech_debt_tracker_guide.md</div>
+        </div>
+        <div class="dev-section reveal d4">
+            <div class="dev-section-title">✅ 测试与校验</div>
+            <div class="dev-cmds">
+<span class="muted"># 完整测试套件</span>
+uv run python -m pytest tests -q
+
+<span class="muted"># 依赖边界校验</span>
+uv run python -m pytest tests/test_import_boundaries.py -q
+
+<span class="muted"># 编译检查</span>
+uv run python -m compileall core services infrastructure
+            </div>
+        </div>
+        <div class="dev-section reveal d5" style="grid-column: 1 / -1;">
+            <div class="dev-section-title">🔗 核心模块文档索引</div>
+            <div class="dev-section-desc">
+                core-runtime-architecture.md · context-architecture.md · compaction-architecture.md · memory-architecture.md ·
+                tool-runtime-architecture.md · hook-architecture.md · guard-architecture.md · subagent-architecture.md ·
+                skill-architecture.md · mcp-architecture.md · model-provider-architecture.md · observability-architecture.md
+            </div>
+        </div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">07 — 08</div>
+</div>
+
+<!-- ===========================================
+     SLIDE 08 — CLOSING
+     =========================================== -->
+<div class="slide" id="s8">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="closing-center">
+        <h2 class="closing-headline reveal d0" data-edit="closing-headline">Ready to Build</h2>
+        <div class="closing-rule reveal d1"></div>
+        <p class="closing-sub reveal d2" data-edit="closing-sub">阅读 AGENTS.md 开始你的第一个 commit，<br>或启动 CLI 与 OneCode 对话。</p>
+        <div class="closing-links reveal d3">
+            <span class="closing-link-card"><span class="hl">README.md</span> — 项目概览</span>
+            <span class="closing-link-card"><span class="hl">AGENTS.md</span> — 开发入口</span>
+            <span class="closing-link-card"><span class="hl">architecture.md</span> — 架构总览</span>
+        </div>
+        <div class="closing-license reveal d4">MIT License · Python 3.11+ · docs/design-docs/</div>
+    </div>
+    <div class="slide-bottom-rule reveal-fade d5"></div>
+    <div class="page-num reveal-fade d5">08 — 08</div>
+</div>
+
+</div><!-- /deck-stage -->
+</div><!-- /deck-viewport -->
+
+<!-- ===== NAVIGATION CONTROLS ===== -->
+<div class="deck-controls" id="controls">
+    <button id="btnPrev" title="Previous (←)">←</button>
+    <span class="ctrl-progress" id="ctrlProgress">1 / 8</span>
+    <button id="btnNext" title="Next (→)">→</button>
+</div>
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION ENGINE
+   =========================================== */
+(function() {
+    const stage = document.getElementById('stage');
+    const controls = document.getElementById('controls');
+    const ctrlProgress = document.getElementById('ctrlProgress');
+    const btnPrev = document.getElementById('btnPrev');
+    const btnNext = document.getElementById('btnNext');
+    const editToggle = document.getElementById('editToggle');
+    const viewport = document.getElementById('viewport');
+
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const totalSlides = slides.length;
+    let currentIndex = 0;
+
+    /* ---- Stage Fitting ---- */
+    function fitStage() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const scale = Math.min(vw / 1920, vh / 1080);
+        const tx = (vw - 1920 * scale) / 2;
+        const ty = (vh - 1080 * scale) / 2;
+        stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    }
+    window.addEventListener('resize', fitStage);
+    fitStage();
+
+    /* ---- Slide Navigation ---- */
+    function goTo(index) {
+        if (index < 0 || index >= totalSlides || index === currentIndex) return;
+        // Deactivate current
+        slides[currentIndex].classList.remove('active');
+        // Activate target
+        currentIndex = index;
+        slides[currentIndex].classList.add('active');
+        // Update UI
+        ctrlProgress.textContent = `${currentIndex + 1} / ${totalSlides}`;
+    }
+    function nextSlide() { goTo(currentIndex + 1); }
+    function prevSlide() { goTo(currentIndex - 1); }
+
+    /* ---- Button Controls ---- */
+    btnPrev.addEventListener('click', prevSlide);
+    btnNext.addEventListener('click', nextSlide);
+
+    /* ---- Keyboard ---- */
+    document.addEventListener('keydown', function(e) {
+        // If editing, allow normal typing — don't intercept
+        if (viewport.classList.contains('editing') && document.activeElement && document.activeElement.hasAttribute('data-edit')) {
+            return;
+        }
+        switch(e.key) {
+            case 'ArrowRight': case 'ArrowDown': case ' ':
+                e.preventDefault(); nextSlide(); break;
+            case 'ArrowLeft': case 'ArrowUp':
+                e.preventDefault(); prevSlide(); break;
+            case 'Home':
+                e.preventDefault(); goTo(0); break;
+            case 'End':
+                e.preventDefault(); goTo(totalSlides - 1); break;
+            case 'e': case 'E':
+                if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                    toggleEditMode();
+                }
+                break;
+        }
+    });
+
+    /* ---- Touch / Swipe ---- */
+    let touchStartX = 0, touchStartY = 0;
+    document.addEventListener('touchstart', function(e) {
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+    }, {passive: true});
+    document.addEventListener('touchend', function(e) {
+        const dx = e.changedTouches[0].screenX - touchStartX;
+        const dy = e.changedTouches[0].screenY - touchStartY;
+        if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
+            dx > 0 ? prevSlide() : nextSlide();
+        }
+    });
+
+    /* ---- Mouse Wheel ---- */
+    let wheelTimeout;
+    document.addEventListener('wheel', function(e) {
+        if (wheelTimeout) return;
+        wheelTimeout = setTimeout(function() { wheelTimeout = null; }, 800);
+        if (e.deltaY > 20) nextSlide();
+        else if (e.deltaY < -20) prevSlide();
+    }, {passive: true});
+
+    /* ---- Inline Editing ---- */
+    let editing = false;
+
+    function toggleEditMode() {
+        editing = !editing;
+        if (editing) {
+            viewport.classList.add('editing');
+            editToggle.classList.add('active');
+            editToggle.textContent = '✓';
+            // Make all [data-edit] elements contenteditable
+            document.querySelectorAll('[data-edit]').forEach(function(el) {
+                el.contentEditable = 'true';
+                el.setAttribute('role', 'textbox');
+            });
+        } else {
+            viewport.classList.remove('editing');
+            editToggle.classList.remove('active');
+            editToggle.textContent = '✎';
+            document.querySelectorAll('[data-edit]').forEach(function(el) {
+                el.contentEditable = 'false';
+                el.removeAttribute('role');
+                el.blur();
+            });
+        }
+    }
+
+    editToggle.addEventListener('click', toggleEditMode);
+
+    // Ctrl+S to save edited content
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            if (editing) {
+                e.preventDefault();
+                // Collect all edited content
+                const edits = {};
+                document.querySelectorAll('[data-edit]').forEach(function(el) {
+                    edits[el.getAttribute('data-edit')] = el.textContent.trim();
+                });
+                console.log('Edits saved:', edits);
+                // Visual feedback
+                editToggle.textContent = '✓';
+                setTimeout(function() { if (editing) editToggle.textContent = '✓'; }, 600);
+            }
+        }
+    });
+
+    // Persist edits on blur
+    document.addEventListener('blur', function(e) {
+        if (editing && e.target.hasAttribute('data-edit')) {
+            const key = e.target.getAttribute('data-edit');
+            console.log('Edited:', key, '→', e.target.textContent.trim());
+        }
+    }, true);
+
+    /* ---- Show edit toggle on hover ---- */
+    document.addEventListener('mousemove', function(e) {
+        if (e.clientY < 50 && e.clientX < 80) {
+            editToggle.classList.add('visible');
+        } else if (!editing) {
+            editToggle.classList.remove('visible');
+        }
+    });
+
+    /* ---- Initial state ---- */
+    ctrlProgress.textContent = '1 / ' + totalSlides;
+    slides[0].classList.add('active');
+})();
+</script>
+</body>
+</html>

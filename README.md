@@ -9,6 +9,8 @@
 
 OneCode 是一个基于 **Harness** 工程理念实现的 **CodeAgent**。它把大模型当作具有工具调用能力的执行者，用一个稳定可控的工程框架去约束它、组织它、并承接它的副作用，从而让 AI 能够在真实环境中可靠地完成长链路编码任务，而不会失控越界。
 
+[项目介绍Slide](docs/assets/onecode-intro.html) (该演示由 OneCode 使用 `frontend-slides` skill 生成)。
+
 ---
 
 ## 核心功能
