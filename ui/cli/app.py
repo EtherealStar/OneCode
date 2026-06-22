@@ -69,6 +69,14 @@ from services.permissions import (
     ProjectPermissionSettingsStore,
     SessionPermissionStore,
 )
+from services.plans.store import PlanStore
+from services.questions.types import (
+    AnswerRecord,
+    QuestionOption,
+    QuestionRequest,
+    QuestionResponse,
+    UserQuestionError,
+)
 from services.skills import LoaderSkillCatalogProvider
 from services.subagents.runner import SubagentRunner
 from services.tasks import TaskStore
@@ -76,9 +84,12 @@ from services.tools.executor import RegistryToolExecutor
 from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from tools.agent import descriptor as agent_descriptor
+from tools.ask_user_question import descriptor as ask_user_question_descriptor
 from tools.bash import descriptor as bash_descriptor
 from tools.background_task_stop import descriptor as background_task_stop_descriptor
 from tools.edit_file import descriptor as edit_file_descriptor
+from tools.enter_plan_mode import descriptor as enter_plan_mode_descriptor
+from tools.exit_plan_mode import descriptor as exit_plan_mode_descriptor
 from tools.glob import descriptor as glob_descriptor
 from tools.grep import descriptor as grep_descriptor
 from tools.read_file import descriptor as read_file_descriptor
@@ -140,6 +151,34 @@ class BatchPermissionPrompter:
             action="deny",
             feedback="User denied the permission request.",
         )
+
+
+class BatchUserQuestionPrompter:
+    """Line-based fallback for the ``ask_user_question`` tool in batch mode.
+
+    The TTY implementation in ``ui.cli.terminal`` overrides this when a
+    real interactive surface is available. The batch implementation is good
+    enough for tests, CI runs, and non-TTY batch sessions: it accepts the
+    first option of every question and reports a structured answer back to
+    the model.
+    """
+
+    async def ask_questions(
+        self,
+        questions: tuple[QuestionRequest, ...],
+    ) -> QuestionResponse:
+        answers: list[AnswerRecord] = []
+        for question in questions:
+            if not question.options:
+                return QuestionResponse(declined=True, feedback="no_options")
+            label = question.options[0].label
+            answers.append(
+                AnswerRecord(
+                    question=question.question,
+                    answer=label if not question.multi_select else (label,),
+                )
+            )
+        return QuestionResponse(answers=tuple(answers))
 
 
 def build_runtime(
@@ -215,6 +254,8 @@ def build_runtime(
         trace_recorder=trace_recorder,
     )
     runner_ref: dict[str, SubagentRunner] = {}
+    plan_store = PlanStore(workspace)
+    user_question_prompter = BatchUserQuestionPrompter()
     base_descriptors = (
         read_file_descriptor(),
         edit_file_descriptor(),
@@ -232,6 +273,9 @@ def build_runtime(
         task_get_descriptor(task_store),
         task_update_descriptor(task_store, hooks),
         task_list_descriptor(task_store),
+        enter_plan_mode_descriptor(plan_store),
+        exit_plan_mode_descriptor(plan_store),
+        ask_user_question_descriptor(user_question_prompter),
         *mcp_descriptors,
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
@@ -390,6 +434,8 @@ def build_runtime(
         base_descriptors=base_descriptors,
         subagent_runner_ref=runner_ref,
         long_term_memory_extractor_ref=long_term_memory_extractor_ref,
+        plan_store=plan_store,
+        user_question_prompter=user_question_prompter,
     )
 
 

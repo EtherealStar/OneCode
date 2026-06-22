@@ -6,6 +6,11 @@ from copy import deepcopy
 from typing import Any
 
 from core.runtime_state import RuntimeState
+from services.plans.attachments import (
+    build_plan_mode_attachment,
+    build_plan_mode_exit_attachment,
+    build_plan_mode_reentry_attachment,
+)
 
 
 class AttachmentProjector:
@@ -50,12 +55,48 @@ def _project_attachment_message(message: dict[str, Any]) -> tuple[dict[str, Any]
     if attachment_type in {"relevant_memories", "nested_memory"}:
         return (_notice(_memory_content(attachment)),)
     if attachment_type == "plan_mode":
-        return (_notice(f"[plan mode attachment]\n{attachment.get('content', '')}"),)
+        return _project_plan_mode(attachment)
     if attachment_type == "hook_result":
         return (_notice(f"[hook result]\n{attachment.get('content', '')}"),)
     if attachment_type == "attachment_error":
         return (_notice(_error_content(attachment)),)
     return (_notice(f"Unsupported attachment type: {attachment_type}"),)
+
+
+def _project_plan_mode(attachment: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Render the new structured plan-mode attachment into a provider-visible
+    user message.
+
+    The projector treats plan_mode as a first-class attachment variant. We
+    rebuild the payload through ``services.plans.attachments`` so the
+    formatting stays in one place; legacy attachments (no ``variant`` key)
+    fall back to the intro form.
+    """
+
+    plan_path = str(attachment.get("plan_path", ""))
+    plan_content = str(attachment.get("plan_content", ""))
+    variant = str(attachment.get("variant", "intro"))
+
+    if variant == "reentry":
+        payload = build_plan_mode_reentry_attachment(plan_path, plan_content)
+    elif variant == "exit":
+        payload = build_plan_mode_exit_attachment(plan_path, plan_content)
+    else:
+        payload = build_plan_mode_attachment(plan_path, plan_content=plan_content)
+
+    return (
+        {
+            "role": "user",
+            "content": payload["content"],
+            "metadata": {
+                "synthetic": True,
+                "source": "attachment",
+                "attachment_type": "plan_mode",
+                "plan_path": plan_path,
+                "variant": variant,
+            },
+        },
+    )
 
 
 def _project_file(

@@ -17,6 +17,10 @@ from services.hooks import HookEvent, HookRegistry
 from services.observability import ErrorLogRecorder, TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
 from services.permissions.types import PermissionDecision, PermissionResponse
+from services.tools.conflicts import (
+    build_conflict_batches,
+    classifications_conflict,
+)
 from services.tools.file_state import FileStateCache
 from services.tools.registry import ToolRegistry
 from services.tools.types import (
@@ -476,7 +480,15 @@ class RegistryToolExecutor:
         *,
         parent_span_id: str | None = None,
     ) -> AsyncIterator[ToolExecutionUpdate]:
-        """Preflight a safe-looking run, then execute allowed handlers in parallel."""
+        """Preflight a safe-looking run, then execute handlers in conflict
+        batches.
+
+        The original single-boolean ``concurrency_safe`` flag is no longer the
+        sole authority: after preflight we additionally partition ready calls
+        by target conflict so two explore agents reading different files can
+        still run in parallel while writes serialize across overlapping
+        targets.
+        """
         prepared: list[_ReadyToolCall | ToolExecutionResult] = [
             await self._preflight_one(tool_call, state, parent_span_id=parent_span_id)
             for tool_call in tool_calls
@@ -509,12 +521,35 @@ class RegistryToolExecutor:
         ready_calls = [
             item for item in prepared if isinstance(item, _ReadyToolCall)
         ]
-        for item in ready_calls:
-            yield _started_update(item)
-        outcomes_by_id = {
-            id(outcome.ready): outcome
-            for outcome in await self._run_handlers_concurrently(ready_calls)
-        }
+        # ``build_conflict_batches`` returns indices into ``ready_calls``;
+        # we run each batch concurrently and serialize between batches.
+        batches = build_conflict_batches(
+            [
+                (ready_calls[index].classification, index)
+                for index in range(len(ready_calls))
+            ]
+        )
+        outcomes_by_id: dict[int, _HandlerOutcome] = {}
+        for batch in batches:
+            if len(batch) == 1:
+                outcomes_by_id[id(ready_calls[batch[0]])] = (
+                    await self._run_handler_async(ready_calls[batch[0]])
+                )
+                continue
+            batch_ready = [ready_calls[index] for index in batch]
+            # Detect edges within the batch as a safety net: ``build_conflict_batches``
+            # already partitioned them, but if two calls share a target via
+            # different normalized forms (e.g. one is the child of the other),
+            # we serialize rather than risk a race.
+            if _batch_has_internal_conflict(batch_ready):
+                for ready in batch_ready:
+                    outcomes_by_id[id(ready)] = await self._run_handler_async(ready)
+                continue
+            for ready in batch_ready:
+                yield _started_update(ready)
+            batch_outcomes = await self._run_handlers_concurrently(batch_ready)
+            for outcome in batch_outcomes:
+                outcomes_by_id[id(outcome.ready)] = outcome
 
         for item in prepared:
             if isinstance(item, ToolExecutionResult):
@@ -524,6 +559,11 @@ class RegistryToolExecutor:
                     update_type="error" if item.is_error else "result",
                 )
                 continue
+            if id(item) not in outcomes_by_id:
+                # Defensive: the ready call fell out of the batch pipeline
+                # (e.g. an empty classification). Run it serially.
+                outcomes_by_id[id(item)] = await self._run_handler_async(item)
+                yield _started_update(item)
             result = await self._finalize_outcome(outcomes_by_id[id(item)], state)
             yield _result_update(
                 result,
@@ -1023,6 +1063,29 @@ class RegistryToolExecutor:
             },
         )
         return final_result
+
+
+def _batch_has_internal_conflict(
+    ready_calls: list[_ReadyToolCall],
+) -> bool:
+    """Return True if any pair of calls in the batch conflicts.
+
+    ``build_conflict_batches`` already partitioned ready calls by target
+    conflict, but we re-check here as a defense-in-depth measure. Two
+    classifications that are both ``concurrency_safe`` but write to the
+    same normalized path must still serialize, and the partitioner relies
+    on the targets it sees at scheduling time — if a tool's classifier
+    augments targets after preflight (e.g. via dynamic resolution), this
+    guard catches the regression.
+    """
+
+    for index, left_ready in enumerate(ready_calls):
+        for right_ready in ready_calls[index + 1 :]:
+            if classifications_conflict(
+                left_ready.classification, right_ready.classification
+            ):
+                return True
+    return False
 
 
 def _started_update(ready: _ReadyToolCall) -> ToolExecutionUpdate:

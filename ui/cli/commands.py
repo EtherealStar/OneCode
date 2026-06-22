@@ -9,6 +9,12 @@ import shlex
 from threading import Thread
 from typing import Any, Callable, Iterable
 
+from services.plans import (
+    PlanStore,
+    build_plan_attachments_for_state,
+    enter_plan_mode,
+    exit_plan_mode,
+)
 from services.tasks import TaskStoreError, resolve_task_list_id
 from infrastructure.filesystem.onecode_paths import sessions_dir
 from services.permissions import (
@@ -67,6 +73,12 @@ def command_registry() -> tuple[CommandSpec, ...]:
         CommandSpec("tasks", "Show durable and background tasks.", _tasks),
         CommandSpec("mcp", "Show MCP servers and discovered tools.", _mcp),
         CommandSpec("compact", "Compact the active session context.", _compact, "[focus]"),
+        CommandSpec(
+            "plan",
+            "Enter plan mode, show the current plan, or open the plan file.",
+            _plan,
+            "[<description> | show | open | approve | reject]",
+        ),
         CommandSpec(
             "resume",
             "Restore a previous session.",
@@ -211,6 +223,137 @@ def _mcp(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     return CommandResult(
         renderable=renderer.render_mcp_status(runtime),
         presentation="page",
+    )
+
+
+def _plan(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
+    """Enter plan mode, display the plan, open the plan file, or approve/reject.
+
+    Subcommands:
+        /plan                 → show current plan + path (enters plan mode if not yet)
+        /plan <description>   → enter plan mode and seed the agent with the description
+        /plan show            → show current plan content
+        /plan open            → print the plan file path (caller can open it)
+        /plan approve         → approve exit_plan_mode from the CLI
+        /plan reject          → reject the pending plan approval
+    """
+
+    if runtime.plan_store is None:
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Plan store is not configured for this runtime."
+            )
+        )
+    plan_store: PlanStore = runtime.plan_store
+    subcommand, remaining = _plan_subcommand(invocation)
+
+    if subcommand == "open":
+        return _plan_open(runtime, plan_store)
+    if subcommand == "approve":
+        return _plan_approve(runtime, plan_store)
+    if subcommand == "reject":
+        return _plan_reject(runtime, plan_store)
+    if subcommand == "show":
+        return _plan_show(runtime, plan_store)
+
+    # Default behavior: enter plan mode and return to the normal prompt. The
+    # command itself is a mode switch, not a transient page. If the user typed a
+    # description after ``/plan``, surface that text as the next user prompt so
+    # the agent starts planning inside the newly active mode.
+    if not runtime.state.is_plan_mode():
+        enter_plan_mode(runtime.state, plan_store)
+    queued_prompt = remaining.strip()
+    plan_file = plan_store.read_plan(runtime.state)
+    suffix = f"\nPlan file: {plan_file.path}"
+    if queued_prompt:
+        suffix += f"\nQueued prompt: {queued_prompt}"
+    return CommandResult(
+        renderable=renderer.render_text(f"Enabled plan mode.{suffix}"),
+        presentation="inline",
+        queued_prompt=queued_prompt or None,
+    )
+
+
+def _plan_subcommand(invocation: CommandInvocation) -> tuple[str, str]:
+    if not invocation.args:
+        return "enter", ""
+    head = invocation.args[0].lower()
+    if head in {"show", "view", "status"}:
+        return "show", ""
+    if head in {"open", "edit", "path"}:
+        return "open", ""
+    if head in {"approve", "accept", "yes"}:
+        return "approve", ""
+    if head in {"reject", "deny", "no"}:
+        return "reject", ""
+    return "enter", invocation.arg_text
+
+
+def _plan_open(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
+    if runtime.state.plan.plan_slug is None:
+        enter_plan_mode(runtime.state, plan_store)
+    plan_file = plan_store.read_plan(runtime.state)
+    return CommandResult(
+        renderable=renderer.render_text(
+            f"Plan file path: {plan_file.path}\n"
+            "Use your editor of choice to open it. (The CLI does not launch "
+            "an external editor.)"
+        )
+    )
+
+
+def _plan_show(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
+    if runtime.state.plan.plan_slug is None:
+        return CommandResult(
+            renderable=renderer.render_text(
+                "No active plan. Use `/plan <description>` to start plan mode."
+            )
+        )
+    plan_file = plan_store.read_plan(runtime.state)
+    content = plan_file.read() if plan_file.exists() else ""
+    if not content.strip():
+        content = "(empty - write the plan to this file using write_file or edit_file.)"
+    return CommandResult(
+        renderable=renderer.render_text(
+            f"Plan file: {plan_file.path}\n\n{content}"
+        ),
+        presentation="inline",
+    )
+
+
+def _plan_approve(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
+    if not runtime.state.is_plan_mode():
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Cannot approve a plan: runtime is not in plan mode."
+            )
+        )
+    exit_plan_mode(runtime.state, plan_store, approved=True)
+    # Inject the post-exit attachment immediately so the user-visible turn
+    # also carries the "approved" message in the transcript.
+    attachments = build_plan_attachments_for_state(runtime.state, plan_store)
+    return CommandResult(
+        renderable=renderer.render_text(
+            f"Plan approved. Exited plan mode (now in {runtime.state.permission_mode.value})."
+        ),
+        attachments=attachments,
+    )
+
+
+def _plan_reject(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
+    if not runtime.state.is_plan_mode():
+        return CommandResult(
+            renderable=renderer.render_error(
+                "Cannot reject a plan: runtime is not in plan mode."
+            )
+        )
+    exit_plan_mode(runtime.state, plan_store, approved=False)
+    attachments = build_plan_attachments_for_state(runtime.state, plan_store)
+    return CommandResult(
+        renderable=renderer.render_text(
+            "Plan rejected. The agent remains in plan mode and can update the plan."
+        ),
+        attachments=attachments,
     )
 
 

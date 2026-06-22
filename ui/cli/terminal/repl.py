@@ -39,6 +39,7 @@ from rich.console import Console
 from rich.text import Text
 
 from core.runtime_state import RuntimeState
+from services.plans import build_plan_attachments_for_state
 from ui.cli import renderer
 from ui.cli.commands import dispatch_command
 from ui.cli.resume import list_session_summaries, restore_runtime_from_target
@@ -76,6 +77,7 @@ class InlineRepl:
         self._prompt = PromptSession(runtime, self._queue)
         self._agent_running = False
         self._cancel_requested = False
+        self._pending_attachments: list[dict[str, object]] = []
         self._permission_prompter = permission_prompter or TtyPermissionPrompter(
             self._interaction_host
         )
@@ -194,10 +196,23 @@ class InlineRepl:
                 brightness=self._brightness,
                 workspace=self._runtime.workspace if self._runtime else None,
             )
+        if result.attachments:
+            self._pending_attachments.extend(result.attachments)
         if result.should_exit:
             self._shutdown()
             self._runtime = None
             return
+        if result.queued_prompt:
+            if not self._runtime.configured:
+                self._console.print(
+                    Text(
+                        "尚未配置供应商。请先使用 /connect 配置 API 供应商。",
+                        style="onecode.warning",
+                    )
+                )
+                return
+            await self._run_turn(result.queued_prompt)
+            await self._drain_queue()
 
     async def _run_resume_selector(self) -> CommandResult:
         summaries = list_session_summaries(self._runtime.workspace)
@@ -384,6 +399,17 @@ class InlineRepl:
                     is_main_thread=True,
                 )
             )
+        command_attachments = tuple(self._pending_attachments)
+        self._pending_attachments.clear()
+        plan_attachments = ()
+        if self._runtime.plan_store is not None:
+            plan_attachments = tuple(
+                build_plan_attachments_for_state(
+                    self._runtime.state,
+                    self._runtime.plan_store,
+                )
+            )
+        attachments = (*attachments, *command_attachments, *plan_attachments)
         try:
             async for event in self._runtime.loop.stream(line, attachments=attachments):
                 yield event

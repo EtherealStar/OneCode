@@ -39,6 +39,8 @@ from services.permissions import (
     PermissionPrompter,
     SessionPermissionStore,
 )
+from services.plans.store import PlanStore
+from services.questions.prompter import UserQuestionPrompter
 from services.skills import SkillCatalogProvider
 from services.subagents.runner import SubagentRunner
 from services.tasks import TaskStore
@@ -97,6 +99,10 @@ class CliRuntime:
     base_descriptors: tuple[ToolDescriptor, ...] = ()
     subagent_runner_ref: dict[str, SubagentRunner] | None = None
     long_term_memory_extractor_ref: dict[str, LongTermMemoryExtractionService] | None = None
+    # Plan-mode wiring: the plan store owns the .onecode/plans/ files and the
+    # user-question prompter is invoked by the ask_user_question tool.
+    plan_store: PlanStore | None = None
+    user_question_prompter: UserQuestionPrompter | None = None
 
     def with_session(
         self,
@@ -223,6 +229,8 @@ class CliRuntime:
             session_memory_extractor=session_memory_extractor,
             session_memory_updater=session_memory_updater,
             attachment_collector=attachment_collector,
+            plan_store=self.plan_store,
+            user_question_prompter=self.user_question_prompter,
         )
 
     def with_model_config(self) -> "CliRuntime":
@@ -376,6 +384,8 @@ class CliRuntime:
             session_memory_updater=session_memory_updater,
             long_term_memory_extractor=long_term_memory_extractor,
             memory_selector=memory_selector,
+            plan_store=self.plan_store,
+            user_question_prompter=self.user_question_prompter,
             configured=True,
         )
 
@@ -393,3 +403,11 @@ class CommandResult:
     # UI replay request (e.g. session resume); it is not a source of truth
     # for the model context, which lives in the runtime's MessageStore.
     replay_messages: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    # Durable plan-mode attachments to inject into the next model turn. The
+    # REPL passes these to ``AgentLoop.stream(prompt, attachments=...)`` so
+    # plan-mode transitions become part of the transcript.
+    attachments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    # Optional prompt the command wants the REPL to enqueue after the user
+    # finishes the current turn. Used by ``/plan <description>`` so the
+    # description becomes the next user message in plan mode.
+    queued_prompt: str | None = None
