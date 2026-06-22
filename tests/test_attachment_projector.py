@@ -33,7 +33,12 @@ def test_projects_file_attachment_to_provider_safe_user_context() -> None:
 
 def test_projector_drops_raw_attachment_role() -> None:
     attachment = AttachmentMessage(
-        attachment={"type": "plan_mode", "content": "reserved"},
+        attachment={
+            "type": "plan_mode",
+            "variant": "intro",
+            "plan_path": "/tmp/plan.md",
+            "content": "",
+        },
         attachment_id="att_plan",
         source="plan_mode",
     ).to_message()
@@ -42,6 +47,44 @@ def test_projector_drops_raw_attachment_role() -> None:
 
     assert projected
     assert all(message.get("role") != "attachment" for message in projected)
+    user = projected[0]
+    assert user["role"] == "user"
+    assert user["metadata"]["attachment_type"] == "plan_mode"
+    assert user["metadata"]["variant"] == "intro"
+    assert "<plan_mode>" in user["content"]
+    assert "/tmp/plan.md" in user["content"]
+    assert "ask_user_question" in user["content"]
+    assert "exit_plan_mode" in user["content"]
+
+
+def test_projector_renders_reentry_and_exit_variants() -> None:
+    state = RuntimeState()
+    state.plan.plan_slug = "demo"
+    intro = AttachmentMessage(
+        attachment={
+            "type": "plan_mode",
+            "variant": "reentry",
+            "plan_path": "/tmp/demo.md",
+            "plan_content": "# Demo plan\n- step 1",
+        },
+        attachment_id="att_re",
+        source="plan_mode",
+    ).to_message()
+    exit_ = AttachmentMessage(
+        attachment={
+            "type": "plan_mode",
+            "variant": "exit",
+            "plan_path": "/tmp/demo.md",
+            "plan_content": "# Demo plan\n- step 1",
+        },
+        attachment_id="att_exit",
+        source="plan_mode",
+    ).to_message()
+    projected = AttachmentProjector().project((intro, exit_), state)
+    contents = [message["content"] for message in projected]
+    assert any("<plan_mode_reentry>" in content for content in contents)
+    assert any("<plan_mode_exit>" in content for content in contents)
+    assert any("user approved" in content.lower() for content in contents)
 
 
 def test_projects_background_task_notification_to_xml() -> None:

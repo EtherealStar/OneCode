@@ -27,6 +27,10 @@ INPUT_SCHEMA: dict[str, Any] = {
         "prompt": {"type": "string"},
         "subagent_type": {"type": "string"},
         "run_in_background": {"type": "boolean"},
+        "focus_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
     },
     "required": ["prompt"],
     "additionalProperties": False,
@@ -66,7 +70,7 @@ def _handler_for(
                 subagent_type=tool_input.get("subagent_type"),
                 parent_session_id=runtime.state.session_id,
                 parent_tool_call_id=runtime.tool_call_id,
-                metadata=_child_metadata(runtime),
+                metadata=_child_metadata(runtime, tool_input),
             )
         )
         payload = {
@@ -121,7 +125,7 @@ def _start_background_agent(
         )
     prompt = str(tool_input["prompt"])
     subagent_type = tool_input.get("subagent_type")
-    metadata = _child_metadata(runtime)
+    metadata = _child_metadata(runtime, tool_input)
 
     async def run(task_id: str) -> dict[str, Any]:
         request = SubagentRequest(
@@ -187,12 +191,20 @@ def _start_background_agent(
     )
 
 
-def _child_metadata(runtime: ToolRuntime) -> dict[str, Any]:
+def _child_metadata(runtime: ToolRuntime, tool_input: dict[str, Any]) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     task_list_id = runtime.state.metadata.get("task_list_id")
     if isinstance(task_list_id, str) and task_list_id:
         metadata["task_list_id"] = task_list_id
         metadata["parent_task_list_id"] = task_list_id
+    focus_paths = tool_input.get("focus_paths")
+    if isinstance(focus_paths, list):
+        cleaned: list[str] = []
+        for entry in focus_paths:
+            if isinstance(entry, str) and entry.strip():
+                cleaned.append(entry)
+        if cleaned:
+            metadata["focus_paths"] = tuple(cleaned)
     return metadata
 
 
@@ -209,6 +221,15 @@ def _validate(tool_input: dict[str, Any], runtime: ToolRuntime) -> ValidationRes
     run_in_background = tool_input.get("run_in_background")
     if run_in_background is not None and not isinstance(run_in_background, bool):
         return ValidationResult.failure("run_in_background must be a boolean.")
+    focus_paths = tool_input.get("focus_paths")
+    if focus_paths is not None:
+        if not isinstance(focus_paths, list):
+            return ValidationResult.failure("focus_paths must be a list of strings.")
+        for entry in focus_paths:
+            if not isinstance(entry, str) or not entry.strip():
+                return ValidationResult.failure(
+                    "focus_paths entries must be non-empty strings."
+                )
     return ValidationResult.success()
 
 
@@ -216,17 +237,22 @@ def _classify_input(
     tool_input: dict[str, Any],
     runtime: ToolRuntime,
 ) -> ToolCallClassification:
+    # ``subagent_type="explore"`` is the only allowed agent flavor in plan
+    # mode; we mark the call as read_only so the plan-mode permission policy
+    # lets it through. The child runtime itself is forced read-only by the
+    # subagent runner; this classifier only describes the parent call.
+    targets: tuple[ToolTarget, ...] = (
+        ToolTarget(
+            kind="session_state",
+            operation="mutate_state",
+            value="subagent",
+        ),
+    )
     return ToolCallClassification(
         read_only=True,
         modifies_filesystem=False,
         concurrency_safe=False,
-        targets=(
-            ToolTarget(
-                kind="session_state",
-                operation="mutate_state",
-                value="subagent",
-            ),
-        ),
+        targets=targets,
         permission_subject="agent:subagent",
     )
 

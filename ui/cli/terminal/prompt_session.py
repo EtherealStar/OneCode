@@ -229,7 +229,7 @@ class PromptSession:
             multiline=False,
             on_text_changed=self._on_buffer_text_changed,
         )
-        hint = _PromptHint(self._bottom_hint)
+        hint = _PromptHint(self._current_bottom_hint())
         self._active_hint = hint
         buffer_control = BufferControl(
             buffer=buffer,
@@ -394,6 +394,14 @@ class PromptSession:
 
     def _reset_pending_exit(self) -> None:
         self._pending_exit_at = None
+
+    def _current_bottom_hint(self) -> str:
+        if self._bottom_hint:
+            return self._bottom_hint
+        state = getattr(self._runtime, "state", None)
+        if state is not None and state.is_plan_mode():
+            return "plan mode on"
+        return ""
 
     async def _expire_exit_hint_after(
         self,

@@ -7,7 +7,7 @@ import fnmatch
 import re
 from typing import Any
 
-from core.runtime_state import RuntimeState
+from core.runtime_state import PermissionMode, RuntimeState
 from infrastructure.filesystem.paths import resolve_path
 from services.guard import GuardPolicy
 from services.memory.paths import is_auto_memory_markdown_path, is_auto_memory_path
@@ -35,6 +35,27 @@ _RESERVED_DEVICE_NAMES = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+
+# Plan mode allows a small, explicit tool whitelist plus a hard requirement
+# that any filesystem write targets the active plan file. These names are
+# referenced by both ``evaluate`` (execution entry) and ``is_tool_visible``
+# (model-visible tool set). ``bash`` is gated by the classification's
+# ``read_only`` flag at the executor layer: the whitelist membership only
+# admits the tool into plan mode, but a non-read-only classification denies
+# the call.
+PLAN_MODE_ALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "grep",
+        "glob",
+        "bash",
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "agent",
+    }
+)
+PLAN_MODE_WRITE_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file"})
 
 
 class PermissionPolicy:
@@ -81,6 +102,20 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
+        # Plan mode is a hard, code-enforced boundary. The decision happens
+        # before read_only_agent, before tool_policy and before any session
+        # grant, so plan-mode denies cannot be overridden by hooks, allow
+        # grants, or user prompts. The same policy is enforced again by
+        # ``is_tool_visible`` so the model never sees forbidden tools.
+        if state.permission_mode == PermissionMode.PLAN:
+            plan_decision = self._plan_mode_decision(
+                descriptor=descriptor,
+                classification=classification,
+                guard_policies=guard_policies,
+                state=state,
+            )
+            if plan_decision is not None:
+                return plan_decision
         if state.metadata.get("read_only_agent") is True and (
             not classification.read_only or classification.modifies_filesystem
         ):
@@ -225,6 +260,146 @@ class PermissionPolicy:
             targets=classification.targets,
             guard_policies=guard_policies,
         )
+
+    def _plan_mode_decision(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+        state: RuntimeState,
+    ) -> PermissionDecision | None:
+        """Hard-cap plan mode at a small whitelist and the active plan file.
+
+        Returns ``None`` when the call is allowed in plan mode; otherwise
+        returns a deny decision. ``bash`` is handled by checking the existing
+        read-only classification rather than naming the tool, so the same rule
+        applies to future shell-shaped tools.
+        """
+
+        name = descriptor.name
+        # Non-whitelisted, non-write tools are denied outright.
+        if name not in PLAN_MODE_ALLOWED_TOOLS and name not in PLAN_MODE_WRITE_TOOLS:
+            return PermissionDecision(
+                action="deny",
+                reason=(
+                    f"Tool {name!r} is not allowed in plan mode. Allowed: "
+                    "read_file, grep, glob, ask_user_question, "
+                    "enter_plan_mode, exit_plan_mode, agent (explore), and "
+                    "write_file/edit_file targeting the plan file."
+                ),
+                source="plan_mode",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+
+        # bash is in the whitelist implicitly only when it is read-only.
+        # The tool itself is registered as ``bash`` but plan mode restricts
+        # its behaviour to read-only commands at the executor layer.
+        if name == "bash" and not classification.read_only:
+            return PermissionDecision(
+                action="deny",
+                reason="bash in plan mode may only run read-only commands.",
+                source="plan_mode",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+
+        # The agent tool is only allowed in plan mode when it requests an
+        # explore subagent that itself is read-only. The classifier already
+        # marks the call as read-only; the deeper contract is enforced by the
+        # subagent runner forcing ``read_only_agent`` on the child runtime.
+        if name == "agent" and not classification.read_only:
+            return PermissionDecision(
+                action="deny",
+                reason="agent in plan mode may only delegate to read-only subagents.",
+                source="plan_mode",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+
+        # Write tools in plan mode: only the active plan file is allowed.
+        if name in PLAN_MODE_WRITE_TOOLS:
+            return self._plan_mode_write_decision(
+                descriptor=descriptor,
+                classification=classification,
+                guard_policies=guard_policies,
+                state=state,
+            )
+
+        return None
+
+    def _plan_mode_write_decision(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        classification: ToolCallClassification,
+        guard_policies: tuple[GuardPolicy, ...],
+        state: RuntimeState,
+    ) -> PermissionDecision:
+        """Restrict write_file/edit_file to the active plan file under plan mode."""
+
+        plan_path = state.plan.plan_slug
+        if not plan_path:
+            return PermissionDecision(
+                action="deny",
+                reason=(
+                    "Cannot write in plan mode without an active plan file. "
+                    "Call enter_plan_mode first or wait for the plan file to "
+                    "be allocated."
+                ),
+                source="plan_mode",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        expected = (state.plan.plan_slug or "").strip()
+        if not expected:
+            return PermissionDecision(
+                action="deny",
+                reason="Plan slug is empty; refusing plan-mode write.",
+                source="plan_mode",
+                targets=classification.targets,
+                guard_policies=guard_policies,
+            )
+        # The plan file lives in ``.onecode/plans/<slug>.md``. We compare
+        # the normalized path of every write target against that expected
+        # path; anything else is denied.
+        targets = classification.targets
+        if not targets:
+            return PermissionDecision(
+                action="deny",
+                reason=(
+                    "Plan-mode write tools must target exactly one file path."
+                ),
+                source="plan_mode",
+                targets=targets,
+                guard_policies=guard_policies,
+            )
+        workspace = _workspace_from_plan_state(state)
+        expected_path = (
+            workspace / ".onecode" / "plans" / f"{expected}.md"
+        ).resolve() if workspace is not None else None
+        for target in targets:
+            if target.kind != "file" or target.operation != "write":
+                continue
+            raw = target.normalized_value or target.value
+            try:
+                normalized = resolve_path(raw)
+            except Exception:
+                normalized = Path(raw)
+            if expected_path is None or normalized != expected_path:
+                return PermissionDecision(
+                    action="deny",
+                    reason=(
+                        f"In plan mode {descriptor.name!r} may only modify "
+                        "the active plan file. Use ask_user_question or "
+                        "exit_plan_mode to leave plan mode first."
+                    ),
+                    source="plan_mode",
+                    targets=targets,
+                    guard_policies=guard_policies,
+                )
+        return None
 
     def _memory_extraction_decision(
         self,
@@ -457,10 +632,19 @@ class PermissionPolicy:
         )
 
     def is_tool_visible(self, descriptor: ToolDescriptor, state: RuntimeState) -> bool:
-        return not (
-            self.is_tool_denied(descriptor.name, state)
-            or self.is_tool_disabled(descriptor.name, state)
-        )
+        if not (
+            not self.is_tool_denied(descriptor.name, state)
+            and not self.is_tool_disabled(descriptor.name, state)
+        ):
+            return False
+        # Plan mode trims the visible tool set. Implementation-only tools
+        # are hidden so the model doesn't waste tokens asking for them. The
+        # write tools remain visible on purpose: their deny logic at the
+        # execution entry point enforces the "only plan file" rule and the
+        # prompt section explains the restriction.
+        if state.permission_mode == PermissionMode.PLAN:
+            return descriptor.name in PLAN_MODE_ALLOWED_TOOLS or descriptor.name in PLAN_MODE_WRITE_TOOLS
+        return True
 
     def _denied_skill_name(
         self,
@@ -695,6 +879,25 @@ def _workspace_from_memory_dir(memory_dir: Path) -> Path:
     if resolved.name.lower() == "memory" and resolved.parent.name.lower() == ".onecode":
         return resolved.parent.parent
     return resolved.parent
+
+
+def _workspace_from_plan_state(state: RuntimeState) -> Path | None:
+    """Recover the workspace root from plan-state metadata, if present.
+
+    Plan mode does not store the workspace on the state object, so we look at
+    the conventional ``metadata["workspace"]`` key written by ``CliRuntime``.
+    The helper is intentionally lenient: a missing workspace just means the
+    plan-mode write decision will skip the path comparison, which the caller
+    treats as deny via the empty ``plan_slug`` check above.
+    """
+
+    workspace = state.metadata.get("workspace")
+    if not isinstance(workspace, str) or not workspace:
+        return None
+    try:
+        return resolve_path(Path(workspace))
+    except Exception:
+        return None
 
 
 def _is_suspicious_windows_path(original_path: str, normalized_path: Path) -> bool:

@@ -45,8 +45,10 @@ def _base_palette() -> dict[str, str]:
 
     return {
         "onecode.title": "bold cyan",
+        "onecode.accent": "cyan",
         "onecode.mascot": "bold yellow",
         "onecode.subtle": "dim",
+        "onecode.dim": "dim",
         "onecode.command": "bold magenta",
         "onecode.path": "cyan",
         "onecode.success": "green",

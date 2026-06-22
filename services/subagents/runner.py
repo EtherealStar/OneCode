@@ -9,7 +9,7 @@ from typing import Any
 
 from core.context_engine import ContextEngine, StaticPromptAssembler
 from core.loop import AgentLoop
-from core.runtime_state import RuntimeState
+from core.runtime_state import PermissionMode, RuntimeState
 from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
 from services.guard import SandboxGuard
@@ -75,9 +75,32 @@ class SubagentRunner:
             max_turns=_request_max_turns(request) or definition.max_turns or 20
         )
         _copy_shared_runtime_metadata(request, child_state)
+        # The agent tool must never recurse into another agent (fork, explore,
+        # memory extraction, etc). Plan mode hides the agent tool from regular
+        # children too: only the top-level parent can spin up explore agents.
         child_state.metadata["hidden_tools"] = {"agent"}
         if definition.read_only or is_compact:
             child_state.metadata["read_only_agent"] = True
+        is_explore = _is_explore_request(request)
+        if is_explore:
+            # ``explore`` is the only agent flavor the plan-mode policy allows.
+            # Force the child into read-only mode and record focus paths so the
+            # parent's executor can do conflict-aware concurrency.
+            child_state.metadata["read_only_agent"] = True
+            child_state.metadata["is_explore_agent"] = True
+            focus_paths = request.metadata.get("focus_paths")
+            if isinstance(focus_paths, tuple) and focus_paths:
+                child_state.metadata["focus_paths"] = focus_paths
+        # Plan mode is sticky: if the parent is in plan mode, the child must
+        # also stay in plan mode and read-only, regardless of the agent type.
+        # ``_parent_plan_mode`` is set by ``_parent_state`` via the loop, but
+        # we conservatively check the request metadata here.
+        if request.metadata.get("parent_plan_mode") is True:
+            child_state.permission_mode = PermissionMode.PLAN
+            child_state.metadata["read_only_agent"] = True
+            child_state.metadata["hidden_tools"] = set(
+                child_state.metadata.get("hidden_tools", set()) | {"agent"}
+            )
         if is_fork:
             child_state.metadata["is_fork_child"] = True
         if is_compact:
@@ -438,6 +461,12 @@ def _child_descriptors(
 
 def _is_compact_request(request: SubagentRequest) -> bool:
     return request.metadata.get("query_source") == "compact"
+
+
+def _is_explore_request(request: SubagentRequest) -> bool:
+    return request.subagent_type == "explore" or request.metadata.get(
+        "purpose"
+    ) == "plan_explore"
 
 
 def _is_session_memory_extraction_request(request: SubagentRequest) -> bool:

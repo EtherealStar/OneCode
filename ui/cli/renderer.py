@@ -58,6 +58,12 @@ def render_error(message: str) -> Text:
     return Text(f"{SYMBOLS.error} {message}", style="onecode.error")
 
 
+def render_text(message: str) -> Text:
+    """Render a plain string inside a Text widget for consistent theming."""
+
+    return Text(message, style="onecode.dim")
+
+
 def render_tools(descriptors: Iterable[Any]) -> Group:
     table = Table(box=None, show_header=True, header_style="onecode.subtle")
     table.add_column("tool")
