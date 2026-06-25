@@ -1,5 +1,7 @@
 # OneCode
 
+中文 | [English](README_en.md)
+
 ![Python Version](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white) ![License](https://img.shields.io/badge/License-MIT-green.svg)
 <p align="center">
   <img src="docs/assets/logo.svg" alt="Logo" width="200" />
