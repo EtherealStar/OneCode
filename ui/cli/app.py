@@ -1,8 +1,8 @@
-"""OneCode CLI entry point.
+"""OneCode 命令行入口。
 
-Runtime assembly moved to :mod:`application.runtime`. This module keeps the
-TTY/batch entrypoint routing and the terminal-facing MCP trust prompt. The old
-inline REPL remains available until M5 switches the default entrypoint.
+运行时装配已移至 application.runtime 模块。本模块保留
+TTY/batch 入口路由以及面向终端的 MCP 信任提示。旧的内联 REPL
+在 M5 切换默认入口前仍然可用。
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _prompt_for_project_mcp_trust(
     *,
     trust_prompt: Callable[[McpTrustPromptRequest], TrustChoice] | None = None,
 ) -> None:
-    """Terminal-facing trust loop kept for CLI compatibility and tests."""
+    """面向终端的信任确认循环，保留用于 CLI 兼容性与测试。"""
 
     from services.mcp import fingerprint_mcp_server
 
@@ -126,8 +126,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    # The TTY path is the full-screen Textual TUI. The App builds the runtime
-    # (and asks for MCP trust) after mounting so startup never blocks input.
+    # TTY 路径采用全屏 Textual TUI。App 在挂载后构建运行时
+    # （并询问 MCP 信任），因此启动阶段绝不阻塞输入。
     from ui.tui.app import run_tui
 
     try:

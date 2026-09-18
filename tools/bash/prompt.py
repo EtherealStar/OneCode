@@ -1,3 +1,4 @@
+"""bash 工具的提示词文本。"""
 PROMPT = """Purpose:
 Execute a Git Bash command in the current workspace.
 

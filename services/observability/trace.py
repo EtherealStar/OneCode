@@ -1,4 +1,4 @@
-"""Trace recorder and span helpers."""
+"""追踪记录器与 span 辅助工具。"""
 
 from __future__ import annotations
 
@@ -221,11 +221,8 @@ class TraceSpan:
             try:
                 _CURRENT_SPAN_ID.reset(self._token)
             except ValueError:
-                # Async generators can be closed from a different
-                # context than the one that entered the span, for
-                # example when the CLI cancels a streaming turn. Trace
-                # cleanup must not turn cancellation into a runtime
-                # failure.
+                # 异步生成器可能会在与进入 span 时不同的上下文中被关闭，
+                # 例如 CLI 取消流式轮次时。追踪清理不得将取消操作变为运行时错误。
                 contextvars.copy_context().run(_CURRENT_SPAN_ID.set, self.parent_span_id)
             self._token = None
         return False

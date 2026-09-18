@@ -1,4 +1,4 @@
-"""Collect attachments for a user turn."""
+"""收集用户轮次的附件。"""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class AttachmentFileReader:
         limit: int | None,
         state: RuntimeState | None = None,
     ) -> ReadResult:
-        """Read UTF-8 text only after guard and permission policy agree."""
+        """仅在 guard 和权限策略均同意后读取 UTF-8 文本。"""
 
         state = state or RuntimeState()
         guard_policy = self.guard.check_path(path, operation="read", kind="file")
@@ -127,7 +127,7 @@ class AttachmentFileReader:
         *,
         state: RuntimeState,
     ) -> DirectoryResult:
-        """List a directory through the same read/list permission path."""
+        """通过相同的读取/列出权限路径列出目录。"""
 
         guard_policy = self.guard.check_path(path, operation="list", kind="directory")
         decision = await self._permission_decision(

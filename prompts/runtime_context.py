@@ -1,4 +1,4 @@
-"""Runtime facts available to system prompt assembly."""
+"""系统提示词组装可用的运行时事实。"""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PromptRuntimeContext:
-    """Prompt-visible runtime facts.
+    """提示词可见的运行时事实。
 
-    This intentionally excludes session id, provider configuration, CLI mode,
-    API keys, transcript paths, and other program-internal details.
+    此处刻意排除了 session id、provider 配置、CLI 模式、
+    API 密钥、transcript 路径以及其他程序内部细节。
     """
 
     state: RuntimeState

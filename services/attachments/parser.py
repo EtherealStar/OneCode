@@ -1,4 +1,4 @@
-"""Parser for user-authored @file mentions."""
+"""用户编写的 @file 提及的解析器。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class AtMention:
 
 
 def extract_at_mentions(text: str) -> tuple[AtMention, ...]:
-    """Return ordered, de-duplicated @path mentions without touching disk."""
+    """在不访问磁盘的情况下，返回有序且去重的 @path 提及列表。"""
 
     mentions: list[AtMention] = []
     seen: set[str] = set()
@@ -40,7 +40,7 @@ def extract_at_mentions(text: str) -> tuple[AtMention, ...]:
 
 
 def parse_line_fragment(raw: str) -> tuple[int | None, int | None]:
-    """Parse #L10 or #L10-20; non-line fragments are intentionally ignored."""
+    """解析 #L10 或 #L10-20；非行号片段特意被忽略。"""
 
     match = LINE_FRAGMENT_RE.match(raw)
     if match is None:

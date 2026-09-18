@@ -1,4 +1,4 @@
-"""List durable tasks."""
+"""列出持久化任务。"""
 
 from __future__ import annotations
 

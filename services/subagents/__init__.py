@@ -1,4 +1,4 @@
-"""Built-in subagent runtime services."""
+"""内置子 agent 运行时服务。"""
 
 from services.context.current_model_context import CurrentModelContext
 from services.subagents.definitions import BUILT_IN_AGENTS, get_agent_definition

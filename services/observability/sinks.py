@@ -1,4 +1,4 @@
-"""Trace sinks."""
+"""追踪 Sink 接收器。"""
 
 from __future__ import annotations
 

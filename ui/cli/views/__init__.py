@@ -1,2 +1,2 @@
-"""Rich renderable views for the CLI."""
+"""CLI 的 Rich 渲染视图。"""
 

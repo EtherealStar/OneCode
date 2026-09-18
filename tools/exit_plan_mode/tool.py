@@ -1,13 +1,11 @@
-"""Tool descriptor for ``exit_plan_mode``.
+"""exit_plan_mode 的工具描述符。
 
-The handler does NOT itself prompt the user for approval: that lives in the CLI
-``/plan`` exit flow so the user always sees a dedicated plan approval surface
-that they cannot accidentally bypass. The tool's job is to:
+handler 本身并不直接向用户提示请求审批：该逻辑位于 CLI 的 /plan 退出流程中，
+以确保用户始终看到专用且无法意外绕过的计划审批界面。该工具的职责是：
 
-1. Refuse to run when the runtime is not in plan mode.
-2. Read the plan file and report it back to the model.
-3. Wait for ``approved=True/False`` (driven by the CLI) and apply the
-   state transition.
+1. 当运行时不处于计划模式时拒绝运行。
+2. 读取计划文件并向模型回报。
+3. 等待 approved=True/False（由 CLI 驱动）并应用状态迁移。
 """
 
 from __future__ import annotations
@@ -82,11 +80,9 @@ def _handle_for(plan_store: "PlanStore"):
         plan_content = plan_file.read()
         summary = str(tool_input.get("summary", "")).strip()
 
-        # We do NOT call ``exit_plan_mode(approved=...)`` here. The CLI flow
-        # intercepts exit_plan_mode in its permission prompter and re-invokes
-        # the tool with the user's decision. If the model calls the tool
-        # directly (no CLI prompter), we report "awaiting approval" and let
-        # the runtime stay in plan mode.
+        # 此处不调用 exit_plan_mode(approved=...)。CLI 流程会在其权限提示器中
+        # 拦截 exit_plan_mode 并携带用户的决策重新调用该工具。如果模型直接调用
+        # 该工具（无 CLI 提示器），则报告 "awaiting_approval" 并让运行时保持在计划模式。
         payload = {
             "status": "awaiting_approval",
             "plan_path": str(plan_file.path),

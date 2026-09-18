@@ -1,1 +1,1 @@
-"""Configuration loading helpers."""
+"""配置加载辅助函数。"""

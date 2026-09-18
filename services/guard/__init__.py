@@ -1,4 +1,4 @@
-"""Path sandbox guard service."""
+"""路径沙箱防护服务。"""
 
 from services.guard.boundary import (
     Denied,

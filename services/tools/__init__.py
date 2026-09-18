@@ -1,1 +1,1 @@
-"""Tool runtime protocols and shared tool types."""
+"""工具运行时协议与共享工具类型。"""

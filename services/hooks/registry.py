@@ -1,4 +1,4 @@
-"""Ordered hook callback registry."""
+"""有序钩子回调注册表。"""
 
 from __future__ import annotations
 

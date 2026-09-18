@@ -1,4 +1,4 @@
-"""Bash semantic checks and exit-code interpretation."""
+"""Bash 语义检查与退出码解释。"""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class ExitInterpretation:
 
 
 def check_semantics(analysis: BashAnalysis) -> SemanticResult:
-    """Reject argv shapes where the executable cannot be trusted."""
+    """拒绝可执行文件不可信的 argv 形式。"""
 
     for command in analysis.commands:
         stripped = strip_safe_wrappers(command.argv)
@@ -103,7 +103,7 @@ def check_semantics(analysis: BashAnalysis) -> SemanticResult:
 
 
 def strip_safe_wrappers(argv: tuple[str, ...]) -> tuple[str, ...] | WrapperError:
-    """Return the wrapped argv while failing closed on ambiguous wrapper flags."""
+    """返回解包装后的 argv，遇到有歧义的包装器标志时 fail-closed。"""
 
     args = tuple(argv)
     while args:

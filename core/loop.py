@@ -1,31 +1,24 @@
-"""Thin agent lifecycle loop.
+"""轻量 Agent 生命周期循环。
 
-The loop's only job with respect to streaming is to forward provider
-events to the caller (and ultimately the CLI) **as they happen**. We
-deliberately do **not** collect the full attempt into a buffer before
-replaying it: that would defeat real-time streaming.
+在流式输出方面，主循环的唯一职责是在 provider 事件发生时实时转发给
+调用方（并最终到达 CLI）。我们特意不在回放前将整次尝试收集到缓冲区中，
+因为那样会破坏实时流式体验。
 
-State the loop keeps while a single model attempt is in flight:
+单次模型尝试进行期间，循环维护的状态包括：
 
-- ``completed_message`` — the final ``message_completed`` event so the
-  loop can persist the assistant message, derive tool calls, and run
-  output-interruption recovery once the attempt finishes.
-- ``seen_tool_calls`` — tool calls that were completed during the
-  attempt, so we still have them after the attempt ends (we don't
-  forward their JSON to the CLI inline; tool calls are only "ready"
-  when JSON parses, and we still want to gate execution on that).
+- completed_message：最终的 message_completed 事件，以便循环在尝试结束时
+  持久化 assistant 消息、推导工具调用，并执行输出中断恢复。
+- seen_tool_calls：在尝试期间完成解析的工具调用，以便尝试结束后仍可获取
+  （我们不会将原始 JSON 实时行内转发给 CLI；只有在 JSON 解析成功后工具调用才
+  进入 ready 状态，以便对其执行进行门禁控制）。
 
-Everything else is forwarded to the caller live. ``content_delta``
-becomes ``assistant_delta`` *immediately*; ``tool_call_completed``
-becomes ``tool_call_ready`` *immediately*; ``tool_call_delta`` is
-forwarded as ``tool_call_delta`` so the CLI can show streaming tool
-status without pretending the tool is runnable yet.
+其余所有事件均实时转发给调用方：content_delta 立即转为 assistant_delta；
+tool_call_completed 立即转为 tool_call_ready；tool_call_delta 按原样转发，
+以便 CLI 能够展示流式工具输入状态，同时不提前将其视为可执行状态。
 
-Recovery semantics (retry, max-output, reactive compact) are now
-visible to the caller instead of being hidden by a buffer. The
-``on_retry`` callback in :meth:`_run_loop_async` records a transition
-event so the UI can show ``provider stream interrupted; retrying``
-rather than silently rewinding text the user has already seen.
+恢复语义（重试、最大输出限制升级、反应式压缩）直接对调用方可见，而非隐藏在
+缓冲区后。_run_loop_async 中的 on_retry 回调会记录流转事件，以便 UI 能够显示
+provider 流中断并重试，而不是静默回退用户已经看到的文本。
 """
 
 from __future__ import annotations
@@ -132,11 +125,10 @@ class AgentLoop:
         self._run_facts: RunFactsAccumulator | None = None
 
     def snapshot_run_facts(self, *, status: str | None = None) -> InterruptedRunFacts | None:
-        """Return a frozen copy of the current foreground run facts.
+        """返回当前前台运行事实的不可变快照。
 
-        The loop keeps these facts live until a run completes normally, so an
-        interrupt can be finalized from what really happened even when the
-        result had not yet been appended to the message store.
+        主循环会在运行正常完成前持续维护这些事实，因此即使结果尚未追加到
+        消息存储中，中断时也能根据实际发生的情况完成状态终态化。
         """
 
         if self._run_facts is None:
@@ -166,9 +158,8 @@ class AgentLoop:
             self._begin_run_facts()
             if attachments is not None:
                 self.message_store.append_attachments(attachments)
-            # Carry the persisted identity of the just-appended user message so
-            # the application layer can associate the live draft with the
-            # stable record instead of inferring it from text or position.
+            # 携带刚追加的用户消息的持久化标识，以便应用层将实时草稿与
+            # 稳定记录关联起来，而无需根据文本或位置进行推断。
             yield AgentEvent(
                 type="interaction_started",
                 metadata={"user_message_uuid": user_message_uuid},
@@ -181,7 +172,7 @@ class AgentLoop:
                 raise
 
     async def continue_stream(self) -> AsyncIterator[AgentEvent]:
-        """Continue from messages already seeded into the message store."""
+        """从已经预置到消息存储中的消息继续执行。"""
 
         with self.trace_recorder.span(
             "interaction",
@@ -212,8 +203,8 @@ class AgentLoop:
         while True:
             self.state.turn_count += 1
             # 为当前 turn 内即将开始的模型调用准备稳定归属 ID。同一
-            # turn 可能因为工具调用而触发多次模型调用,每次都要分配
-            # 新的 ``model_turn_index`` 和 ``assistant_call_id``,让
+            # turn 可能因为工具调用而触发多次模型调用，每次都要分配
+            # 新的 model_turn_index 和 assistant_call_id，让
             # checkpoint 渲染能区分不同 assistant message。
             model_turn_index = self._next_model_turn_index()
             assistant_call_id = mint_assistant_call_id(
@@ -252,7 +243,7 @@ class AgentLoop:
                 self._complete_run_facts()
                 return
 
-            # 主循环保持薄：上下文、prompt 和工具 schema 都交给
+            # 主循环保持轻量：上下文、提示词和工具 schema 都交给
             # ContextEngine 每轮重建，以反映最新运行时状态。
             with self.trace_recorder.span(
                 "context_prepare",
@@ -271,13 +262,11 @@ class AgentLoop:
 
             model_attributes = self._model_attributes()
             model_attributes["turn_count"] = self.state.turn_count
-            # Local state used to drive post-attempt logic. The streaming
-            # model events themselves are NOT collected here — we forward
-            # them to the caller live.
+            # 用于驱动尝试后逻辑的局部状态。流式模型事件本身不会收集在此处，
+            # 而是实时转发给调用方。
             completed_message: ModelStreamEvent | None = None
             pending_retry_events: list[AgentEvent] = []
-            # We still keep track of tool calls the provider finished so
-            # the executor can run them after the attempt completes.
+            # 跟踪 provider 已完成的工具调用，以便在尝试完成后由执行器运行。
             completed_tool_calls: tuple = ()
             streamed_any_text = False
             streamed_any_tool_call = False
@@ -313,8 +302,8 @@ class AgentLoop:
                         lambda: self.model_client.stream(snapshot),
                         on_retry=on_retry,
                     ):
-                        # Forward every event live. We do not append to a
-                        # buffer; the caller (CLI) decides how to render.
+                        # 实时转发每个事件。我们不追加到缓冲区；
+                        # 由调用方（CLI）决定如何渲染。
                         if model_event.type == "content_delta":
                             streamed_any_text = True
                             if self._run_facts is not None:
@@ -354,8 +343,7 @@ class AgentLoop:
                                     "tool_call": model_event.tool_call,
                                 },
                             )
-                            # Track the latest tool calls so we can
-                            # execute them after the attempt closes.
+                            # 跟踪最新的工具调用，以便在尝试结束后执行。
                             if (
                                 completed_message is not None
                                 and "tool_calls" in model_event.metadata
@@ -391,9 +379,7 @@ class AgentLoop:
                                     }
                                 )
                             model_span.end(end_attributes)
-                            # Now that the attempt is complete, surface
-                            # any retry transitions that the runner
-                            # collected between attempts.
+                            # 尝试已完成，向外抛出运行器在各次尝试之间收集的重试流转事件。
                             continue
             except ProviderError as exc:
                 self.trace_recorder.event(
@@ -429,9 +415,8 @@ class AgentLoop:
                 )
                 raise
 
-            # Surface queued retry transitions after the successful
-            # attempt. The retry runner still owns backoff; we only
-            # expose the visibility here.
+            # 在尝试成功后向外抛出排队的重试流转事件。退避逻辑仍由重试运行器负责，
+            # 此处仅负责状态可见性。
             for retry_event in pending_retry_events:
                 yield retry_event
 
@@ -466,10 +451,8 @@ class AgentLoop:
                 )
                 continue
 
-            # The text deltas and tool_call_ready events have already
-            # been forwarded live. We now just record the final
-            # assistant message into the message store and announce the
-            # completion to hooks.
+            # 文本增量和 tool_call_ready 事件已经实时转发。现在只需将最终的
+            # assistant 消息记录到消息存储中，并向钩子通知完成事件。
             self.message_store.append_assistant(
                 completed_message.assistant_message,
                 assistant_call_id=assistant_call_id,
@@ -557,8 +540,8 @@ class AgentLoop:
         model_turn_index: int,
         assistant_call_id: str,
     ) -> AsyncIterator[AgentEvent]:
-        # 工具事件必须携带同一份稳定归属 metadata,reducer 才
-        # 能把 tool_result 归到产生该工具调用的 assistant message。
+        # 工具事件必须携带同一份稳定归属 metadata，reducer 才能把
+        # tool_result 归属到产生该工具调用的 assistant message。
         attribution: dict[str, Any] = {
             "model_turn_index": model_turn_index,
             "assistant_call_id": assistant_call_id,
@@ -596,13 +579,12 @@ class AgentLoop:
                 )
 
     def _next_model_turn_index(self) -> int:
-        """Return the next ``model_turn_index`` for the current session.
+        """返回当前会话的下一个 model_turn_index。
 
-        One ``turn_count`` 可能触发多次模型调用（assistant 声明工具
-        后,主循环回到 while 顶端再次调用模型)。这里用
-        ``state.metadata`` 维护一个 session 内严格递增的整数,确保
-        每次新模型调用都有新的归属 id,旧模型调用的 checkpoint 与
-        它的 assistant text / tool 事件能继续被准确绑定。
+        同一个 turn_count 可能触发多次模型调用（例如 assistant 声明工具后，
+        主循环回到 while 循环顶部再次调用模型）。此处使用 state.metadata
+        维护会话内严格递增的整数，确保每次新模型调用都有新的归属 ID，
+        使旧模型调用的 checkpoint 及其 assistant 文本与工具事件能够准确绑定。
         """
 
         counter = self.state.metadata.get("model_turn_counter")
@@ -684,9 +666,8 @@ class AgentLoop:
             return TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE
 
         if self.state.max_output_recovery_count < MAX_OUTPUT_RECOVERY_RETRIES:
-            # Continuation recovery persists the truncated assistant
-            # (the user has already seen it) and follows it with a
-            # terse user prompt so the model can resume.
+            # 续写恢复会持久化被截断的 assistant 消息（用户已经看到该内容），
+            # 随后追加简短的用户提示词以便模型继续生成。
             self.message_store.append_assistant(
                 completed_message.assistant_message,
                 assistant_call_id=assistant_call_id,
@@ -727,7 +708,7 @@ class AgentLoop:
         completed_message: ModelStreamEvent,
         tool_calls: tuple[Any, ...],
     ) -> None:
-        """Publish the provider-neutral post-sampling event and memory hook."""
+        """发布与 provider 无关的采样后事件及会话记忆钩子。"""
 
         messages = self.message_store.current_messages()
         await self.hooks.run(

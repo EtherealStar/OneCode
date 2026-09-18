@@ -1,9 +1,8 @@
-"""Message rendering: projection value types to Rich renderables.
+"""消息渲染：将投影值类型转换为 Rich 可渲染对象。
 
-Layout follows the reference TUI: user labels are muted, agent labels are
-accent-bold, tool lines are indented with a terminal-state glyph, and queued
-messages are muted-italic with an accent tag. Only named styles from
-:mod:`ui.tui.theme` are used.
+布局遵循基准 TUI 规范：用户标签使用暗淡样式，Agent 标签使用强调粗体，
+工具行缩进并带有终态符号，排队中的消息显示为暗淡斜体并带有强调色标签。
+仅使用来自 :mod:`ui.tui.theme` 的具名样式。
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from ui.tui.renderers.tool import (
     first_line_excerpt,
 )
 
-#: One Markdown cache per ``(message_id, text part index)``.
+#: 每个 ``(message_id, text part index)`` 对应一个 Markdown 缓存。
 MarkdownCaches = dict[tuple[str, int], MarkdownBlockCache]
 
 

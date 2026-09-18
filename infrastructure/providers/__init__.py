@@ -1,1 +1,1 @@
-"""Model provider infrastructure."""
+"""模型供应商基础设施。"""

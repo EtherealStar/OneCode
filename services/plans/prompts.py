@@ -1,8 +1,7 @@
-"""Provider-visible text rendered for plan-mode attachments.
+"""为计划模式附件渲染的模型可见文本。
 
-The actual message construction lives in ``services.attachments.projector``.
-This module just owns the human-readable prose so the prompt can be unit-tested
-without touching the projector.
+实际的消息构造逻辑位于 services.attachments.projector。
+本模块仅维护可读文本内容，以便在不触及投影器的情况下对提示词进行单元测试。
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ def render_plan_mode_intro(
     *,
     plan_content: str = "",
 ) -> str:
-    """Initial plan-mode message: orient the model and announce the file."""
+    """初始计划模式消息：指引模型方向并通报计划文件路径。"""
 
     plan_section = _format_plan_section(plan_content)
     return (
@@ -43,7 +42,7 @@ def render_plan_mode_intro(
 
 
 def render_plan_mode_reentry(plan_path: Path, plan_content: str) -> str:
-    """Re-entry message when the user rejects the plan or refreshes it."""
+    """用户拒绝计划或刷新计划时的重入消息。"""
 
     plan_section = _format_plan_section(plan_content)
     return (
@@ -63,7 +62,7 @@ def render_plan_mode_reentry(plan_path: Path, plan_content: str) -> str:
 
 
 def render_plan_mode_exit(plan_path: Path, plan_content: str) -> str:
-    """Post-approval message: tells the model it may now implement."""
+    """计划审批通过后的消息：告知模型现在可以开始执行实现。"""
 
     plan_section = _format_plan_section(plan_content)
     return (

@@ -1,8 +1,7 @@
-"""Backwards-compatible CLI import path for the session-memory adapter.
+"""用于会话记忆适配器的向后兼容 CLI 导入路径。
 
-The implementation moved to ``application.runtime`` so the application layer
-can assemble it without importing UI. Existing CLI callers keep importing from
-here.
+具体实现已移至 application.runtime 模块，以便应用层在无需导入界面层的情况下进行装配。
+现有的 CLI 调用方可继续在此导入。
 """
 
 from __future__ import annotations

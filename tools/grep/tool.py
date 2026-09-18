@@ -1,4 +1,4 @@
-"""Guarded ripgrep-backed content search tool."""
+"""受防护的基于 ripgrep 的内容搜索工具。"""
 
 from __future__ import annotations
 

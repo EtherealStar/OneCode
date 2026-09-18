@@ -1,8 +1,7 @@
-"""Prompt text for the ``enter_plan_mode`` tool.
+"""enter_plan_mode 工具的提示词文本。
 
-The model reads this to understand when entering plan mode is appropriate. It
-matches the spirit of Claude Code's tool prompt while keeping OneCode's voice
-concise.
+模型读取该提示词以了解何时适合进入计划模式。其精神与 Claude Code 的工具提示词一致，
+同时保持 OneCode 简明的风格。
 """
 
 PROMPT = """\

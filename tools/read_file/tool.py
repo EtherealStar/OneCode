@@ -1,4 +1,4 @@
-"""Guarded text file read tool."""
+"""受防护的文本文件读取工具。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""AST-classified Git Bash tool."""
+"""基于 AST 分类的 Git Bash 工具。"""
 
 from __future__ import annotations
 

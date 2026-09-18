@@ -1,4 +1,4 @@
-"""Persistent permission rule values and serialization helpers."""
+"""持久化权限规则值与序列化辅助函数。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class PermissionUpdate:
 
 
 def permission_rule_value_from_string(raw: str) -> PermissionRuleValue:
-    """Parse ``tool`` or ``tool(rule content)`` permission rule strings."""
+    """解析 tool 或 tool(rule content) 形式的权限规则字符串。"""
 
     text = raw.strip()
     if not text:

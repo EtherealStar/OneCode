@@ -1,4 +1,4 @@
-"""Shared background task data types."""
+"""共享的后台任务数据类型。"""
 
 from __future__ import annotations
 

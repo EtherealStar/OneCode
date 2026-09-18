@@ -1,10 +1,8 @@
-"""Thin Textual App for the OneCode TUI.
+"""OneCode TUI 轻量级 Textual 应用程序。
 
-The App owns only presentation wiring: it composes the conversation view,
-status bar, composer, and completion overlay; subscribes to the
-:class:`~application.session.SessionController`; forwards intent; and shows
-interaction panels. It does not run the agent loop, drain a private queue,
-collect attachments, or rebind runtimes.
+该 App 仅负责展现层的编排连接：组合会话视图、状态栏、输入框与补全浮层；
+订阅 :class:`~application.session.SessionController`；转发用户意图；并展示交互弹窗面板。
+它不执行 Agent 循环、不消费私有队列、不收集附件，也不重新绑定运行时。
 """
 
 from __future__ import annotations
@@ -107,7 +105,7 @@ class OneCodeTuiApp(App[None]):
         self._details_expanded = False
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
-    # --- composition ------------------------------------------------------
+    # --- 界面组件编排 -----------------------------------------------------
 
     def compose(self) -> ComposeResult:
         with Container(id="chat-wrap"):
@@ -153,7 +151,7 @@ class OneCodeTuiApp(App[None]):
         if self._controller is not None and not self._controller.closed:
             await self._controller.close()
 
-    # --- startup ----------------------------------------------------------
+    # --- 启动流程 ---------------------------------------------------------
 
     async def _startup(self) -> None:
         try:
@@ -175,7 +173,7 @@ class OneCodeTuiApp(App[None]):
         self._update_status()
 
     def _modal_trust_prompt(self, request: Any) -> str:
-        """Synchronous trust callback, safe to call from the runtime thread."""
+        """同步信任确认回调，可安全地从运行时线程中调用。"""
 
         loop = self._event_loop
         if loop is None:
@@ -193,10 +191,10 @@ class OneCodeTuiApp(App[None]):
         return result or "skip"
 
     async def _show_modal(self, modal: Any) -> Any:
-        """Push a modal and await its result from any async context.
+        """在任意异步上下文中弹出模态对话框并等待其返回结果。
 
-        Textual only allows ``push_screen_wait`` inside an active worker, so
-        this bridges a plain task (or the runtime trust thread) to a worker.
+        Textual 仅允许在活跃的 worker 内部调用 ``push_screen_wait``，
+        因此本方法将普通协程任务（或运行时信任提示线程）桥接转换为 worker 执行。
         """
 
         loop = asyncio.get_running_loop()
@@ -227,7 +225,7 @@ class OneCodeTuiApp(App[None]):
         if modal in self.screen_stack:
             self.pop_screen()
 
-    # --- observation ------------------------------------------------------
+    # --- 状态监听 ---------------------------------------------------------
 
     async def _watch(self) -> None:
         assert self._controller is not None
@@ -262,7 +260,7 @@ class OneCodeTuiApp(App[None]):
         elif isinstance(update, RunFailed):
             self.notify(update.error or "运行失败", severity="error")
 
-    # --- interaction panel queue -----------------------------------------
+    # --- 交互面板队列 -----------------------------------------------------
 
     def _enqueue_panel(self, run_panel: Callable[[], Any]) -> None:
         self._panel_queue.append(run_panel)
@@ -282,7 +280,7 @@ class OneCodeTuiApp(App[None]):
         finally:
             self._panel_task = None
 
-    # --- interactions -----------------------------------------------------
+    # --- 交互处理 ---------------------------------------------------------
 
     def _maybe_plan_approval(self, update: ToolUpdate) -> None:
         if update.tool_name != "exit_plan_mode" or update.status != "completed":
@@ -378,7 +376,7 @@ class OneCodeTuiApp(App[None]):
             answers.append(AnswerRecord(question=question.question, answer=answer))
         return QuestionResponse(answers=tuple(answers))
 
-    # --- composer ---------------------------------------------------------
+    # --- 输入框事件 -------------------------------------------------------
 
     def on_composer_submitted(self, event: Composer.Submitted) -> None:
         asyncio.create_task(self._submit_text(event.text))
@@ -440,8 +438,8 @@ class OneCodeTuiApp(App[None]):
             self.notify("正在停止当前运行…")
             await self._controller.cancel_active()
             return
-        # No active run: Ctrl+C never exits and never silently deletes the
-        # draft. Clearing input is an explicit user action, not a side effect.
+        # 没有活跃的运行：Ctrl+C 绝不退出程序，也绝不静默删除草稿。
+        # 清空输入是显式的用户操作，而非快捷键的附带副作用。
         self.notify("没有正在运行的请求")
 
     def action_withdraw_last(self) -> None:
@@ -464,8 +462,7 @@ class OneCodeTuiApp(App[None]):
             composer.set_text(result.text, cursor=len(result.text))
             self.notify("已撤回到输入框")
         else:
-            # Never overwrite an existing draft; keep the withdrawn text
-            # visible for the user to copy instead.
+            # 绝不覆盖已存在的草稿；保留已撤回的文本可见，以便用户自行复制。
             self.notify(f"已撤回（草稿非空，未覆盖）：{result.text}")
 
     def action_resume_queue(self) -> None:
@@ -497,7 +494,7 @@ class OneCodeTuiApp(App[None]):
             return
         asyncio.create_task(self._controller.load_detail(event.detail_ref))
 
-    # --- completion -------------------------------------------------------
+    # --- 自动补全 ---------------------------------------------------------
 
     def on_text_area_changed(self, event) -> None:
         composer = event.text_area
@@ -635,7 +632,7 @@ class OneCodeTuiApp(App[None]):
             return
         self._schedule_file_completion(overlay, text, event.cursor_offset)
 
-    # --- session picker / connect ----------------------------------------
+    # --- 会话选择器与连接流程 ---------------------------------------------
 
     async def _open_session_picker(self) -> None:
         try:
@@ -712,7 +709,7 @@ class OneCodeTuiApp(App[None]):
             else:
                 self.notify("配置已保存，但模型重载失败", severity="warning")
 
-    # --- status -----------------------------------------------------------
+    # --- 状态同步 ---------------------------------------------------------
 
     def _update_status(self) -> None:
         bar = self.query_one_optional(StatusBar)
@@ -754,7 +751,7 @@ class OneCodeTuiApp(App[None]):
             pass
 
 
-# --- helpers ---------------------------------------------------------------
+# --- 辅助函数 ---------------------------------------------------------
 
 
 def _reject_reason(reason: str) -> str:
@@ -820,7 +817,7 @@ def _file_completion_items(workspace: Path, text: str, cursor: int):
 
 
 class _WorkspaceShim:
-    """Minimal object exposing only ``workspace`` for suggestion queries."""
+    """仅向建议查询暴露 ``workspace`` 属性的极简适配对象。"""
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace

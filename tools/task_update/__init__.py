@@ -1,4 +1,4 @@
-"""task_update tool package."""
+"""task_update 工具包。"""
 
 from tools.task_update.tool import descriptor
 

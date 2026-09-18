@@ -1,8 +1,7 @@
-"""Permission request modal.
+"""权限请求确认模态弹窗。
 
-It consumes only the tool's own ``PermissionOption`` entries (allow once,
-allow session/directory, deny). Escape always denies. It never grants project
-scope and never writes project rules.
+它仅消费工具自身提供的 ``PermissionOption`` 选项（允许单次、允许本会话/目录、拒绝）。
+按 Escape 键一律视为拒绝。绝不授予项目级作用域，也绝不写入项目规则。
 """
 
 from __future__ import annotations

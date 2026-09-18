@@ -1,4 +1,4 @@
-"""Provider-neutral trace event records."""
+"""供应商中立的追踪事件记录。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class TraceRecord:
 
 
 def record_to_json_dict(record: TraceRecord) -> dict[str, Any]:
-    """Return a stable JSON object for a trace record."""
+    """返回追踪记录的稳定 JSON 字典对象。"""
 
     return {
         "record_type": record.record_type,

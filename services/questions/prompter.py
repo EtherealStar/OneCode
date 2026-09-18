@@ -1,4 +1,4 @@
-"""Prompter protocol for structured user questions."""
+"""结构化用户提问的交互提示器协议。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from services.questions.types import QuestionRequest, QuestionResponse
 
 
 class UserQuestionPrompter(Protocol):
-    """Collect structured user answers for ``ask_user_question``."""
+    """为 ask_user_question 收集结构化用户回答。"""
 
     async def ask_questions(
         self,

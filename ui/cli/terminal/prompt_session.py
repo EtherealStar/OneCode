@@ -1,35 +1,25 @@
-"""The dynamic-region prompt input.
+"""动态区域提示词输入。
 
-This module owns the bottom-of-screen prompt used in the inline REPL.
-It is a non-full-screen :class:`prompt_toolkit.Application` that:
+本模块负责行内 REPL 中位于屏幕底部的提示词输入区。
+它是一个非全屏的 prompt_toolkit.Application：
 
-- has a top and bottom ``─`` border (Claude Code figure 1),
-- shows the editable buffer behind a ``>`` gutter,
-- floats a completion menu for ``/``-command and ``@``-file
-  completion (:class:`ui.cli.terminal.completer.InlineCompleter`),
-- treats **Enter** as "submit" and **Tab** as "fill but don't
-  submit" when the completion menu is open.
+- 拥有顶部和底部的 ─ 边框，
+- 在 > 栏后显示可编辑缓冲区，
+- 为 / 命令和 @ 文件补全浮动显示补全菜单（InlineCompleter），
+- 在补全菜单打开时将 Enter 视为“提交”，将 Tab 视为“填入但不提交”。
 
-The prompt session returns a structured :class:`PromptSubmission`
-rather than a bare string so the REPL loop can distinguish
-submit / cancel / exit without magic strings.
+提示词会话返回结构化的 PromptSubmission 而非纯字符串，
+以便 REPL 循环无需魔术字符串即可区分提交、取消和退出。
 
-Note on running-turn input: queueing is **not** this module's
-responsibility. The agent run-time path is implemented in
-:class:`ui.cli.terminal.stream_session.StreamingSession` (see
-``docs/exec-plans/active/cli-running-input-queue.md``), which
-hosts its own prompt_toolkit input box at the bottom of the
-dynamic region and pushes submissions onto the shared
-:class:`InputQueue`. ``PromptSession`` only ever reads the
-queue to construct the underlying :class:`InputQueue` reference
-passed at construction; it never calls ``queue.push`` itself.
+关于运行中轮次输入的说明：入队不是本模块的职责。
+Agent 运行时路径在 ui.cli.terminal.stream_session.StreamingSession 中实现，
+它在动态区域底部托管自己的 prompt_toolkit 输入框，并将提交推入共享的
+InputQueue。PromptSession 仅在构造时读取传入的底层 InputQueue 引用，
+自身从不调用 queue.push。
 
-Enter/Tab semantics use prompt_toolkit's native
-:attr:`Buffer.complete_state` as the single source of truth for "what
-is highlighted", instead of mirroring an index ourselves. When the
-menu is open with nothing explicitly selected we default to the first
-completion, which matches the Claude Code figure-4 behaviour where
-the top item is implicitly chosen.
+Enter/Tab 语义使用 prompt_toolkit 原生的 Buffer.complete_state 作为“当前高亮项”
+的唯一定义，而不是自行维护索引。当菜单打开但未显式选中任何项时，默认指向首个补全项，
+这与首项被隐式选中的交互行为一致。
 """
 
 from __future__ import annotations
@@ -65,7 +55,7 @@ from ui.cli.types import CliRuntime
 
 
 class SubmissionKind(str, Enum):
-    """How a prompt submission was triggered."""
+    """提示词提交的触发方式。"""
 
     SUBMIT = "submit"
     CANCEL = "cancel"
@@ -74,15 +64,14 @@ class SubmissionKind(str, Enum):
 
 @dataclass(frozen=True)
 class PromptSubmission:
-    """Outcome of a single prompt session invocation."""
+    """单次提示词会话调用的结果。"""
 
     kind: SubmissionKind
     text: str = ""
 
 
-# prompt_toolkit style classes — all foreground-only so the terminal
-# host's background wins. The borders use a dim grey to avoid clashing
-# with light or dark profiles.
+# prompt_toolkit 样式类：仅设置前景色，使终端宿主的背景色生效。
+# 边框使用暗灰色以避免在浅色或深色配置文件中发生冲突。
 _PROMPT_STYLE = Style.from_dict(
     {
         "prompt-border": "#666666",
@@ -102,26 +91,23 @@ _OSC11_REPLY_FRAGMENT = re.compile(
 
 
 def strip_osc11_reply_fragments(text: str) -> str:
-    """Remove the narrow OSC 11 reply fragment known to leak into input."""
+    """移除已知可能泄漏到输入中的窄 OSC 11 响应片段。"""
 
     return _OSC11_REPLY_FRAGMENT.sub("", text)
 
 
 def _highlighted_completion(buffer: Buffer) -> Completion | None:
-    """Return the completion that Enter/Tab should act on.
+    """返回 Enter/Tab 应当作用的目标补全项。
 
-    Resolution order:
+    解析优先级：
 
-    1. The completion the user explicitly navigated to
-       (``complete_state.current_completion``).
-    2. The first completion in an already-open menu.
-    3. A synchronously-computed first completion. ``complete_while_typing``
-       populates ``complete_state`` from a background task, so when the
-       prompt is driven quickly (or headlessly in tests) the menu may
-       not have opened yet by the time Enter fires. Computing the
-       completer directly closes that race without auto-accepting in a
-       non-completion context — the completer returns nothing for plain
-       text, so this stays ``None`` and the literal line is submitted.
+    1. 用户显式导航到的补全项（complete_state.current_completion）。
+    2. 已打开菜单中的首个补全项。
+    3. 同步计算出的首个补全项。complete_while_typing 通过后台任务填充
+       complete_state，因此当快速驱动提示词（或在测试中无界面驱动）时，
+       Enter 触发时菜单可能尚未打开。直接计算补全项可消除该时序竞争，
+       同时不会在非补全上下文中自动采纳：补全器对纯文本返回空，
+       此处保持为 None 并提交字面行。
     """
 
     state = buffer.complete_state
@@ -199,22 +185,22 @@ class PromptSession:
         input=None,  # type: ignore[no-untyped-def]
         output=None,  # type: ignore[no-untyped-def]
     ) -> PromptSubmission:
-        """Block until the user submits, cancels, or exits.
+        """阻塞直到用户提交、取消或退出。
 
-        ``input``/``output`` are injection points for tests, which
-        pass a :func:`prompt_toolkit.input.create_pipe_input` pipe and
-        a :class:`prompt_toolkit.output.DummyOutput`. In production both
-        are ``None`` and prompt_toolkit binds to the real terminal.
+        input/output 为测试注入点，测试传入
+        prompt_toolkit.input.create_pipe_input 管道和
+        prompt_toolkit.output.DummyOutput。在生产环境中二者均为
+        None，prompt_toolkit 绑定到真实终端。
         """
 
         result: list[PromptSubmission | None] = [None]
         app = self._build_application(result, input=input, output=output)
         await app.run_async()
-        # Ctrl-C/Ctrl-D handlers always set a result; a clean exit
-        # without a handler firing is treated as a cancel.
+        # Ctrl-C/Ctrl-D 处理器总是设置结果；
+        # 未触发处理器就正常退出的情况视为取消。
         return result[0] or PromptSubmission(kind=SubmissionKind.CANCEL)
 
-    # --- internal ----------------------------------------------------------
+    # --- 内部实现 ---
 
     def _build_application(
         self,
@@ -297,14 +283,12 @@ class PromptSession:
             if completion is not None:
                 kind = _completion_kind(completion)
                 if kind in {"file", "directory"}:
-                    # File mentions are usually followed by a natural-language
-                    # request, so accepting them keeps the prompt open.
+                    # 文件提及通常后续带有自然语言请求，因此采纳补全后保持提示词继续打开。
                     _apply_completion_for_edit(buffer, completion)
                     hint.reset()
                     event.app.invalidate()
                     return
-                # Command/session completion is a complete input target:
-                # accept the highlighted item and submit it immediately.
+                # 命令/会话补全属于完整的输入目标：采纳高亮项并立即提交。
                 buffer.apply_completion(completion)
                 text = buffer.text.strip()
                 if text:
@@ -321,11 +305,10 @@ class PromptSession:
             hint.reset()
             completion = _highlighted_completion(buffer)
             if completion is not None:
-                # Menu open + Tab → fill the input with the item but do
-                # NOT submit. The next Enter submits it.
+                # 菜单已打开且按 Tab：用补全项填充输入框但不提交。下次按 Enter 才会提交。
                 _apply_completion_for_edit(buffer, completion)
                 return
-            # No menu: trigger completion so the user sees suggestions.
+            # 无菜单：触发补全以向用户展示建议列表。
             buffer.start_completion(select_first=False)
 
         @bindings.add(Keys.Down, eager=True)
@@ -364,13 +347,13 @@ class PromptSession:
 
         @bindings.add(Keys.ControlD, eager=True)
         def _on_ctrl_d(event) -> None:  # type: ignore[no-untyped-def]
-            # Shell-style EOF: empty buffer + Ctrl-D exits the REPL.
+            # Shell 风格 EOF：空缓冲区按 Ctrl-D 退出 REPL。
             if not buffer.text:
                 finish(PromptSubmission(SubmissionKind.EXIT), event)
 
         @bindings.add(Keys.Escape, eager=True)
         def _on_escape(event) -> None:  # type: ignore[no-untyped-def]
-            # Esc closes the completion menu if open; otherwise no-op.
+            # Esc 键在菜单打开时关闭补全菜单；否则为空操作。
             if buffer.complete_state is not None:
                 buffer.cancel_completion()
 
@@ -417,7 +400,7 @@ class PromptSession:
         app.invalidate()
 
 
-# --- layout helpers --------------------------------------------------------
+# --- 布局辅助函数 ---
 
 
 def _border_window() -> Window:

@@ -1,4 +1,4 @@
-"""Prompt section for the glob tool."""
+"""glob 工具的提示词文本。"""
 
 PROMPT = """Purpose:
 Find files by pathname pattern under a directory.

@@ -1,4 +1,4 @@
-"""Resolve user @mentions within the active workspace."""
+"""在活动工作区内解析用户 @提及。"""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def resolve_mention(
     mention: AtMention,
     workspace: Path,
 ) -> ResolvedMention | ResolutionError:
-    """Resolve a mention without ever selecting a path outside workspace."""
+    """解析提及，且绝不选择工作区之外的路径。"""
 
     workspace = workspace.resolve()
     exact = (workspace / mention.path_text).resolve()

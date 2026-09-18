@@ -1,4 +1,4 @@
-"""Filesystem target extraction for Bash commands."""
+"""Bash 命令的文件系统 target 提取。"""
 
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ def _path_args(args: list[str]) -> list[str]:
                 skip_next = True
             continue
         if arg.startswith("-") and arg != "-":
-            # Most command flags are not paths; the command-specific allowlist
-            # intentionally stays small and conservative for the first version.
+            # 大多数命令标志不是路径；特定命令的白名单
+            # 在首个版本中有意保持较小且保守。
             continue
         if arg == "-":
             continue

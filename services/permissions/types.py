@@ -1,4 +1,4 @@
-"""Provider-neutral permission request and decision types."""
+"""与提供商无关的权限请求和决策类型。"""
 
 from __future__ import annotations
 

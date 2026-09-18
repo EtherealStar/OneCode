@@ -1,4 +1,4 @@
-"""Subagent delegation tool."""
+"""子代理委派工具。"""
 
 from tools.agent.tool import descriptor
 

@@ -1,4 +1,4 @@
-"""Git Bash command runner."""
+"""Git Bash 命令运行器。"""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class GitBashRunner:
 
 
 def find_git_bash() -> Path | None:
-    """Find Git Bash without invoking a shell."""
+    """在不调用 shell 的情况下查找 Git Bash。"""
 
     path_candidate = shutil.which("bash.exe") or shutil.which("bash")
     if path_candidate:

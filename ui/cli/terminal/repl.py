@@ -1,31 +1,26 @@
-"""Inline REPL — the TTY entry point for the OneCode CLI.
+"""行内 REPL：OneCode CLI 的 TTY 终端入口。
 
-The :class:`InlineRepl` ties the static and dynamic regions together
-and drives the main loop. It is intentionally small: every visible
-behaviour lives in a dedicated module (static output, prompt input,
-streaming, transient pages) and this class is just the conductor.
+InlineRepl 将静态区域与动态区域连接在一起并驱动主循环。
+它的设计保持小巧精炼：每个可见行为均存在于专有模块中（静态输出、提示词输入、流式传输、瞬态页面），
+该类仅充当统筹协调者。
 
-Loop shape::
+循环结构：
 
     while not done:
         submission = prompt.read()
         if submission.kind == CANCEL/EXIT:
             shutdown(); break
-        echo user line into static region
-        if line starts with "/":
+        向静态区域回显用户输入的行
+        if line 以 "/" 开头:
             result = dispatch_command(...)
             handle_command_result(result)
         else:
             await run_agent_turn(line)
-            drain queued inputs in FIFO order, each via either
-            ``_handle_command`` (slash) or ``_run_turn`` (prompt)
+            按 FIFO 顺序排空排队输入，每项通过 _handle_command（斜杠命令）或 _run_turn（提示词）处理
 
-A "turn" is one full pass through the agent loop, including any
-tool calls and queued follow-ups. ``InputQueue`` is shared with
-:class:`StreamingSession` so the user can keep typing while an
-agent turn is running; the running-turn input box pushes new
-submissions onto the same queue, and the REPL drains it once the
-turn finishes.
+一个“轮次”表示 agent 循环的一次完整执行，包含所有工具调用和排队的后续操作。
+InputQueue 与 StreamingSession 共享，以便用户在 agent 轮次运行时继续键入；
+运行中轮次输入框将新的提交推入同一队列，REPL 在轮次结束后将其排空。
 """
 
 from __future__ import annotations
@@ -61,7 +56,7 @@ from ui.cli.types import CliRuntime, CommandResult
 
 
 class InlineRepl:
-    """The TTY CLI main loop, implemented with prompt_toolkit + Rich."""
+    """基于 prompt_toolkit 和 Rich 实现的 TTY CLI 主循环。"""
 
     def __init__(
         self,
@@ -81,15 +76,14 @@ class InlineRepl:
         self._permission_prompter = permission_prompter or TtyPermissionPrompter(
             self._interaction_host
         )
-        # Use the brightness-aware theme so foreground colors stay
-        # legible against light or dark hosts. Static region only —
-        # the theme never sets a background.
+        # 使用感知终端亮度的色彩主题，使前景色在浅色或深色宿主环境中保持清晰可读。
+        # 仅用于静态区域，主题从不设置背景色。
         self._console = Console(theme=rich_theme_for(self._brightness))
 
     # --- public entry -----------------------------------------------------
 
     def run(self) -> int:
-        """Synchronous entry point. Returns a process exit code."""
+        """同步入口点。返回进程退出代码。"""
 
         try:
             asyncio.run(self._main_loop())
@@ -101,9 +95,8 @@ class InlineRepl:
     # --- main loop --------------------------------------------------------
 
     async def _main_loop(self) -> None:
-        # Print the static banner once. ``renderer.render_banner`` is
-        # theme-agnostic so we render it through the brightness-aware
-        # console we just created.
+        # 打印一次静态横幅。renderer.render_banner 与主题无关，
+        # 因此通过刚创建的感知亮度的控制台进行渲染。
         self._console.print(renderer.render_banner(self._runtime))
         self._print_untrusted_mcp_notices(self._runtime)
         if not self._runtime.configured:
@@ -120,19 +113,17 @@ class InlineRepl:
                 self._shutdown()
                 return
             if submission.kind is SubmissionKind.CANCEL:
-                # Ctrl-C on an empty prompt: just clear and keep going.
+                # 在空提示符上按 Ctrl-C：清空并继续运行。
                 if self._agent_running:
                     self._cancel_requested = True
                 continue
-            # Plain submit. ``text`` is the literal buffer (or the
-            # completion's ``replacement`` when Enter was used to
-            # accept a highlighted completion).
+            # 普通提交。text 为字面缓冲区内容（或按 Enter 采纳高亮补全时的 replacement 文本）。
             text = submission.text.strip()
             if not text:
                 continue
             print_user_submitted(text, brightness=self._brightness)
             if text.startswith("/"):
-                # In unconfigured mode, only /connect and /exit are allowed.
+                # 在未配置模式下，仅允许 /connect 和 /exit 命令。
                 if not self._runtime.configured:
                     cmd_name = text.split()[0][1:].lower()
                     if cmd_name not in {"connect", "exit"}:
@@ -146,11 +137,10 @@ class InlineRepl:
                 await self._handle_command(text)
                 if self._runtime is None:
                     return
-                # Some commands (e.g. ``/clear``) change the runtime;
-                # ``_handle_command`` already took care of the
-                # prompt session reset, so we just keep looping.
+                # 某些命令（如 /clear）会变更 runtime；
+                # _handle_command 已处理提示词会话重置，因此直接继续循环。
                 continue
-            # In unconfigured mode, block all non-command input.
+            # 未配置模式下，阻止所有非命令输入。
             if not self._runtime.configured:
                 self._console.print(
                     Text(
@@ -160,11 +150,9 @@ class InlineRepl:
                 )
                 continue
             await self._run_turn(text)
-            # Drain queued inputs in FIFO order. Each entry was
-            # pushed by the running-turn input box while the turn
-            # was active. Slash commands are routed to the command
-            # dispatcher; ordinary prompts go back into
-            # ``_run_turn``.
+            # 按 FIFO 顺序排空排队输入。轮次处于活跃状态时，
+            # 运行中输入框推入了若干条目。
+            # 斜杠命令路由至命令分发器；普通提示词交回给 _run_turn。
             await self._drain_queue()
 
     # --- command dispatch -------------------------------------------------
@@ -186,10 +174,9 @@ class InlineRepl:
                 await self._show_page(result.renderable)
             else:
                 self._console.print(result.renderable)
-        # Replay restored history into the main scrollback after any inline
-        # notice is printed. This runs once the resume selector (if any) has
-        # already exited the alternate screen, and before the next prompt is
-        # read, so historical messages land in the primary buffer.
+        # 在打印行内通知之后，将恢复的历史记录重放至主回滚历史。
+        # 此操作在恢复选择器退出备用屏幕后、读取下一个提示词之前执行，
+        # 确保历史消息输出到主缓冲区中。
         if result.replay_messages:
             replay_messages_to_static(
                 result.replay_messages,
@@ -285,10 +272,9 @@ class InlineRepl:
         )
 
     async def _show_page(self, renderable: object) -> None:
-        """Show a renderable full-screen until the user presses Esc.
+        """全屏展示可渲染对象，直到用户按下 Esc。
 
-        On non-TTY hosts the page is a no-op, so we fall back to
-        printing the renderable inline into the static region.
+        在非 TTY 宿主环境中该页面为空操作，因此回退为将可渲染对象行内打印至静态区域。
         """
 
         from ui.cli.terminal.transient import can_enter_alternate_screen
@@ -318,17 +304,14 @@ class InlineRepl:
     # --- agent turn -------------------------------------------------------
 
     async def _run_turn(self, line: str) -> None:
-        """Run one full agent turn with a live preview.
+        """执行带有实时预览的单次完整 agent 轮次。
 
-        We hand the agent's event stream to :class:`StreamingSession`,
-        which owns the dynamic-region preview and Esc cancellation. The
-        session commits the final Markdown to the static region and
-        returns the buffer so we can record cancellation state.
+        我们将 agent 事件流交给 StreamingSession，
+        由其负责动态区域预览及 Esc 取消操作。
+        该会话将最终 Markdown 提交至静态区域并返回缓冲区以便记录取消状态。
 
-        The session shares ``self._queue`` so the user can keep
-        typing into the running-turn input box while the agent is
-        busy; queued submissions land on the same FIFO that
-        :meth:`_drain_queue` will consume after the turn ends.
+        会话共享 self._queue，以便用户在 agent 繁忙时仍可继续在运行中输入框键入；
+        排队的提交进入同一个 FIFO，由 _drain_queue 在轮次结束后消费。
         """
 
         self._agent_running = True
@@ -353,19 +336,15 @@ class InlineRepl:
             self._agent_running = False
 
     async def _drain_queue(self) -> None:
-        """Pop queued inputs in FIFO order after a turn finishes.
+        """轮次结束后按 FIFO 顺序弹出排队的输入。
 
-        Each :class:`QueuedInput` is dispatched based on its
-        ``kind``: ``slash`` entries go through :meth:`_handle_command`
-        so they never reach the model as a prompt; ``prompt`` entries
-        re-enter the agent via :meth:`_run_turn`. If a slash command
-        causes the runtime to be replaced (e.g. ``/clear`` /
-        ``/resume`` / ``/connect``), we keep draining because the
-        command dispatcher has already updated ``self._runtime`` and
-        reset the prompt session.
+        每个 QueuedInput 根据其 kind 进行分发：
+        slash 条目通过 _handle_command 处理，绝不会作为提示词到达模型；
+        prompt 条目通过 _run_turn 重新进入 agent。
+        若斜杠命令导致 runtime 被替换（如 /clear、/resume、/connect），
+        则继续排空，因为命令分发器已经更新了 self._runtime 并重置了提示词会话。
 
-        The loop stops at the first empty pop; ``self._queue`` is
-        the single source of truth.
+        循环在首次弹出为空时停止；self._queue 是单一可信来源。
         """
 
         while True:
@@ -376,17 +355,16 @@ class InlineRepl:
             if item.kind == "slash":
                 await self._handle_command(item.text)
                 if self._runtime is None:
-                    # A command (e.g. ``/exit``) closed the REPL.
+                    # 某些命令（例如 /exit）关闭了 REPL。
                     return
                 continue
             await self._run_turn(item.text)
 
     async def _agent_events(self, line: str):
-        """Yield agent events for ``line``, collecting attachments first.
+        """生成 line 对应的 agent 事件，优先收集附件。
 
-        Exceptions raised by the loop stream are surfaced as a single
-        synthetic ``error`` event so the streaming preview can render
-        them in line rather than crashing the REPL.
+        循环流抛出的异常作为单个合成的 error 事件暴露出来，
+        以便流式预览能够行内渲染异常而不致 REPL 崩溃。
         """
 
         attachments = ()
@@ -435,10 +413,8 @@ class InlineRepl:
             try:
                 asyncio.run(runtime.mcp_manager.close_all())
             except RuntimeError:
-                # ``asyncio.run`` raises if a loop is already running
-                # in the caller's thread; in that case we let the
-                # process exit and rely on the atexit handler to
-                # close transports.
+                # 若调用方线程已在运行事件循环，asyncio.run 会抛出异常；
+                # 在这种情况下允许进程退出，依赖 atexit 处理器关闭传输通道。
                 pass
 
     def _print_untrusted_mcp_notices(self, runtime: CliRuntime) -> None:

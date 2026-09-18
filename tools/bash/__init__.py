@@ -1,4 +1,4 @@
-"""Git Bash tool descriptor."""
+"""Git Bash 工具描述符。"""
 
 from tools.bash.tool import descriptor
 

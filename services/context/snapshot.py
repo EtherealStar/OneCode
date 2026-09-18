@@ -1,4 +1,4 @@
-"""Model-call context snapshot."""
+"""模型调用上下文快照。"""
 
 from __future__ import annotations
 

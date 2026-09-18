@@ -1,10 +1,8 @@
-"""Application-layer runtime assembly and rebinding.
+"""应用层运行时装配与重绑定。
 
-This module owns the concrete wiring that used to live in
-``ui.cli.app`` and ``ui.cli.types``. It builds the runtime, rebinds it to a
-new session, and reloads the model configuration. It deliberately does not
-import any UI module: the application layer depends on
-``core``/``services``/``infrastructure`` only.
+本模块承载此前位于 ui.cli.app 与 ui.cli.types 中的具体装配逻辑。
+它负责构建运行时、将其重绑定到新会话以及重新加载模型配置。
+本模块刻意不导入任何界面模块：应用层仅依赖 core、services 与 infrastructure。
 """
 
 from __future__ import annotations
@@ -116,11 +114,10 @@ class McpTrustPromptRequest:
 
 
 class DefaultUserQuestionPrompter:
-    """Non-interactive fallback for the ``ask_user_question`` tool.
+    """ask_user_question 工具的非交互式回退实现。
 
-    Interactive adapters (batch/TUI) install their own prompter. This fallback
-    accepts the first option of each question so a runtime that has not
-    installed an adapter still produces a structured, non-crashing answer.
+    交互式适配器（batch/TUI）会安装专属的提示器。此回退实现接受每个问题的第一个选项，
+    使未安装适配器的运行时仍能生成结构化且不崩溃的回答。
     """
 
     async def ask_questions(
@@ -144,11 +141,10 @@ class DefaultUserQuestionPrompter:
 
 
 class DeferredPermissionPrompter:
-    """Indirection that lets the session controller install its own prompter.
+    """允许会话控制器在装配后安装专属提示器的间接代理。
 
-    The tool executor captures the prompter at assembly time. The application
-    creates this proxy so the ``SessionController`` can route permission
-    requests through its interaction coordinator after construction.
+    工具执行器在装配时捕获提示器。应用层创建此代理，
+    以便 SessionController 在构建后能通过其交互协调器路由权限请求。
     """
 
     def __init__(self, target: PermissionPrompter | None = None) -> None:
@@ -164,7 +160,7 @@ class DeferredPermissionPrompter:
 
 
 class DeferredUserQuestionPrompter:
-    """Indirection for the ``ask_user_question`` tool prompter."""
+    """ask_user_question 工具提示器的间接代理。"""
 
     def __init__(self, target: Any | None = None) -> None:
         self.target = target or DefaultUserQuestionPrompter()
@@ -174,7 +170,7 @@ class DeferredUserQuestionPrompter:
 
 
 class BackgroundSessionMemoryExtractor:
-    """Schedule session-memory extraction without blocking the active turn."""
+    """在不阻塞活跃轮次的情况下调度会话记忆提取。"""
 
     def __init__(
         self,
@@ -420,7 +416,7 @@ class ApplicationRuntime:
         )
 
     def with_model_config(self) -> "ApplicationRuntime":
-        """Reload `.env` provider settings while preserving the active session."""
+        """在保留活跃会话的同时重新加载 .env 中的提供商配置。"""
 
         model_client = create_model_client(self.workspace / ".env")
         config = model_client.config
@@ -850,9 +846,8 @@ def _prompt_for_project_mcp_trust(
         if trust_prompt is not None:
             response = trust_prompt(request)
         else:
-            # No interactive adapter was installed: never read stdin from the
-            # application layer. Leave the server untrusted and visible in the
-            # runtime metadata so a UI can prompt for trust later.
+            # 未安装交互式适配器：应用层绝不直接读取 stdin。
+            # 保持服务为未信任状态并在运行时元数据中可见，以便界面稍后提示信任。
             print("Project MCP stdio server requires trust before it can run:")
             print(f"  server: {config.name}")
             print(f"  command: {request.command}")
@@ -984,10 +979,10 @@ async def _start_long_term_memory_dream(
 
 
 def build_unconfigured_runtime(workspace: Path) -> ApplicationRuntime:
-    """Create a minimal runtime when ``.env`` is missing or incomplete.
+    """当 .env 缺失或不完整时创建最小运行时。
 
-    The returned runtime has ``configured=False`` so input is blocked
-    except for configuration and exit operations.
+    返回的运行时具有 configured=False 状态，除配置与退出操作外，
+    其余输入均被拦截。
     """
 
     workspace = workspace.resolve()

@@ -1,4 +1,4 @@
-"""Small frontmatter parser for SKILL.md files."""
+"""用于 SKILL.md 文件的简易 frontmatter 解析器。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def parse_skill_markdown(
     root: Path | None,
     fallback_name: str,
 ) -> SkillCommand | None:
-    """Parse a SKILL.md document into a normalized command object."""
+    """将 SKILL.md 文档解析为规范化的命令对象。"""
 
     frontmatter, body = _split_frontmatter(text)
     name = _clean_string(frontmatter.get("name")) or _normalize_name(fallback_name)
@@ -50,7 +50,7 @@ def parse_skill_markdown(
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Extract a tiny YAML-like frontmatter block if the file starts with one."""
+    """若文件以类 YAML frontmatter 块开头，则提取该块。"""
 
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized.split("\n")
@@ -66,7 +66,7 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def _parse_frontmatter_lines(lines: list[str]) -> dict[str, Any]:
-    """Parse key/value lines and simple indented list items."""
+    """解析键值对行以及简单的缩进列表项。"""
 
     values: dict[str, Any] = {}
     current_list_key: str | None = None
@@ -97,7 +97,7 @@ def _parse_frontmatter_lines(lines: list[str]) -> dict[str, Any]:
 
 
 def _description_from_body(body: str) -> str:
-    """Use the first heading or non-empty paragraph as fallback description."""
+    """使用首个标题或非空段落作为后备描述。"""
 
     for line in body.splitlines():
         stripped = line.strip()
@@ -110,7 +110,7 @@ def _description_from_body(body: str) -> str:
 
 
 def _string_list(value: Any) -> tuple[str, ...]:
-    """Normalize comma-separated strings and simple YAML lists."""
+    """规范化逗号分隔字符串及简单 YAML 列表。"""
 
     if value is None:
         return ()

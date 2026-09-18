@@ -1,4 +1,4 @@
-"""MCP connection lifecycle and tool invocation."""
+"""MCP 连接生命周期与工具调用。"""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ class McpConnectionManager:
         }
 
     def connect_all_blocking(self) -> McpConnectionSnapshot:
-        """Synchronously connect all enabled servers for sync CLI composition."""
+        """同步连接所有已启用的服务器，供同步 CLI 组合使用。"""
 
         try:
             asyncio.get_running_loop()

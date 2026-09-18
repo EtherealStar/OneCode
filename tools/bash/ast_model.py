@@ -1,4 +1,4 @@
-"""Stable Bash AST analysis models used by the tool runtime."""
+"""供工具运行时使用的稳定 Bash AST 分析模型。"""
 
 from __future__ import annotations
 

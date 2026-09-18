@@ -1,4 +1,4 @@
-"""Project internal messages into a model-visible safe window."""
+"""将内部消息投影至模型可见的安全窗口。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class ContextProjector:
         self,
         messages: tuple[dict[str, Any], ...],
     ) -> tuple[dict[str, Any], ...]:
-        """Return a deep-copied projection that keeps tool call pairs intact."""
+        """返回保持工具调用配对完整性的深拷贝投影。"""
 
         if not messages:
             return ()
@@ -39,7 +39,7 @@ class ContextProjector:
         messages: tuple[dict[str, Any], ...],
         start_index: int,
     ) -> int:
-        """Move a cut point backward when retained tool results need their calls."""
+        """当保留的工具结果需要其对应的调用时，向前移动截断点。"""
 
         if start_index <= 0:
             return 0

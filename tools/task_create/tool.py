@@ -1,4 +1,4 @@
-"""Create durable task records."""
+"""创建持久化任务记录。"""
 
 from __future__ import annotations
 

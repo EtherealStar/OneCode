@@ -1,4 +1,4 @@
-"""Project-level permission settings stored in .onecode/settings.json."""
+"""存储在 .onecode/settings.json 中的项目级权限设置。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ BEHAVIORS: tuple[PermissionBehavior, ...] = ("allow", "deny", "ask")
 
 
 class ProjectPermissionSettingsStore:
-    """Loads and updates persistent project permission rules."""
+    """加载并更新持久化的项目权限规则。"""
 
     def __init__(self, settings_path: Path) -> None:
         self.settings_path = settings_path

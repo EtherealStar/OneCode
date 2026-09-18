@@ -1,1 +1,1 @@
-"""Shared utility modules."""
+"""共享工具模块。"""

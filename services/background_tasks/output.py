@@ -1,4 +1,4 @@
-"""Background task output file paths."""
+"""后台任务输出文件路径。"""
 
 from __future__ import annotations
 

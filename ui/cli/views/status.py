@@ -1,4 +1,4 @@
-"""Runtime overview and usage views."""
+"""运行时概览与用量视图。"""
 
 from __future__ import annotations
 

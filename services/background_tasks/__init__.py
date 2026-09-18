@@ -1,4 +1,4 @@
-"""In-process background task lifecycle services."""
+"""进程内后台任务生命周期服务。"""
 
 from services.background_tasks.ids import generate_background_task_id
 from services.background_tasks.manager import BackgroundTaskManager

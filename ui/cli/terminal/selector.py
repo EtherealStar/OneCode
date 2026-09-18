@@ -1,11 +1,9 @@
-"""List selector for ``/resume`` (and similar) on the alternate screen.
+"""在备用屏幕上展示的列表选择器（用于 /resume 等）。
 
-The selector renders one row per item and lets the user pick one.
-``Esc`` cancels and returns ``None``; arrow keys move the highlight;
-``Enter`` selects. The selector is a ``full_screen``
-:class:`prompt_toolkit.Application`, which manages the alternate
-screen (DEC 1049) itself so the selection UI never leaks into the
-static scrollback.
+选择器每项渲染一行并允许用户选取其一。
+Esc 取消并返回 None；方向键移动高亮；Enter 选中。
+选择器是一个 full_screen 模式的 prompt_toolkit.Application，
+自行管理备用屏幕（DEC 1049），因此选择界面绝不会泄漏到静态回滚历史中。
 """
 
 from __future__ import annotations
@@ -37,7 +35,7 @@ class SelectorItem(Generic[T]):
 
 
 class TransientSelector(Generic[T]):
-    """Render ``items`` and return the user's selection or ``None``."""
+    """渲染 items 并返回用户的选择项，取消时返回 None。"""
 
     def __init__(
         self,

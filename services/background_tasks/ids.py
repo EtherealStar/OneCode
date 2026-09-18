@@ -1,4 +1,4 @@
-"""Background task id generation."""
+"""后台任务 ID 生成。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,6 @@ _PREFIXES: dict[BackgroundTaskType, str] = {
 
 
 def generate_background_task_id(task_type: BackgroundTaskType) -> str:
-    """Return a short random id with a stable type prefix."""
+    """返回带有稳定类型前缀的短随机 ID。"""
 
     return f"{_PREFIXES[task_type]}{secrets.token_hex(4)}"

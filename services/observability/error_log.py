@@ -1,8 +1,7 @@
-"""Structured runtime error logging.
+"""结构化运行时错误日志记录。
 
-Error logs are intentionally separate from trace records.  Trace keeps compact
-runtime facts for UI and tests; this module stores sanitized debugging evidence
-for unrecovered failures.
+错误日志有意与追踪记录分离。Trace 为 UI 和测试保留紧凑的运行时事实；
+本模块则为未恢复的失败持久化经过脱敏的调试证据。
 """
 
 from __future__ import annotations

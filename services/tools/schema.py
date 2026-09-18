@@ -1,4 +1,4 @@
-"""Tool schema projection helpers."""
+"""工具模式投影辅助函数。"""
 
 from __future__ import annotations
 

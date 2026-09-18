@@ -1,4 +1,4 @@
-"""JSONL transcript storage for session messages."""
+"""用于会话消息的 JSONL transcript 存储。"""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ class JsonlTranscriptStore:
 
     @contextmanager
     def write_guard(self) -> Iterator[None]:
-        """Hold the transcript write lock across a read-modify-rewrite cycle."""
+        """在读取-修改-重写周期内持有 transcript 写锁。"""
 
         with self._lock:
             yield
@@ -408,12 +408,10 @@ class JsonlTranscriptStore:
 
 
 class InMemoryTranscriptStore:
-    """Transcript-store compatible sink that never writes session files.
+    """绝不写入会话文件且与 TranscriptStore 兼容的接收端。
 
-    This is used for short-lived internal child runtimes. Their live
-    conversation still belongs in ``MessageStore`` while the child is running,
-    but the transcript is an implementation detail and should not appear as a
-    resumable user session.
+    用于生命周期较短的内部子运行时。在子运行时运行期间，其实时对话仍保存在
+    MessageStore 中，但 transcript 属于实现细节，不应作为可恢复的用户会话呈现。
     """
 
     def __init__(self, session_id: str) -> None:

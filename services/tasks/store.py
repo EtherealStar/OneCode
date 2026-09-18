@@ -1,4 +1,4 @@
-"""File-backed task store."""
+"""基于文件持久化的任务存储。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from services.tasks.types import TaskRecord, TaskStatus, task_from_json, task_to
 
 
 class TaskStoreError(Exception):
-    """Raised when the task graph cannot be read or safely updated."""
+    """当无法读取或安全更新任务图时引发。"""
 
 
 @dataclass(frozen=True)
@@ -238,8 +238,8 @@ class TaskStore:
 
     def _atomic_write_text(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # The temp file lives beside the target so Path.replace() is atomic on
-        # the same filesystem for normal local workspaces.
+        # 临时文件保存在目标文件同级目录下，确保在普通本地工作区中
+        # 针对同一文件系统的 Path.replace() 具备原子性。
         temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
             temp_path.write_text(content, encoding="utf-8")

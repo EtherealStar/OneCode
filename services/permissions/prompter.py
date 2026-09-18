@@ -1,4 +1,4 @@
-"""Permission prompter protocol used by interactive UIs."""
+"""供交互式用户界面使用的权限提示器协议。"""
 
 from __future__ import annotations
 

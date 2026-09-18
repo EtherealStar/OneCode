@@ -1,4 +1,4 @@
-"""Provider connection option helpers reserved for future CLI /connect flow."""
+"""为未来 CLI /connect 流程预留的供应商连接选项辅助函数。"""
 
 from __future__ import annotations
 

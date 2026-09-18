@@ -1,29 +1,21 @@
-"""Tool result rendering policy for the CLI.
+"""CLI 的工具结果渲染策略。
 
-This module is the *single* CLI entry point for rendering tool output.
-It is a thin policy dispatcher: each built-in tool has a small renderer
-that consumes a :class:`ToolExecutionResult` and returns a one-line
-summary. The dynamic region uses :func:`render_use_preview` and
-:func:`render_running` to show what's happening right now; the static
-region uses :func:`render_tool_result` / :func:`render_fallback_tool_result`
-to commit the final summary.
+本模块是 CLI 渲染工具输出的统一入口。
+它是一个轻量级的策略分发器：每个内置工具都有一个小型渲染器，
+消费 ToolExecutionResult 并返回单行摘要。动态区域使用 render_use_preview
+和 render_running 展示当前的运行状态；静态区域使用 render_tool_result /
+render_fallback_tool_result 提交最终摘要。
 
-The architecture mirrors the reference implementation's split
-between the ``UserToolResultMessage`` container (handled by the
-framework) and the per-tool ``renderToolResultMessage`` function
-(handled by the policy). In OneCode the framework container lives in
-:mod:`ui.cli.terminal.static_output` (the ``⎿`` prefix) and the policy
-lives here. Tools do not get to inject their own container prefix.
+该架构对应了参考实现中 UserToolResultMessage 容器（由框架处理）
+与每个工具的 renderToolResultMessage 函数（由策略处理）之间的职责划分。
+在 OneCode 中，框架容器位于 ui.cli.terminal.static_output（带有 ⎿ 前缀），
+而策略位于本模块。工具本身不允许注入自定义的容器前缀。
 
-Renderer rules:
+渲染器规则：
 
-- Renderers are pure functions of the result and the workspace path.
-  They must not call the tool, read the file, or run subprocesses.
-- Renderers must never raise; if a renderer throws, the dispatcher
-  falls back to :func:`render_fallback_tool_result` so the user still
-  sees something useful.
-- Renderers return plain strings; colour is added by the framework
-  layer (static region wraps the line in a style).
+- 渲染器是结果与工作区路径的纯函数。严禁调用工具、读取文件或执行子进程。
+- 渲染器绝不能抛出异常；若渲染器抛出异常，分发器会回退到 render_fallback_tool_result，确保用户依然能看到有效信息。
+- 渲染器返回纯字符串；颜色由框架层添加（静态区域使用样式包裹整行）。
 """
 
 from __future__ import annotations
@@ -37,37 +29,34 @@ from services.tools.types import ToolExecutionResult
 from ui.cli.views.common import display_path
 
 
-# --- policy types ----------------------------------------------------------
+# --- 策略类型 ----------------------------------------------------------
 
 
 class ToolCliRenderer(Protocol):
-    """The minimal interface a built-in tool may fulfil.
+    """内置工具可实现的最小接口。
 
-    Tools are not required to implement every method; missing methods
-    cause the dispatcher to fall back to the default renderer for that
-    lifecycle. The dynamic region only needs the preview methods; the
-    static region only needs the result methods.
+    工具无需实现所有方法；缺失的方法会导致分发器针对该生命周期回退到默认渲染器。
+    动态区域仅需要预览方法；静态区域仅需要结果方法。
     """
 
     def render_use_preview(self, tool_name: str, tool_input: Any) -> str:
-        """A bounded, single-line preview of an in-flight tool call."""
+        """正在进行的工具调用的有界单行预览。"""
 
     def render_running(self, tool_name: str, tool_input: Any) -> str:
-        """A bounded status line shown while a tool is running."""
+        """工具运行期间展示的有界状态行。"""
 
     def render_success(self, result: ToolExecutionResult, *, workspace: Path | None) -> str:
-        """A one-line summary of a successful tool result."""
+        """成功工具结果的单行摘要。"""
 
     def render_error(self, result: ToolExecutionResult, *, workspace: Path | None) -> str:
-        """A one-line summary of a failed tool result."""
+        """失败工具结果的单行摘要。"""
 
 
 @dataclass(frozen=True)
 class BuiltinToolRenderer:
-    """A concrete implementation of :class:`ToolCliRenderer` for one tool.
+    """单个工具对应的 ToolCliRenderer 具体实现。
 
-    Any field may be ``None``; the dispatcher uses the fallback for
-    that lifecycle when the renderer did not opt in.
+    任意字段均可为 None；当渲染器未选择实现某项能力时，分发器将针对该生命周期使用回退逻辑。
     """
 
     name: str
@@ -77,21 +66,19 @@ class BuiltinToolRenderer:
     render_error: Callable[[ToolExecutionResult, Path | None], str] | None = None
 
 
-# Backwards-compatibility alias used by existing callers (static
-# output). The signature is preserved so the dispatcher table can be
-# populated from older ``ToolResultRenderer`` callables.
+# 供现有调用方（静态输出）使用的向后兼容别名。
+# 保留该函数签名以便从旧版 ToolResultRenderer 可调用对象填充调度表。
 ToolResultRenderer = Callable[[ToolExecutionResult, Path], str]
 
 
-# --- public entry points ---------------------------------------------------
+# --- 公共入口 ---------------------------------------------------
 
 
 def render_tool_result(result: ToolExecutionResult, *, workspace: Path) -> str:
-    """Return the static-region summary line for a completed tool result.
+    """返回已完成工具结果在静态区域展示的摘要行。
 
-    The dispatcher prefers the policy's ``render_success`` /
-    ``render_error`` method; if those are missing or raise, it falls
-    back to :func:`render_fallback_tool_result`.
+    分发器优先使用策略的 render_success / render_error 方法；
+    若缺失或抛出异常，则回退到 render_fallback_tool_result。
     """
 
     policy = _POLICIES.get(result.tool_name)
@@ -106,10 +93,9 @@ def render_tool_result(result: ToolExecutionResult, *, workspace: Path) -> str:
 
 
 def render_fallback_tool_result(result: Any) -> str:
-    """A safe, generic summary used when no policy exists or it raised.
+    """当策略不存在或抛出异常时使用的安全通用摘要。
 
-    The fallback must never raise and must always return a string so
-    the CLI never crashes on a malformed result.
+    该回退逻辑绝不能抛出异常，且必须始终返回字符串，以保证命令行界面绝不会因畸形结果而崩溃。
     """
 
     tool_name = getattr(result, "tool_name", "unknown_tool") or "unknown_tool"
@@ -120,10 +106,10 @@ def render_fallback_tool_result(result: Any) -> str:
 
 
 def render_use_preview(tool_name: str, tool_input: Any) -> str:
-    """Dynamic-region preview shown when a tool call is first announced.
+    """首次宣布工具调用时在动态区域展示的预览。
 
-    The result is intentionally bounded (no full JSON, no unbounded
-    paths) because the dynamic region must stay short and stable.
+    输出被刻意限制长度（不展示完整 JSON，不展开无界路径），
+    因为动态区域必须保持简短与稳定。
     """
 
     policy = _POLICIES.get(tool_name)
@@ -134,15 +120,14 @@ def render_use_preview(tool_name: str, tool_input: Any) -> str:
                 return text
         except Exception:
             pass
-    # Generic fallback: a single-line key=value preview.
+    # 通用回退：单行 key=value 预览。
     return _default_use_preview(tool_name, tool_input)
 
 
 def render_running(tool_name: str, tool_input: Any) -> str:
-    """Dynamic-region status shown while a tool is still in flight.
+    """工具仍在执行期间在动态区域展示的状态。
 
-    Used as a per-line item in the active-tools list. Mirrors the
-    Bash tool's ``MAX_COMMAND_DISPLAY_LINES = 2`` / 160-char budget.
+    用作活跃工具列表中的逐行条目。对应 Bash 工具的 MAX_COMMAND_DISPLAY_LINES = 2 与 160 字符预算。
     """
 
     policy = _POLICIES.get(tool_name)
@@ -156,34 +141,32 @@ def render_running(tool_name: str, tool_input: Any) -> str:
     return _default_use_preview(tool_name, tool_input)
 
 
-# --- policy registration ---------------------------------------------------
+# --- 策略注册 ---------------------------------------------------
 
 
 _POLICIES: dict[str, BuiltinToolRenderer] = {}
 
 
 def register_renderer(renderer: BuiltinToolRenderer) -> None:
-    """Register (or replace) a CLI policy for a tool name.
+    """注册（或替换）指定工具名称的 CLI 策略。
 
-    Intended for tests and any future plugin that wants to override
-    the per-tool summary. Built-in tools are registered at import
-    time below.
+    用于测试及未来希望覆盖单工具摘要的插件。内置工具在下方导入时完成注册。
     """
 
     _POLICIES[renderer.name] = renderer
 
 
 def registered_renderers() -> dict[str, BuiltinToolRenderer]:
-    """Return a copy of the registered policies (for tests)."""
+    """返回已注册策略的副本（用于测试）。"""
 
     return dict(_POLICIES)
 
 
-# --- defaults --------------------------------------------------------------
+# --- 默认实现 --------------------------------------------------------------
 
 
 def _default_use_preview(tool_name: str, tool_input: Any) -> str:
-    """Generic preview used when no tool-specific renderer exists."""
+    """当不存在工具专用渲染器时使用的通用预览。"""
 
     preview = _summarize_arguments(_as_dict(tool_input), limit=120)
     if preview:
@@ -192,7 +175,7 @@ def _default_use_preview(tool_name: str, tool_input: Any) -> str:
 
 
 def _summarize_arguments(arguments: dict[str, Any], *, limit: int = 120) -> str:
-    """Format a tool call's input as a bounded one-line preview."""
+    """将工具调用的输入格式化为有界的单行预览。"""
 
     parts: list[str] = []
     for key, value in arguments.items():
@@ -225,7 +208,7 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-# --- shared helpers --------------------------------------------------------
+# --- 共享辅助函数 --------------------------------------------------------
 
 
 def _metadata_path(metadata: dict[str, Any], workspace: Path) -> str:
@@ -276,14 +259,13 @@ def _error_summary(
     return f"[{tool_name} error] {error}{suffix}"
 
 
-# --- per-tool policies -----------------------------------------------------
+# --- 单工具策略 -----------------------------------------------------
 
 
 def _bash_use_preview(tool_name: str, tool_input: Any) -> str:
-    """Show the first ~2 lines / 160 chars of the command, per the reference.
+    """按照参考设计展示命令的前两行或前 160 字符。
 
-    Matches ``BashTool/UI.tsx``'s ``MAX_COMMAND_DISPLAY_LINES = 2`` /
-    ``MAX_COMMAND_DISPLAY_CHARS = 160`` budget.
+    对应 BashTool/UI.tsx 中的 MAX_COMMAND_DISPLAY_LINES = 2 与 MAX_COMMAND_DISPLAY_CHARS = 160 预算。
     """
 
     cmd = ""
@@ -439,8 +421,7 @@ def _edit_file_success(result: ToolExecutionResult, workspace: Path | None) -> s
     return f"[edit_file] Edited {path} with {replacement_count} replacement(s)"
 
 
-# Register the built-in policies. Unknown / MCP tools fall through to
-# the generic dispatcher in :func:`render_tool_result`.
+# 注册内置策略。未知工具或 MCP 工具将回退到 render_tool_result 中的通用分发器。
 register_renderer(
     BuiltinToolRenderer(
         name="bash",
@@ -492,7 +473,7 @@ register_renderer(
 
 __all__ = [
     "BuiltinToolRenderer",
-    "RENDERERS",  # legacy alias kept for tests
+    "RENDERERS",  # 保留用于测试的旧版别名
     "ToolCliRenderer",
     "ToolResultRenderer",
     "register_renderer",
@@ -504,15 +485,14 @@ __all__ = [
 ]
 
 
-# --- legacy compatibility -------------------------------------------------
+# --- 遗留兼容 -------------------------------------------------
 
 
 def _legacy_dispatch_for(name: str, result: ToolExecutionResult, workspace: Path) -> str:
-    """Adapt the new policy API back to the old ``ToolResultRenderer`` shape.
+    """将新策略 API 适配回旧版 ToolResultRenderer 形式。
 
-    Some pre-refactor tests still import a ``RENDERERS`` map and look
-    up a callable by tool name. This shim bridges the two APIs without
-    forking the policy interface.
+    部分重构前的测试仍导入 RENDERERS 映射并通过工具名查找可调用对象。
+    此适配垫片在不分叉策略接口的前提下桥接两个 API。
     """
 
     policy = _POLICIES.get(name)
@@ -527,9 +507,8 @@ def _legacy_dispatch_for(name: str, result: ToolExecutionResult, workspace: Path
         return render_fallback_tool_result(result)
 
 
-# Some tests and downstream code still import a ``RENDERERS`` map of
-# ``ToolResultRenderer`` callables. The map is built once from the
-# registered policies.
+# 部分测试与下游代码仍导入 ToolResultRenderer 可调用对象的 RENDERERS 映射。
+# 该映射从已注册的策略中一次性构建。
 RENDERERS: dict[str, ToolResultRenderer] = {
     name: (lambda _name=name: (lambda result, workspace: _legacy_dispatch_for(_name, result, workspace)))()
     for name in _POLICIES

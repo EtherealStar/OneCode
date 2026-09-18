@@ -1,4 +1,4 @@
-"""Types for OneCode long-term memory."""
+"""OneCode 长期记忆的类型定义。"""
 
 from __future__ import annotations
 

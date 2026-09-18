@@ -1,4 +1,4 @@
-"""Tool descriptor for loading OneCode skills on demand."""
+"""按需加载 OneCode 技能的工具描述符。"""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def _validator_for(
     cwd: Path | Callable[[], Path],
 ):
     def validate(tool_input: dict[str, Any], runtime: ToolRuntime) -> ValidationResult:
-        """Validate that the requested skill exists and may be invoked."""
+        """校验所请求的技能是否存在且允许被调用。"""
 
         skill_name = _skill_name(tool_input)
         if not skill_name:
@@ -134,7 +134,7 @@ def _handler_for(
         tool_input: dict[str, Any],
         runtime: ToolRuntime,
     ) -> ToolExecutionResult:
-        """Load an inline skill attachment or delegate a fork skill to a child."""
+        """加载内联技能附件，或将 fork 技能委派给子代理。"""
 
         skill_name = _skill_name(tool_input)
         command = skill_provider.find_skill(skill_name, _resolve_cwd(cwd))
@@ -173,7 +173,7 @@ def _handler_for(
 
 
 def _skill_attachment(command: SkillCommand, args: str) -> dict[str, Any]:
-    """Build the durable internal attachment that later projects into context."""
+    """构建持久化内部附件，后续投影到上下文。"""
 
     content = _expanded_content(command)
     return AttachmentMessage(

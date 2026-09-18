@@ -1,4 +1,4 @@
-"""Read-only skill catalog view."""
+"""只读技能目录视图。"""
 
 from __future__ import annotations
 

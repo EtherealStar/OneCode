@@ -1,10 +1,8 @@
-"""Virtual message viewport.
+"""虚拟消息视口。
 
-Only the visible messages plus overscan are mounted as widgets. Off-screen
-content is expressed by the two spacer widgets using
-:class:`VirtualLayoutIndex`. Layout keys are stable message identities, so a
-tool finishing out of order never reorders the timeline; only the changed
-widget is updated.
+仅将可见消息加上预加载区域挂载为控件。屏幕外的内容通过两个占位控件利用
+:class:`VirtualLayoutIndex` 来模拟呈现。布局键采用稳定的消息标识符，
+因此工具乱序执行完成绝不会扰乱时间线的顺序，仅有变更的控件会被更新。
 """
 
 from __future__ import annotations
@@ -30,12 +28,12 @@ from ui.tui.renderers.tool import (
 
 LayoutKey = tuple[str, Hashable]
 
-#: Reference overscan: mount this many messages above and below the viewport.
+#: 基准预加载行数：在视口上下各额外挂载指定数量的消息。
 DEFAULT_OVERSCAN = 8
 
 
 class DetailRequested(Message):
-    """Emitted when an expanded tool needs its external detail loaded."""
+    """当展开的工具需要加载外部详细数据时发出该消息。"""
 
     def __init__(
         self,
@@ -54,7 +52,7 @@ class _Spacer(Static):
 
 
 class MessageWidget(Static):
-    """A stable message widget identified by ``message_id``."""
+    """由 ``message_id`` 唯一标识的稳定消息控件。"""
 
     def __init__(
         self,
@@ -95,7 +93,7 @@ class MessageWidget(Static):
         )
 
     def missing_detail_requests(self) -> tuple[UiPart, ...]:
-        """Tool parts whose external detail must be fetched to expand."""
+        """展开时需要拉取外部详情的工具分片元组。"""
 
         if not self._expanded:
             return ()
@@ -118,7 +116,7 @@ class MessageWidget(Static):
 
 
 class NewContentButton(Static):
-    """Visible when the user has scrolled away from the bottom."""
+    """当用户从底部向上滚动离开时显示的新内容提示按钮。"""
 
     def on_click(self) -> None:
         if self.parent is None:
@@ -130,7 +128,7 @@ class NewContentButton(Static):
 
 
 class MessageViewport(VerticalScroll):
-    """Full-document virtual viewport over the projection's messages."""
+    """覆盖投影消息的全量文档虚拟滚动视口。"""
 
     def __init__(
         self,
@@ -170,7 +168,7 @@ class MessageViewport(VerticalScroll):
         yield _Spacer(id="virtual-top-spacer")
         yield _Spacer(id="virtual-bottom-spacer")
 
-    # --- reads used by tests and the containing view ----------------------
+    # --- 测试与外层视图使用的读取属性 -----------------------------------
 
     @property
     def visible_range(self) -> tuple[int, int]:
@@ -187,7 +185,7 @@ class MessageViewport(VerticalScroll):
     def widget_for(self, message_id: Hashable) -> MessageWidget | None:
         return self._widgets.get(("message", message_id))
 
-    # --- projection sync ---------------------------------------------------
+    # --- 投影同步 ---------------------------------------------------------
 
     def refresh_projection(self, projection: ConversationProjection) -> None:
         self.sync_projection(
@@ -326,7 +324,7 @@ class MessageViewport(VerticalScroll):
         self.call_after_refresh(self._complete_jump_to_latest, generation)
         self._sync_new_content_button()
 
-    # --- scroll overrides --------------------------------------------------
+    # --- 滚动重载与监听 ---------------------------------------------------
 
     def scroll_to(self, *args: Any, **kwargs: Any) -> None:
         if not self._issuing_internal_scroll:
@@ -365,7 +363,7 @@ class MessageViewport(VerticalScroll):
             )
             self.call_after_refresh(self._finish_resize)
 
-    # --- internals ---------------------------------------------------------
+    # --- 内部实现方法 -----------------------------------------------------
 
     def _document_item(self, key: LayoutKey) -> UiMessage | None:
         for item_key, item in self._documents:

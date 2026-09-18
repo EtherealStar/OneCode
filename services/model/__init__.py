@@ -1,1 +1,1 @@
-"""Model client boundary and normalized model types."""
+"""模型客户端边界与归一化模型类型。"""

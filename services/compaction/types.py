@@ -1,4 +1,4 @@
-"""Shared types for context compaction."""
+"""上下文压缩的共享类型定义。"""
 
 from __future__ import annotations
 

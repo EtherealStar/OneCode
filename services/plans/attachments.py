@@ -1,4 +1,4 @@
-"""Attachment payloads produced by the plan subsystem."""
+"""计划子系统生成的附件载荷。"""
 
 from __future__ import annotations
 

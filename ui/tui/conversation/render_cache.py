@@ -1,11 +1,10 @@
-"""Streaming Markdown block cache.
+"""流式 Markdown 块渲染缓存。
 
-Rich's ``Markdown`` parses at construction time, so caching instances is
-caching parse results. During streaming we only need to re-parse the unclosed
-tail; closed blocks are reused. When the body is finalised we re-parse the whole
-source once, because blank-line block splitting cannot represent every
-cross-block construct (loose lists, link reference definitions, and so on).
-Correctness wins over the incremental optimisation.
+Rich 的 ``Markdown`` 在构造时进行语法解析，因此缓存其实例即是缓存解析结果。
+在流式输出期间，仅需重新解析未闭合的末尾片段；已闭合的块直接复用。
+当正文最终提交完毕时，重新全量解析一次原始文本，
+因为基于空行的分块机制无法覆盖所有跨块语法结构（如松散列表、链接引用定义等）。
+正确性优先于增量优化。
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ _FENCE_MARKERS = ("```", "~~~")
 
 
 class _InsetCodeBlock(CodeBlock):
-    """Code block: surface background plus a two-cell left inset."""
+    """代码块：表面背景色并在左侧缩进两个字符宽度。"""
 
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
@@ -40,7 +39,7 @@ class _InsetCodeBlock(CodeBlock):
 
 
 class OneCodeMarkdown(Markdown):
-    """Markdown that applies the TUI tokens to fenced and indented code."""
+    """将 TUI 设计令牌应用于围栏代码块和缩进代码块的 Markdown 渲染器。"""
 
     elements = {
         **Markdown.elements,
@@ -50,11 +49,10 @@ class OneCodeMarkdown(Markdown):
 
 
 def _scan(source: str) -> tuple[list[str], str]:
-    """Split ``source`` into closed blocks and an unclosed tail.
+    """将 ``source`` 切分为已闭合的代码块列表与未闭合的末尾片段。
 
-    Blank lines outside a fence are block boundaries; blank lines inside a
-    fence belong to the code content. Mixed fence markers are tracked so a
-    ``~~~`` block is not closed by a ```` ``` ```` line and vice versa.
+    围栏代码块外部的空行视为块边界；围栏内部的空行属于代码内容。
+    分别追踪不同的围栏标记，确保 ``~~~`` 代码块不会被 ```` ``` ```` 误闭合，反之亦然。
     """
 
     blocks: list[str] = []
@@ -84,14 +82,14 @@ def _scan(source: str) -> tuple[list[str], str]:
 
 
 def split_closed_blocks(source: str) -> tuple[str, str]:
-    """Return ``(closed_prefix, unclosed_tail)`` source text."""
+    """返回 ``(closed_prefix, unclosed_tail)`` 源码文本元组。"""
 
     blocks, tail = _scan(source)
     return "".join(blocks), tail
 
 
 class MarkdownBlockCache:
-    """Incremental render cache for a single growing text part."""
+    """针对单个持续增长的文本分片的增量渲染缓存。"""
 
     def __init__(self) -> None:
         self._closed: list[str] = []

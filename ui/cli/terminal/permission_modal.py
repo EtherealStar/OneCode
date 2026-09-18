@@ -1,4 +1,4 @@
-"""Transient permission modal state and rendering."""
+"""瞬态权限弹窗状态与渲染。"""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class PermissionModal:
 
 
 def build_permission_choices(request: PermissionRequest) -> tuple[PermissionChoice, ...]:
-    """Build the three transient choices from policy-provided options."""
+    """根据策略提供的选项构建三个瞬态选择项。"""
 
     if len(request.options) != 3:
         raise ValueError("TTY permission prompts require exactly three options.")

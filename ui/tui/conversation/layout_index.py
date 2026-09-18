@@ -1,8 +1,7 @@
-"""Estimated message heights and scroll-row -> message mapping.
+"""估算消息高度与 滚动行 -> 消息 映射索引。
 
-The index stores one estimated/measured height per layout key and rebuilds the
-prefix sums on sync/update. This is linear work, not constant time; the point
-is that the viewport only creates widgets for visible keys plus overscan.
+该索引针对每个布局键保存一个估算/实测高度，并在同步或更新时重建前缀和数组。
+这是线性时间复杂度的计算，而非常数时间；其核心价值在于保证视口仅针对可见消息及预加载区域创建控件。
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from collections.abc import Hashable, Iterable
 
 
 class VirtualLayoutIndex:
-    """Map scroll rows to layout keys and keep estimated heights."""
+    """将滚动行映射到布局键，并维护估算高度。"""
 
     def __init__(
         self,

@@ -1,22 +1,16 @@
-"""Replay a restored message chain into the main static region.
+"""将恢复的消息链重放至主静态区域。
 
-When a session is resumed, its historical messages must appear in the
-terminal scrollback exactly as they would have during the original
-session. This module is the single entry point that walks a restored
-message chain and re-emits it through the *normal* static-output
-renderers in :mod:`ui.cli.terminal.static_output`.
+恢复会话时，其历史消息必须以与原始会话完全相同的方式展示在终端回滚历史中。
+本模块是遍历已恢复消息链并通过 ui.cli.terminal.static_output 中的常规静态输出渲染器
+重新发送的唯一步骤。
 
-Design constraints (see
-``docs/exec-plans/active/cli-resume-true-repl-recovery.md``):
+设计约束：
 
-- No resume-specific summary format. User lines reuse the reverse-video
-  :func:`print_user_submitted`, assistant replies reuse
-  :func:`print_assistant_markdown`, and tool results reuse
-  :func:`print_tool_result`. As the normal rendering paths evolve, resume
-  automatically follows.
-- This function only replays into the static region. It does not mutate the
-  ``MessageStore``, execute tools, call a provider, or write traces. It
-  consumes already-restored message dicts.
+- 无专门的恢复摘要格式。用户行复用反色高亮的 print_user_submitted，
+  assistant 回复复用 print_assistant_markdown，工具结果复用 print_tool_result。
+  随着常规渲染路径的演进，恢复功能自动跟进。
+- 本函数仅重放至静态区域。它不变更 MessageStore，不执行工具，不调用模型供应商，
+  也不记录追踪。它消费已经恢复的消息字典。
 """
 
 from __future__ import annotations
@@ -38,11 +32,10 @@ def replay_messages_to_static(
     brightness: str,
     workspace: Path | None = None,
 ) -> None:
-    """Replay restored messages into the static region (scrollback).
+    """将已恢复的消息重放至静态区域（回滚历史）。
 
-    Messages are emitted in order. Each role is routed to the same
-    static-output function the live session uses, so restored history is
-    visually identical to a normal session.
+    消息按顺序输出。每个角色路由至实时会话所使用的同一静态输出函数，
+    确保恢复的历史记录在视觉上与正常会话完全一致。
     """
 
     for message in messages:
@@ -53,9 +46,7 @@ def replay_messages_to_static(
             _replay_assistant(message)
         elif role == "tool_result":
             _replay_tool_result(message, workspace=workspace)
-        # ``attachment`` and any unknown roles are intentionally skipped:
-        # the live main screen has no stable static rendering for them, so
-        # resume must not invent one.
+        # attachment 及未知角色有意跳过：实时主屏幕没有为其提供稳定的静态渲染，因此恢复过程不得凭空捏造。
 
 
 def _replay_user(message: dict[str, Any], *, brightness: str) -> None:
@@ -66,9 +57,7 @@ def _replay_user(message: dict[str, Any], *, brightness: str) -> None:
 
 def _replay_assistant(message: dict[str, Any]) -> None:
     text = _message_text(message.get("content"))
-    # Assistant messages that only carry tool calls (no displayable text)
-    # produce nothing here, matching the live scrollback which does not
-    # print a synthetic "assistant: <tool call>" line.
+    # 仅携带工具调用（无可见文本）的 assistant 消息在此处不产生任何输出，与实时回滚历史保持一致（不打印虚假的 assistant: <tool call> 行）。
     if text:
         print_assistant_markdown(text)
 
@@ -86,11 +75,10 @@ def _replay_tool_result(message: dict[str, Any], *, workspace: Path | None) -> N
 
 
 def _message_text(content: Any) -> str:
-    """Extract displayable text from a message ``content`` field.
+    """从消息 content 字段中提取可显示的文本。
 
-    Content is normally a plain string, but may be a list of content
-    blocks (e.g. multimodal). We concatenate the text of each block and
-    ignore non-text parts.
+    内容通常为普通字符串，但也可以是内容块列表（如多模态）。
+    我们拼接每个块的文本并忽略非文本部分。
     """
 
     if isinstance(content, str):

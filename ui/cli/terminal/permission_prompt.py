@@ -1,4 +1,4 @@
-"""TTY permission prompter backed by the terminal interaction host."""
+"""由终端交互宿主支持的 TTY 权限提示器。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from ui.cli.terminal.interaction_host import TerminalInteractionHost
 
 
 class TtyPermissionPrompter:
-    """Thin permission prompter; UI ownership lives in the interaction host."""
+    """轻量权限提示器；UI 所有权归属于交互宿主。"""
 
     def __init__(self, host: TerminalInteractionHost) -> None:
         self._host = host

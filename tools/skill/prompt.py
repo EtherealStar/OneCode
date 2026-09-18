@@ -1,4 +1,4 @@
-"""System prompt guidance for the skill tool."""
+"""skill 工具的系统提示词指引。"""
 
 PROMPT = """Purpose:
 Load and apply a visible OneCode skill by name.

@@ -1,4 +1,4 @@
-"""Context reconstruction boundary for each model call."""
+"""每次模型调用前的上下文重建边界。"""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class NoOpContextPreparer:
 
 
 class StaticPromptAssembler:
-    """Testing helper for callers that need a fixed prompt."""
+    """为需要固定提示词的调用方提供的测试辅助类。"""
 
     def __init__(self, system_prompt: str = "") -> None:
         self._system_prompt = system_prompt

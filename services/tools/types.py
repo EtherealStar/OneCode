@@ -1,4 +1,4 @@
-"""Shared tool call and result types."""
+"""共享工具调用与结果类型。"""
 
 from __future__ import annotations
 
@@ -123,11 +123,11 @@ class ToolDescriptor:
 
 
 def is_guard_policy_allowed(policy: GuardPolicy, runtime: ToolRuntime) -> bool:
-    """Return whether a handler may proceed after its own guard check.
+    """判断处理器在其自身的防护检查之后是否可以继续执行。
 
-    Handlers keep their local guard checks as a final safety net. This helper
-    lets the executor's permission approval cover matching ``ask`` policies
-    without allowing a deny result to be bypassed.
+    处理器保留其本地防护检查作为最终安全兜底。该辅助函数
+    允许执行器的权限批准覆盖匹配的 ask 策略，
+    同时不允许绕过 deny 结果。
     """
 
     if policy.action == "allow":

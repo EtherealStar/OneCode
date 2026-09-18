@@ -1,4 +1,4 @@
-"""Wrap discovered MCP tools as OneCode ToolDescriptors."""
+"""将已发现的 MCP 工具包装为 OneCode 的 ToolDescriptor。"""
 
 from __future__ import annotations
 

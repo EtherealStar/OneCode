@@ -1,4 +1,4 @@
-"""glob tool package."""
+"""glob 工具包。"""
 
 from tools.glob.tool import descriptor
 

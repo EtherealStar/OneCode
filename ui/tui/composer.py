@@ -1,8 +1,7 @@
-"""Composer input widget for the OneCode TUI.
+"""OneCode TUI 编辑输入框控件。
 
-A thin :class:`~textual.widgets.TextArea` subclass that owns submit/newline/
-completion key semantics and the completion overlay handshake. It posts intent
-messages and never runs commands, gathers attachments, or mutates the runtime.
+一个精简的 :class:`~textual.widgets.TextArea` 子类，负责提交/换行/补全按键语义以及与补全浮层的交互握手。
+仅发布意图消息，绝不执行命令、收集附件或更改运行时状态。
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class Composer(TextArea):
             self.text = text
             self.cursor_offset = cursor_offset
 
-    # --- key semantics ----------------------------------------------------
+    # --- 按键语义 ---------------------------------------------------------
 
     async def _on_key(self, event) -> None:
         overlay = self._overlay()
@@ -78,7 +77,7 @@ class Composer(TextArea):
             event.stop()
             self.post_message(self.CancelRequested())
             return
-        # Escape is owned by the overlay/modal layer, not the composer.
+        # Escape 键由浮层/模态对话框层处理，而非输入框负责。
         await super()._on_key(event)
 
     def action_submit_text(self) -> None:
@@ -91,7 +90,7 @@ class Composer(TextArea):
     def action_complete(self) -> None:
         self.post_message(self.CompletionRequested(self.text, self.cursor_offset()))
 
-    # --- helpers ----------------------------------------------------------
+    # --- 辅助方法 ----------------------------------------------------------
 
     def cursor_offset(self) -> int:
         row, column = self.cursor_location

@@ -1,9 +1,8 @@
-"""OneCode TUI visual tokens and theme registration.
+"""OneCode TUI 视觉设计令牌与主题注册。
 
-The palette is the single code mapping for the full-screen TUI. Renderers
-only reference named styles from :data:`RICH_STYLES`; they never hard-code
-colours. Textual layout tokens live on :data:`ONECODE_THEME` so widget CSS can
-use ``$primary``/``$surface``/``$text-muted`` and friends.
+调色板是全屏 TUI 的唯一代码色彩映射。渲染器仅引用 :data:`RICH_STYLES` 中的具名样式；
+绝不硬编码颜色。Textual 布局令牌定义在 :data:`ONECODE_THEME` 上，
+以便控件 CSS 使用 ``$primary``/``$surface``/``$text-muted`` 等变量。
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from rich.theme import Theme as RichTheme
 from textual.app import App
 from textual.theme import Theme
 
-# --- palette ---------------------------------------------------------------
+# --- 调色板 ----------------------------------------------------------------
 
 BG = "#1A1B20"
 SURFACE = "#23252D"
@@ -39,15 +38,14 @@ ONECODE_THEME = Theme(
     panel=SURFACE_2,
     dark=True,
     variables={
-        # Override Textual's derived alpha values so ``$text-muted`` hits the
-        # token exactly.
+        # 覆盖 Textual 推导的 alpha 透明度值，使 ``$text-muted`` 精确匹配设计令牌。
         "text-muted": MUTED,
         "tool": TOOL,
         "surface-2": SURFACE_2,
     },
 )
 
-#: Named Rich styles shared by the renderers and Rich Markdown.
+#: 渲染器与 Rich Markdown 共享的具名 Rich 样式。
 RICH_STYLES: dict[str, str] = {
     "ui.label.user": MUTED,
     "ui.label.agent": f"bold {ACCENT}",
@@ -67,7 +65,7 @@ RICH_STYLES: dict[str, str] = {
     "ui.todo.active.text": TEXT,
     "ui.todo.done": MUTED,
     "ui.todo.done.glyph": SUCCESS,
-    # Rich's Markdown renderer only honours ``markdown.*`` named styles.
+    # Rich 的 Markdown 渲染器仅支持 ``markdown.*`` 具名样式。
     "markdown.h1": f"bold {TEXT}",
     "markdown.h2": f"bold {TEXT}",
     "markdown.h3": f"bold {MUTED}",
@@ -96,7 +94,7 @@ MARKDOWN_CODE_THEME = _detect_code_theme()
 
 
 def apply_theme(app: App[object]) -> None:
-    """Register and select the OneCode theme, injecting named Rich styles."""
+    """注册并选用 OneCode 主题，注入具名 Rich 样式。"""
 
     app.register_theme(ONECODE_THEME)
     app.theme = ONECODE_THEME.name

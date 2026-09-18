@@ -1,4 +1,4 @@
-"""Model client protocol."""
+"""模型客户端协议。"""
 
 from __future__ import annotations
 

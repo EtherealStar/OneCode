@@ -1,8 +1,7 @@
-"""Session listing, resume-target resolution, and runtime restoration.
+"""会话列举、恢复目标解析与运行时恢复。
 
-This is the application-layer home for the resume business that used to live
-in ``ui.cli.resume``. It depends only on core/services and the application
-runtime, so both batch and TUI adapters can share it.
+本模块是此前位于 ui.cli.resume 中的会话恢复业务在应用层的归属地。
+它仅依赖 core/services 与应用运行时，供 batch 和 TUI 适配器共同复用。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Prompt text for long-term memory behavior."""
+"""长期记忆行为的提示词文本。"""
 
 from __future__ import annotations
 

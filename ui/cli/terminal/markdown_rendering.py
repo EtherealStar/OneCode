@@ -1,39 +1,26 @@
-"""Terminal-aware Markdown rendering for the CLI.
+"""CLI 终端感知的 Markdown 渲染器。
 
-This module houses two related helpers:
+本模块包含两个相关的辅助能力：
 
-- :func:`parse_markdown_table_block` /
-  :func:`render_markdown_table_block` — GFM table parser and
-  width-aware renderer (column-width allocation, vertical fallback
-  for narrow terminals, hard-wrap for over-long cells).
+- parse_markdown_table_block / render_markdown_table_block：GFM 表格解析器与
+  终端宽度感知渲染器（列宽分配、窄终端垂直回退降级、超长单元格硬折行）。
 
-- :func:`render_cached_markdown` and :func:`_render_assistant_segment`
-  — Rich-Markdown-backed text renderer used by both the dynamic
-  preview and the static commit path. The dynamic preview path goes
-  through :meth:`AssistantTailState.coalesce_with_cache` (see
-  ``ui/cli/terminal/turn_render_state.py``) which keeps a stable
-  prefix of already-rendered lines so successive deltas don't pay
-  the full re-lex cost.
+- render_cached_markdown 和 _render_assistant_segment：
+  由 Rich Markdown 支持的文本渲染器，动态预览和静态提交路径均使用该渲染器。
+  动态预览路径通过 AssistantTailState.coalesce_with_cache 处理，
+  保留已渲染行的稳定前缀，避免连续增量支付完整的重新词法解析开销。
 
-The GFM table rendering follows the column-width / vertical-fallback
-strategy from the reference ``MarkdownTable.tsx`` implementation.
+GFM 表格渲染遵循参考实现中的列宽分配与垂直回退降级策略。
 
-Constraints (mirroring the reference):
+约束条件：
 
-- :data:`SAFETY_MARGIN` — leave a few columns of headroom so terminal
-  resizes, parent indent (the ``●`` tool bullet) and other races don't
-  cause alternating-frame clip-and-flicker.
-- :data:`MIN_COLUMN_WIDTH` — degenerate columns are useless; floor each
-  column at 3 cells.
-- :data:`MAX_ROW_LINES` — if any row would wrap to more than 4 lines
-  in the horizontal layout, fall back to vertical key-value format.
+- SAFETY_MARGIN：预留若干列的安全边距，防止终端缩放、父级缩进等竞争条件导致交替帧截断与闪烁。
+- MIN_COLUMN_WIDTH：退化列无意义，单列宽度保底为 3 单元格。
+- MAX_ROW_LINES：如果横向布局中任一行折行超过 4 行，则回退为键值对形式的垂直布局。
 
-The renderer is intentionally minimal: it handles plain text and
-single-line emphasis inside cells, and degrades anything more exotic
-to ``rich.text.Text`` rendering. Width measurement uses :mod:`wcwidth`
-so Chinese, emoji, and other wide characters don't desync alignment.
-ANSI styling is preserved by stripping SGR codes for measurement and
-then re-inserting them around padded output.
+渲染器保持轻量设计：处理单元格内的纯文本和单行强调格式，超出范围的内容降级为
+rich.text.Text 渲染。使用 wcwidth 测量宽度以确保中文、emoji 及宽字符对齐不发生错位。
+通过剥离 SGR ANSI 样式码进行测量并在填充输出后重新插入，从而保留样式。
 """
 
 from __future__ import annotations
@@ -54,11 +41,10 @@ MAX_ROW_LINES = 4
 
 @dataclass(frozen=True)
 class MarkdownTableBlock:
-    """A parsed GFM-style markdown table block.
+    """解析后的 GFM 风格 Markdown 表格块。
 
-    ``headers`` and ``rows`` are tuples of cell strings (without
-    surrounding ``|``). ``alignments`` is one of ``"left"``,
-    ``"right"``, ``"center"``, ``"default"`` per column.
+    headers 与 rows 为单元格字符串元组（不包含两端的竖线）。
+    alignments 为每列的对齐方式，取值为 left、right、center 或 default 之一。
     """
 
     headers: tuple[str, ...]
@@ -75,13 +61,13 @@ _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 
 
 def parse_markdown_table_block(text: str) -> MarkdownTableBlock | None:
-    """Return the first complete GFM table block in ``text`` or ``None``.
+    """返回 text 中的第一个完整 GFM 表格块；若未找到则返回 None。
 
-    A complete GFM table is at least three consecutive lines:
+    完整的 GFM 表格至少包含连续三行：
 
-    1. header row — ``| a | b | c |``
-    2. separator row — ``| --- | :---: | ---: |``
-    3. one or more body rows of the same shape as the header
+    1. 表头行：| a | b | c |
+    2. 分隔行：| --- | :---: | ---: |
+    3. 一行或多行与表头形状一致的主体行
     """
 
     lines = text.split("\n")
@@ -91,7 +77,7 @@ def parse_markdown_table_block(text: str) -> MarkdownTableBlock | None:
             continue
         if not _TABLE_SEPARATOR_RE.match(lines[i + 1] or ""):
             continue
-        # Found the start of a table; collect body rows.
+        # 找到表格起始位置；收集表格主体各行。
         body: list[tuple[str, ...]] = []
         j = i + 2
         while j < len(lines) and _TABLE_ROW_RE.match(lines[j] or ""):
@@ -101,7 +87,7 @@ def parse_markdown_table_block(text: str) -> MarkdownTableBlock | None:
             return None
         headers = _split_row(line)
         alignments = _parse_alignments(lines[i + 1])
-        # Pad alignments to header count if needed.
+        # 如有需要，将对齐配置填充至与表头数量一致。
         if len(alignments) < len(headers):
             alignments = alignments + ("default",) * (len(headers) - len(alignments))
         return MarkdownTableBlock(
@@ -113,7 +99,7 @@ def parse_markdown_table_block(text: str) -> MarkdownTableBlock | None:
 
 
 def _split_row(line: str) -> tuple[str, ...]:
-    """Split a ``| a | b | c |`` line into ``("a", "b", "c")`` cells."""
+    """将 | a | b | c | 行拆分为 ("a", "b", "c") 单元格元组。"""
 
     stripped = line.strip()
     if stripped.startswith("|"):
@@ -125,7 +111,7 @@ def _split_row(line: str) -> tuple[str, ...]:
 
 
 def _parse_alignments(separator_line: str) -> tuple[str, ...]:
-    """Convert a separator row into per-column alignment tokens."""
+    """将分隔行转换为各列的对齐方式标记。"""
 
     cells = _split_row(separator_line)
     alignments = []
@@ -145,11 +131,10 @@ def _parse_alignments(separator_line: str) -> tuple[str, ...]:
 
 
 def _display_width(text: str) -> int:
-    """Width of ``text`` in terminal cells.
+    """计算 text 在终端单元格中的显示宽度。
 
-    Strips ANSI escapes first so embedded styles don't count as visible
-    characters. Uses :mod:`wcwidth` when available so wide CJK / emoji
-    characters occupy 2 cells.
+    优先剥离 ANSI 转义序列，避免内嵌样式占用可见字符宽度。
+    在 wcwidth 可用时使用它，使中日韩宽字符与 emoji 占用 2 个单元格。
     """
 
     stripped = _ANSI_ESCAPE_RE.sub("", text)
@@ -157,14 +142,13 @@ def _display_width(text: str) -> int:
         return len(stripped)
     width = wcwidth.wcswidth(stripped)
     if width < 0:
-        # wcwidth returns -1 for unprintable characters; fall back to
-        # raw character count so we never under-size a column.
+        # wcwidth 对不可打印字符返回 -1；回退到原始字符计数，避免列宽不足。
         return len(stripped)
     return width
 
 
 def _min_cell_width(text: str) -> int:
-    """Minimum sensible column width — the longest whitespace-separated token."""
+    """合理的最小列宽，即由空白分隔的最长词元宽度。"""
 
     stripped = _ANSI_ESCAPE_RE.sub("", text).strip()
     if not stripped:
@@ -176,12 +160,11 @@ def _min_cell_width(text: str) -> int:
 
 
 def _wrap_text(text: str, width: int, *, hard: bool = False) -> list[str]:
-    """Wrap ``text`` to fit ``width``.
+    """将 text 折行以适应 width。
 
-    ``hard=True`` allows breaking inside words (used when columns are
-    narrower than the longest word). Otherwise we break on whitespace.
-    Trailing whitespace is stripped. Empty input returns ``[""]`` so
-    the caller always has at least one line for the cell.
+    hard=True 允许在单词内部断行（用于列宽小于最长单词的情况）。
+    否则在空白字符处断行。尾随空白会被剥离。
+    输入为空时返回 [""]，保证调用方始终至少获取一行。
     """
 
     if width <= 0:
@@ -209,10 +192,9 @@ def _wrap_text(text: str, width: int, *, hard: bool = False) -> list[str]:
             current = token
             current_width = token_width
         else:
-            # Token is wider than the column. Hard-wrap.
+            # 词元宽度超过列宽，执行硬折行。
             if hard:
-                # Naive character-level hard wrap that respects wide
-                # character widths.
+                # 遵循宽字符宽度的简单字符级硬折行。
                 buf = ""
                 buf_w = 0
                 for ch in token:
@@ -228,8 +210,7 @@ def _wrap_text(text: str, width: int, *, hard: bool = False) -> list[str]:
                     current = buf
                     current_width = _display_width(current)
             else:
-                # Soft fallback: put the whole token on its own line
-                # and accept that it may overflow the column visually.
+                # 软回退：将整个词元单独放在一行，允许视觉上略微超出列宽。
                 current = token
                 current_width = token_width
     if current or not lines:
@@ -238,7 +219,7 @@ def _wrap_text(text: str, width: int, *, hard: bool = False) -> list[str]:
 
 
 def _pad_aligned(text: str, visible_width: int, width: int, align: str) -> str:
-    """Pad ``text`` to ``width`` columns given its visible width."""
+    """根据可见宽度将 text 填充对齐至 width 列。"""
 
     if visible_width >= width:
         return text
@@ -257,15 +238,14 @@ def _column_widths(
     *,
     width: int,
 ) -> tuple[list[int], bool, int]:
-    """Return ``(column_widths, needs_hard_wrap, max_row_line_count)``.
+    """返回 (column_widths, needs_hard_wrap, max_row_line_count)。
 
-    Mirrors the reference's three-tier allocation:
+    遵循三层分配策略：
 
-    1. If the sum of ideal (un-wrapped) widths fits, use them.
-    2. Otherwise, allocate the min widths and distribute the remaining
-       space proportionally to each column's overflow.
-    3. If even the min widths don't fit, scale them down proportionally
-       and mark ``needs_hard_wrap=True`` so cells break long words.
+    1. 若理想（未折行）宽度之和容纳得下，直接使用理想宽度。
+    2. 否则分配最小宽度，并按各列溢出比例分配剩余空间。
+    3. 若最小宽度之和仍超出可用空间，按比例等比压缩并标记 needs_hard_wrap=True
+       以便单元格对长单词进行硬截断折行。
     """
 
     headers = block.headers
@@ -282,7 +262,7 @@ def _column_widths(
             col_ideal = max(col_ideal, _display_width(cell), MIN_COLUMN_WIDTH)
         min_widths[col] = col_min
         ideal_widths[col] = col_ideal
-    border_overhead = 1 + n * 3  # │ + (2 padding + 1 border) per column
+    border_overhead = 1 + n * 3  # 每列增加 1 个分隔线与 2 个内边距，另加起始分隔线
     available = max(width - border_overhead - SAFETY_MARGIN, n * MIN_COLUMN_WIDTH)
     total_min = sum(min_widths)
     total_ideal = sum(ideal_widths)
@@ -304,7 +284,7 @@ def _column_widths(
         needs_hard_wrap = True
         scale = available / total_min if total_min else 1.0
         column_widths = [max(int(w * scale), MIN_COLUMN_WIDTH) for w in min_widths]
-    # Calculate max row lines with the chosen widths.
+    # 使用选定的列宽计算最大行数。
     max_lines = 1
     for col, header in enumerate(headers):
         max_lines = max(
@@ -325,7 +305,7 @@ def _render_horizontal(
     *,
     width: int,
 ) -> list[str]:
-    """Render the table as a horizontal grid of ``│ ─ ┌ ┐`` characters."""
+    """将表格渲染为使用网格线字符的横向表格。"""
 
     column_widths, needs_hard_wrap, _ = _column_widths(block, width=width)
     alignments = block.alignments
@@ -336,7 +316,7 @@ def _render_horizontal(
             for c, cell in enumerate(cells)
         ]
         max_lines = max((len(w) for w in wrapped), default=1)
-        # Pad each cell to max_lines by centering it vertically.
+        # 将每个单元格垂直居中填充至 max_lines 行。
         offsets = [(max_lines - len(w)) // 2 for w in wrapped]
         result: list[str] = []
         for line_idx in range(max_lines):
@@ -382,10 +362,9 @@ def _render_vertical(
     *,
     width: int,
 ) -> list[str]:
-    """Render the table as ``header: value`` key-value rows.
+    """将表格渲染为 header: value 形式的键值对行。
 
-    Used when the horizontal layout would wrap to too many lines or
-    overflow the available width.
+    当横向布局折行过多或超出可用宽度时作为回退方案使用。
     """
 
     lines: list[str] = []
@@ -401,7 +380,7 @@ def _render_vertical(
             value = re.sub(r"\s+", " ", value).strip()
             if not value:
                 value = ""
-            # First line is narrower to fit the label.
+            # 第一行缩窄以容纳表头标签。
             first_line_width = max(width - _display_width(label) - 3, 10)
             subsequent_width = max(width - len(wrap_indent) - 1, 10)
             first_pass = _wrap_text(value, first_line_width)
@@ -428,27 +407,23 @@ def render_markdown_table_block(
     min_column_width: int = MIN_COLUMN_WIDTH,
     max_row_lines: int = MAX_ROW_LINES,
 ) -> list[str]:
-    """Render a parsed :class:`MarkdownTableBlock` to terminal lines.
+    """将解析后的 MarkdownTableBlock 渲染为终端文本行列表。
 
-    Returns a list of strings, one per terminal row. The function never
-    writes to stdout and never throws on degenerate input — it falls
-    back to the vertical layout whenever the horizontal layout would
-    exceed ``max_row_lines`` lines per row or come within
-    ``safety_margin`` cells of the right edge.
+    返回字符串列表，每项对应一个终端行。该函数不向 stdout 输出，
+    也不在畸形输入时抛出异常。当横向布局超过每行 max_row_lines 折行上限
+    或距离右边界不足 safety_margin 时，自动回退到垂直键值对布局。
     """
 
-    del safety_margin, min_column_width  # kept for API compatibility
+    del safety_margin, min_column_width  # 保留以维持接口兼容性
     column_widths, needs_hard_wrap, max_lines = _column_widths(block, width=width)
     if max_lines > max_row_lines:
         return _render_vertical(block, width=width)
     lines = _render_horizontal(block, width=width)
-    # Safety check: if any rendered line is within the safety margin of
-    # the right edge, fall back to vertical so terminal resize races
-    # don't cause alternating-frame clipping.
+    # 安全检查：若任意渲染行超出安全边界，回退到垂直模式，防止终端缩放竞争引起帧交替截断。
     max_line_width = max((_display_width(line) for line in lines), default=0)
     if max_line_width > width - SAFETY_MARGIN:
         return _render_vertical(block, width=width)
-    _ = column_widths, needs_hard_wrap  # keep locals referenced
+    _ = column_widths, needs_hard_wrap  # 保持局部变量引用
     return lines
 
 
@@ -464,7 +439,7 @@ __all__ = [
 ]
 
 
-# --- assistant-text rendering ---------------------------------------------
+# --- assistant 文本渲染 ---
 
 
 import io as _io
@@ -478,23 +453,19 @@ from ui.cli.terminal.text_cache import TextCache as _TextCache
 from ui.cli.theme import RICH_THEME as _RICH_THEME
 
 
-#: Module-level cache shared by every call to
-#: :func:`render_cached_markdown`. The cache key is
-#: ``(text_hash, width)``; we never store the raw text, only the
-#: rendered ANSI lines, so a long session does not balloon RSS even
-#: when the user replays the same assistant message.
+# render_cached_markdown 共享的模块级缓存。
+# 缓存键为 (text_hash, width)；仅存储渲染后的 ANSI 行而不缓存原始文本，
+# 确保长会话即使重放相同消息也不会导致 RSS 内存膨胀。
 _TEXT_CACHE = _TextCache(max_size=500)
 _TEXT_CACHE_LOCK = _Lock()
 
 
 def _render_segment_to_lines(text: str, width: int) -> list[str]:
-    """Render ``text`` (which may contain GFM tables) to ANSI lines.
+    """将可能包含 GFM 表格的 text 渲染为 ANSI 行列表。
 
-    Detects the first complete GFM table block, renders it with the
-    width-aware table helper, and renders the surrounding text with
-    Rich's Markdown renderer. Fences that are unbalanced in ``text``
-    fall back to plain text so we never leak a synthetic closing
-    fence into the dynamic region.
+    检测首个完整的 GFM 表格块，通过宽度感知表格辅助函数进行渲染，
+    周围文本则使用 Rich Markdown 渲染器处理。若文本中包含未闭合的代码块围栏，
+    则回退降级为纯文本，防止向动态区域泄漏合成的闭合围栏。
     """
 
     if not text:
@@ -526,11 +497,10 @@ def _render_segment_to_lines(text: str, width: int) -> list[str]:
 
 
 def _emit_segment(segment: str, console: _Console) -> None:
-    """Render a single text segment with ``console`` (no return value).
+    """使用 console 渲染单个文本片段（无返回值）。
 
-    An unbalanced triple-backtick / tilde fence falls back to plain
-    text so the dynamic region never shows a synthetic closing fence
-    that the next delta would have to remove.
+    遇到未成对的反引号或波浪线代码块围栏时降级为纯文本，
+    防止动态区域渲染出后续增量需要移除的虚假闭合围栏。
     """
 
     if not segment.strip():
@@ -542,21 +512,20 @@ def _emit_segment(segment: str, console: _Console) -> None:
 
 
 def _take_new_lines(out: _io.StringIO, existing: list[str]) -> list[str]:
-    """Return the lines ``console`` has written since the last call."""
+    """返回 console 自上次调用以来新写入的行列表。"""
 
     rendered = out.getvalue()
     out.truncate(0)
     out.seek(0)
-    # If the rendered buffer is empty, the new content was either an
-    # empty segment or ended without a trailing newline. Return an
-    # empty list so the caller can keep going.
+    # 若渲染缓冲区为空，说明新增内容为空片段或末尾未包含换行符。
+    # 返回空列表以使调用方继续推进。
     if not rendered:
         return []
     return [_rstrip_terminal_padding(line) for line in rendered.splitlines()]
 
 
 def _rstrip_terminal_padding(line: str) -> str:
-    """Remove Rich's terminal-width fill while preserving closing SGR codes."""
+    """移除 Rich 自动填充的终端宽度空白，同时保留末尾的 SGR 样式码。"""
 
     line = line.rstrip(" ")
     match = re.search(r"((?:\x1b\[[0-9;]*m)+)$", line)
@@ -568,7 +537,7 @@ def _rstrip_terminal_padding(line: str) -> str:
 
 
 def _split_around_table(text: str, table) -> tuple[str, str]:
-    """Split ``text`` into the part before and after the first table block."""
+    """将 text 拆分为第一个表格块之前和之后的部分。"""
 
     table_row_re = re.compile(r"^\s*\|.*\|\s*$")
     table_sep_re = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
@@ -593,15 +562,12 @@ def _split_around_table(text: str, table) -> tuple[str, str]:
 
 
 def render_cached_markdown(text: str, *, width: int) -> list[str]:
-    """Render ``text`` to ANSI lines, consulting a module-level cache.
+    """将 text 渲染为 ANSI 行，优先查询模块级缓存。
 
-    The cache key is ``(text_hash, width)`` and the cached value is
-    the list of ANSI lines. Original ``text`` is not retained, which
-    is important for long sessions where the user replays the same
-    assistant message after a ``/clear`` or session resume.
+    缓存键为 (text_hash, width)，缓存值为 ANSI 行列表。
+    不保留原始 text，这对于在清屏或会话恢复后重放相同 assistant 消息的长会话非常重要。
 
-    The cache is process-wide. Concurrent calls are safe (the cache
-    uses an internal lock).
+    该缓存为进程级共享，并发调用是线程安全的（内部使用互斥锁）。
     """
 
     if not text:
@@ -619,17 +585,15 @@ def _render_assistant_segment(
     width: int,
     base_lines: list[str],
 ) -> list[str]:
-    """Render ``full_text`` to ANSI lines, treating ``base_lines`` as already-cached.
+    """将 full_text 渲染为 ANSI 行，将 base_lines 视为已缓存内容。
 
-    The dynamic preview path uses this to avoid re-rendering the
-    already-stable prefix: callers pass the previously-rendered
-    lines and the function only re-lexes the freshly-appended delta.
+    动态预览路径借此避免重新渲染已稳定的前缀：
+    调用方传入之前已渲染的行，函数仅需对新追加的增量部分进行词法解析。
 
-    Internally this just renders ``full_text`` end-to-end through the
-    module-level cache. ``base_lines`` is accepted for API symmetry
-    with the reference implementation; the cache itself is keyed by
-    the full text so two calls with the same text always agree.
+    在内部，该实现通过模块级缓存全量渲染 full_text。
+    接收 base_lines 参数是为了与参考实现保持接口对齐；
+    缓存自身以全量文本为键，确保相同文本的多次调用结果始终一致。
     """
 
-    del base_lines  # kept for API symmetry with the reference TS impl
+    del base_lines  # 保留以与参考实现接口保持对称
     return render_cached_markdown(full_text, width=width)

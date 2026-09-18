@@ -1,4 +1,4 @@
-"""Attachment collection and projection services."""
+"""附件收集与投影服务。"""
 
 from services.attachments.collector import AttachmentCollector, AttachmentFileReader
 from services.attachments.context_preparer import AttachmentContextPreparer

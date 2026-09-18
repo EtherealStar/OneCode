@@ -1,8 +1,8 @@
-"""Provider connection wizard screens.
+"""供应商连接向导界面屏幕。
 
-The App orchestrates the steps (provider → credentials → model); these screens
-only collect values. Saving ``.env`` and reloading the runtime stay in the App
-through ``ui.cli.connect`` and ``SessionController.reload_model_config``.
+App 负责编排连接步骤（供应商 → 凭据 → 模型）；这些界面屏幕仅负责收集用户输入的值。
+保存到 ``.env`` 和重载运行时逻辑仍保留在 App 中，通过 ``ui.cli.connect`` 和
+``SessionController.reload_model_config`` 完成。
 """
 
 from __future__ import annotations

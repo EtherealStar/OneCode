@@ -1,29 +1,21 @@
-"""Provider-neutral retry engine for model streams.
+"""用于模型流的供应商中立重试引擎。
 
-This runner is intentionally **non-buffering**: events yielded by the
-underlying provider operation are forwarded to the caller the instant
-they arrive. The previous design collected the full attempt into a
-``list[ModelStreamEvent]`` and only replayed it after the attempt
-finished, which prevented OneCode's UI from showing a real-time
-streaming response.
+此运行器设计为非缓冲模式：底层供应商操作产生的事件在到达时立即转发给调用方。
+之前的设计是将单次尝试的全部事件缓存在 list[ModelStreamEvent] 中并在尝试结束后重放，
+这会导致 OneCode 的 UI 无法实时显示流式响应。
 
-The new contract is:
+当前契约如下：
 
-- ``stream()`` forwards every ``ModelStreamEvent`` it receives from the
-  operation immediately. The caller sees a ``content_delta`` as soon as
-  the provider emits it.
-- If a ``ProviderError`` is raised after at least one event has already
-  been yielded, the partial output is **already visible to the caller**;
-  the runner does not pretend the failed attempt never happened.
-- The runner still owns the retry policy (exponential backoff, max
-  retries, jitter, error logging). It still calls ``on_retry`` so the
-  CLI can show a visible transition.
-- ``RetryExhaustedError`` is still raised when ``max_retries`` is hit
-  for a retryable error.
+- stream() 立即转发从操作中收到的每个 ModelStreamEvent。
+  供应商发出 content_delta 时调用方即可立即看到。
+- 如果在至少产出一个事件后抛出 ProviderError，部分输出已对调用方可见；
+  运行器不会假装失败的尝试从未发生。
+- 运行器仍然维护重试策略（指数退避、最大重试次数、抖动、错误日志记录）。
+  仍然会调用 on_retry，以便 CLI 显示可见的状态转换。
+- 当可重试错误达到 max_retries 时，仍然会抛出 RetryExhaustedError。
 
-The runner never hides streaming text from the caller. If a failed
-attempt streamed partial content, that content reached the caller and
-the UI committed it. The retry semantics are visible, not silent.
+运行器绝不会对调用方隐瞒流式文本。如果失败的尝试已经流式传输了部分内容，
+该内容已到达调用方且由 UI 提交。重试语义是显式可见的，而非静默发生。
 """
 
 from __future__ import annotations
@@ -107,10 +99,8 @@ class ModelRetryRunner:
     ) -> AsyncIterator[ModelStreamEvent]:
         attempt = 1
         while True:
-            # We don't accumulate events in a buffer any more — they
-            # are forwarded to the caller as soon as the provider
-            # yields them. This is the only way the CLI can show real
-            # live streaming text.
+            # 不再在缓冲区中累积事件，事件在供应商产出后立即转发给调用方。
+            # 这是 CLI 显示实时流式文本的唯一方式。
             forwarded_any = False
             try:
                 async for event in operation():
@@ -172,7 +162,7 @@ class ModelRetryRunner:
                 attempt += 1
                 continue
 
-            # Operation completed without raising; we are done.
+            # 操作完成且未抛出异常，结束执行。
             return
 
     def _should_retry(self, error: ProviderError) -> bool:

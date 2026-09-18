@@ -1,4 +1,4 @@
-"""Tool descriptor for built-in subagent delegation."""
+"""内置子代理委派的工具描述符。"""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def _handler_for(
     ) -> ToolExecutionResult:
         if tool_input.get("run_in_background") is True:
             return _start_background_agent(tool_input, runtime, runner, background_task_manager)
-        # The handler is the only bridge from tool execution into child runtime.
+        # handler 是从工具执行进入子运行时的唯一桥梁。
         result = await runner.run(
             SubagentRequest(
                 prompt=str(tool_input["prompt"]),
@@ -209,7 +209,7 @@ def _child_metadata(runtime: ToolRuntime, tool_input: dict[str, Any]) -> dict[st
 
 
 def _validate(tool_input: dict[str, Any], runtime: ToolRuntime) -> ValidationResult:
-    # Keep schema validation structural and use this function for semantic checks.
+    # 保持 schema 校验偏向结构层，使用此函数进行语义检查。
     prompt = tool_input.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         return ValidationResult.failure("prompt must be a non-empty string.")
@@ -237,10 +237,9 @@ def _classify_input(
     tool_input: dict[str, Any],
     runtime: ToolRuntime,
 ) -> ToolCallClassification:
-    # ``subagent_type="explore"`` is the only allowed agent flavor in plan
-    # mode; we mark the call as read_only so the plan-mode permission policy
-    # lets it through. The child runtime itself is forced read-only by the
-    # subagent runner; this classifier only describes the parent call.
+    # subagent_type="explore" 是计划模式下唯一允许的代理变体；
+    # 我们将该调用标记为 read_only，以便计划模式权限策略放行。
+    # 子运行时本身由子代理运行器强制设为只读；此分类器仅描述父级调用。
     targets: tuple[ToolTarget, ...] = (
         ToolTarget(
             kind="session_state",

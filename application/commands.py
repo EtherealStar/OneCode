@@ -1,9 +1,8 @@
-"""Command parsing, registry, and business operations for the application layer.
+"""应用层的命令解析、注册表与业务操作。
 
-Commands return structured :class:`CommandOutcome` data. They never carry Rich
-renderables, reset a view, or replay messages: those are UI concerns. View
-commands read a consistent snapshot immediately; mutation commands run at a
-safe point; lifecycle commands are handled by the controller.
+命令返回结构化的 CommandOutcome 数据。命令绝不携带 Rich renderable、重置视图
+或重放消息：这些属于界面层职责。查看类命令会立即读取一致快照；
+状态变更类命令在安全执行点运行；生命周期类命令由控制器处理。
 """
 
 from __future__ import annotations
@@ -167,11 +166,10 @@ async def dispatch(controller: Any, line: str) -> CommandOutcome:
 
 
 def effective_category(spec: CommandSpec, invocation: CommandInvocation) -> CommandCategory:
-    """Classify by concrete invocation, not just the command name.
+    """按具体调用分类，而非仅凭命令名称。
 
-    ``/permissions`` (no args) and ``/plan show|open`` read a consistent
-    snapshot and must not wait behind a running turn; their mutation
-    subcommands still serialize at a safe point.
+    无参数的 /permissions 以及 /plan show|open 会读取一致快照，
+    绝不能在正在运行的轮次后等待；它们的变更子命令仍会在安全执行点串行执行。
     """
 
     if spec.name == "permissions":
@@ -182,7 +180,7 @@ def effective_category(spec: CommandSpec, invocation: CommandInvocation) -> Comm
     return spec.category
 
 
-# --- view handlers ---------------------------------------------------------
+# --- 查看处理器 ---------------------------------------------------------
 
 
 def _runtime(controller: Any) -> Any:
@@ -486,7 +484,7 @@ async def _compact(controller: Any, invocation: CommandInvocation) -> CommandOut
     )
 
 
-# --- lifecycle handlers ----------------------------------------------------
+# --- 生命周期处理器 ----------------------------------------------------
 
 
 async def _resume(controller: Any, invocation: CommandInvocation) -> CommandOutcome:
@@ -521,7 +519,7 @@ async def _exit(controller: Any, invocation: CommandInvocation) -> CommandOutcom
     return CommandOutcome(name="exit", category="lifecycle", action="exit")
 
 
-# --- parsing helpers -------------------------------------------------------
+# --- 解析辅助函数 -------------------------------------------------------
 
 
 def _plan_subcommand(invocation: CommandInvocation) -> tuple[str, str]:

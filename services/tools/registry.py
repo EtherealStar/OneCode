@@ -1,4 +1,4 @@
-"""Registry for enabled runtime tools."""
+"""已启用的运行时工具注册表。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Subagent runner composition."""
+"""子 agent 运行器组装。"""
 
 from __future__ import annotations
 
@@ -52,12 +52,12 @@ class SubagentRunner:
         self._trace_recorder = trace_recorder
 
     def bind_parent_message_store(self, message_store: MessageStore) -> None:
-        """Rebind fork source messages after CLI resume or session clear."""
+        """在 CLI 恢复或会话清空后重新绑定 fork 源消息。"""
 
         self._parent_message_store = message_store
 
     async def run(self, request: SubagentRequest) -> SubagentResult:
-        """Run one child loop and collapse its work into a final summary."""
+        """运行单个子循环并将其执行工作汇总为最终摘要。"""
 
         definition = self._definition_for_request(request)
         if definition is None:
@@ -75,26 +75,26 @@ class SubagentRunner:
             max_turns=_request_max_turns(request) or definition.max_turns or 20
         )
         _copy_shared_runtime_metadata(request, child_state)
-        # The agent tool must never recurse into another agent (fork, explore,
-        # memory extraction, etc). Plan mode hides the agent tool from regular
-        # children too: only the top-level parent can spin up explore agents.
+        # agent 工具严禁递归调用另一个 agent（fork、explore、
+        # 内存提取等）。plan 模式对普通子 agent 也会隐藏 agent 工具：
+        # 仅顶层父级可以启动 explore agent。
         child_state.metadata["hidden_tools"] = {"agent"}
         if definition.read_only or is_compact:
             child_state.metadata["read_only_agent"] = True
         is_explore = _is_explore_request(request)
         if is_explore:
-            # ``explore`` is the only agent flavor the plan-mode policy allows.
-            # Force the child into read-only mode and record focus paths so the
-            # parent's executor can do conflict-aware concurrency.
+            # explore 是 plan 模式策略唯一允许的 agent 类型。
+            # 强制将子 agent 设为只读模式并记录聚焦路径，
+            # 以便父级执行器执行感知冲突的并发调度。
             child_state.metadata["read_only_agent"] = True
             child_state.metadata["is_explore_agent"] = True
             focus_paths = request.metadata.get("focus_paths")
             if isinstance(focus_paths, tuple) and focus_paths:
                 child_state.metadata["focus_paths"] = focus_paths
-        # Plan mode is sticky: if the parent is in plan mode, the child must
-        # also stay in plan mode and read-only, regardless of the agent type.
-        # ``_parent_plan_mode`` is set by ``_parent_state`` via the loop, but
-        # we conservatively check the request metadata here.
+        # plan 模式具有粘性：如果父级处于 plan 模式，无论 agent 类型为何，
+        # 子 agent 也必须保持 plan 模式与只读状态。
+        # _parent_plan_mode 由 loop 通过 _parent_state 设置，
+        # 但此处我们保守检查请求的 metadata。
         if request.metadata.get("parent_plan_mode") is True:
             child_state.permission_mode = PermissionMode.PLAN
             child_state.metadata["read_only_agent"] = True
@@ -174,7 +174,7 @@ class SubagentRunner:
         parent_session_id: str,
         parent_tool_call_id: str,
     ) -> SubagentResult:
-        """Run a fork-context skill in a clean child runtime."""
+        """在干净的子运行时中运行 fork 上下文技能。"""
 
         definition = AgentDefinition(
             agent_type=f"skill:{skill.name}",
@@ -241,7 +241,7 @@ class SubagentRunner:
         child_state: RuntimeState,
         request: SubagentRequest,
     ) -> None:
-        """Mark the child as an internal writer for one session memory file."""
+        """将子 agent 标记为单个会话记忆文件的内部写入者。"""
 
         allowed_path = request.metadata.get("allowed_memory_path")
         if not isinstance(allowed_path, str) or not allowed_path:
@@ -263,7 +263,7 @@ class SubagentRunner:
         child_state: RuntimeState,
         request: SubagentRequest,
     ) -> None:
-        """Mark the child as an internal writer for workspace long-term memory."""
+        """将子 agent 标记为工作区长期记忆的内部写入者。"""
 
         allowed_dir = request.metadata.get("allowed_memory_dir")
         if not isinstance(allowed_dir, str) or not allowed_dir:
@@ -281,7 +281,7 @@ class SubagentRunner:
         self,
         request: SubagentRequest,
     ) -> AgentDefinition | None:
-        # Omitted subagent_type is the explicit fork signal for the first version.
+        # 省略 subagent_type 是第一版中显式的 fork 信号。
         return get_agent_definition(request.subagent_type or "fork")
 
     def _seed_child_messages(
@@ -292,7 +292,7 @@ class SubagentRunner:
         *,
         is_fork: bool,
     ) -> SubagentResult | None:
-        # Seed before continuing the child loop so fork does not duplicate prompts.
+        # 在继续子循环前注入种子消息，避免 fork 重复提示词。
         if not is_fork:
             child_store.seed_messages(({"role": "user", "content": request.prompt},))
             return None
@@ -316,7 +316,7 @@ class SubagentRunner:
         *,
         is_fork: bool,
     ) -> StaticPromptAssembler:
-        # Fork must inherit the exact bytes already rendered for the parent turn.
+        # fork 必须继承父轮次中已渲染的完全一致的字节。
         if is_fork:
             snapshot = self._current_model_context.snapshot
             return StaticPromptAssembler(snapshot.system_prompt if snapshot else "")
@@ -429,9 +429,8 @@ def _child_descriptors(
     compact: bool = False,
 ) -> tuple[ToolDescriptor, ...]:
     if compact:
-        # Internal compaction is a pure summarization task; expose no tools so the
-        # model literally cannot call read/edit/bash. Capability is enforced by the
-        # empty registry rather than prompt text.
+        # 内部压缩属于纯摘要任务；不暴露任何工具，使模型完全无法调用
+        # read、edit 或 bash。能力限制由空注册表而非提示词文本强制约束。
         return ()
     if session_memory_extraction:
         return tuple(
@@ -497,7 +496,7 @@ def _copy_shared_runtime_metadata(
     request: SubagentRequest,
     child_state: RuntimeState,
 ) -> None:
-    """Carry parent-scoped runtime facts that child tools must share."""
+    """传递子工具必须共享的父作用域运行时事实。"""
 
     for key in ("task_list_id", "parent_task_list_id"):
         value = request.metadata.get(key)
@@ -514,7 +513,7 @@ def _tool_result_count(message_store: MessageStore) -> int:
 
 
 def _skill_child_prompt(skill: SkillCommand, args: str) -> str:
-    """Build the single clean-context user message for a fork skill."""
+    """为 fork 技能构建单条干净上下文的用户消息。"""
 
     root = str(skill.root) if skill.root is not None else ""
     content = skill.content

@@ -1,7 +1,7 @@
-"""Conversation display package: view, virtual viewport, layout, caches.
+"""会话显示包：视图、虚拟视口、布局与渲染缓存。
 
-Attributes are resolved lazily to keep the renderers -> render_cache import
-from triggering the view -> viewport -> message cycle at package import time.
+采用延迟解析属性，避免 renderers -> render_cache 的导入在包加载阶段触发
+view -> viewport -> message 的循环依赖。
 """
 
 from __future__ import annotations

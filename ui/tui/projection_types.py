@@ -1,8 +1,7 @@
-"""Presentation value types for the conversation projection.
+"""会话投影的表现层值类型。
 
-They carry only what the view needs to render: stable identities, ordered
-parts, tool execution state, result previews, and detail references. They never
-expose provider wire formats, Rich renderables, or Textual widgets.
+它们仅承载视图渲染所需的数据：稳定的标识符、有序分片、工具执行状态、结果预览以及详情引用。
+绝不暴露模型供应商底层协议格式、Rich 可渲染对象或 Textual 控件。
 """
 
 from __future__ import annotations
@@ -27,14 +26,14 @@ PART_ATTACHMENT = "attachment"
 
 @dataclass(frozen=True)
 class UiPart:
-    """One ordered fragment of a message."""
+    """消息的一个有序分片。"""
 
     kind: str
-    #: Text body (``text``) or attachment summary (``attachment``).
+    #: 文本正文（``text``）或附件摘要（``attachment``）。
     content: str = ""
-    #: Attachment metadata, present for ``attachment`` parts.
+    #: 附件元数据，针对 ``attachment`` 分片存在。
     attachment_type: str | None = None
-    #: Tool identity, present for ``tool`` parts.
+    #: 工具标识，针对 ``tool`` 分片存在。
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_input: Mapping[str, Any] = field(default_factory=dict)
@@ -49,7 +48,7 @@ class UiPart:
 
 @dataclass(frozen=True)
 class UiMessage:
-    """A stable message identity with ordered parts and a lifecycle."""
+    """具有稳定消息标识、有序分片和生命周期的消息结构。"""
 
     message_id: str
     role: str
@@ -59,11 +58,10 @@ class UiMessage:
 
 @dataclass(frozen=True)
 class ViewChange:
-    """Semantic change set handed to the view.
+    """交付给视图的语义化变更集。
 
-    It contains no heights, ANSI, scroll offsets, or timers: the view owns how
-    to coalesce refreshes. ``resync_required`` tells the caller a sequence gap
-    was observed and it must fetch a complete snapshot instead of guessing.
+    其不包含任何高度、ANSI 转义序列、滚动偏移量或计时器：视图自行负责如何合并刷新。
+    ``resync_required`` 告知调用方检测到序号空洞，必须获取完整快照而不是盲目猜测。
     """
 
     updated_ids: tuple[str, ...] = ()

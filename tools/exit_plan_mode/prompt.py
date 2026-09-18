@@ -1,4 +1,4 @@
-"""Prompt text for the ``exit_plan_mode`` tool."""
+"""exit_plan_mode 工具的提示词文本。"""
 
 PROMPT = """\
 Use this tool when you are in plan mode and have finished writing the plan to

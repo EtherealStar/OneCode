@@ -1,4 +1,4 @@
-"""OpenAI Chat Completions compatible model client."""
+"""兼容 OpenAI Chat Completions 的模型客户端。"""
 
 from __future__ import annotations
 

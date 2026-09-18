@@ -1,8 +1,7 @@
-"""Structured user-question modal.
+"""结构化用户提问模态弹窗。
 
-One question per screen; the App asks them in order and assembles a
-``QuestionResponse``. Single-select uses ``OptionList``; multi-select uses
-``SelectionList`` with an explicit submit.
+每个屏幕显示一个问题；App 依序提问并组装生成 ``QuestionResponse``。
+单选题使用 ``OptionList``；多选题使用带有显式提交按钮的 ``SelectionList``。
 """
 
 from __future__ import annotations

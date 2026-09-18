@@ -1,4 +1,4 @@
-"""Composable system prompt sections."""
+"""可组合的系统提示词分节。"""
 
 from __future__ import annotations
 
@@ -273,7 +273,7 @@ def _skill_listing_body(
     budget_chars: int = 8000,
     description_chars: int = 250,
 ) -> str:
-    """Render a compact skill catalog without leaking full SKILL.md content."""
+    """渲染紧凑的技能目录，不泄露完整的 SKILL.md 内容。"""
 
     lines: list[str] = []
     for skill in context.visible_skills:

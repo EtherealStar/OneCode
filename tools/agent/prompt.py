@@ -1,4 +1,4 @@
-"""Model-facing prompt for the agent tool."""
+"""agent 工具面向模型的提示词。"""
 
 PROMPT = """Purpose:
 Delegate a bounded subtask to a built-in subagent and receive its final summary.
