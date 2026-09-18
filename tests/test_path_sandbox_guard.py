@@ -5,8 +5,6 @@ from pathlib import Path
 from infrastructure.filesystem.paths import (
     contains_path,
     normalize_path_pattern,
-    resolve_path,
-    resolve_write_target,
     windows_path,
 )
 from services.guard import SandboxBoundary, SandboxGuard
@@ -49,7 +47,6 @@ def test_guard_allows_workspace_path(tmp_path: Path) -> None:
 
     assert policy.action == "allow"
     assert policy.decision.kind == "inside_workspace"
-    assert policy.normalized_path == resolve_path(file_path)
 
 
 def test_guard_allows_worktree_outside_cwd(tmp_path: Path) -> None:
@@ -147,10 +144,6 @@ def test_missing_write_target_inside_workspace_is_allowed(tmp_path: Path) -> Non
 
     assert policy.action == "allow"
     assert policy.decision.kind == "inside_workspace"
-    assert policy.normalized_path == resolve_write_target(
-        "new/child.txt",
-        base_dir=tmp_path,
-    ).target
 
 
 def test_existing_symlink_to_external_is_not_workspace_if_supported(

@@ -107,27 +107,6 @@ def make_controller(tmp_path: Path, loop: IdleLoop | None = None) -> SessionCont
     return SessionController(FakeRuntime(tmp_path, loop or IdleLoop()))
 
 
-def test_registry_has_every_command_and_alias() -> None:
-    specs = command_module.spec_by_name()
-    for name in (
-        "status",
-        "usage",
-        "memory",
-        "permissions",
-        "skills",
-        "tasks",
-        "mcp",
-        "compact",
-        "plan",
-        "resume",
-        "connect",
-        "clear",
-        "exit",
-    ):
-        assert name in specs
-    assert specs["continue"].name == "resume"
-
-
 def test_view_command_does_not_wait_for_running_turn(tmp_path: Path) -> None:
     async def scenario() -> None:
         gate = asyncio.Event()

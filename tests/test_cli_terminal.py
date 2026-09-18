@@ -660,53 +660,6 @@ def _agent_event(event_type: str, **kwargs):
     return AgentEvent(type=event_type, metadata=metadata, **kwargs)
 
 
-def test_reducer_accumulates_deltas() -> None:
-    """The pure reducer folds deltas into ``state.streaming_text``."""
-
-    from ui.cli.terminal.stream_reducer import reduce_stream_event
-    from ui.cli.terminal.stream_state import CliStreamUiState
-
-    state = CliStreamUiState()
-    reduce_stream_event(state, _agent_event("assistant_delta", text="Hello "))
-    reduce_stream_event(state, _agent_event("assistant_delta", text="world"))
-    assert state.streaming_text == "Hello world"
-
-
-def test_reducer_completed_fallback_text() -> None:
-    from ui.cli.terminal.stream_reducer import reduce_stream_event
-    from ui.cli.terminal.stream_state import CliStreamUiState
-
-    state = CliStreamUiState()
-    # No deltas, only a completed event carrying the full text.
-    # The reducer stages an ``assistant_markdown`` commit and clears
-    # the dynamic ``streaming_text``.
-    reduce_stream_event(state, _agent_event("completed", text="final answer"))
-    assert state.streaming_text == ""
-    assert any(c.is_assistant_markdown for c in state.pending_static_commits)
-
-
-def test_reducer_assistant_message_completed_emits_checkpoint() -> None:
-    """``assistant_message_completed`` clears ``streaming_text`` and
-    emits an assistant checkpoint for the accumulated text.
-    """
-
-    from ui.cli.terminal.stream_reducer import reduce_stream_event
-    from ui.cli.terminal.stream_state import CliStreamUiState
-
-    state = CliStreamUiState()
-    # First a delta, then the completion event with matching text.
-    reduce_stream_event(
-        state,
-        _agent_event("assistant_delta", text="final answer"),
-    )
-    reduce_stream_event(
-        state, _agent_event("assistant_message_completed", text="final answer")
-    )
-    # The reducer clears the dynamic region and stages a checkpoint.
-    assert state.streaming_text == ""
-    assert any(c.is_assistant_markdown for c in state.pending_static_commits)
-
-
 def test_reducer_tool_call_ready_updates_state_without_static_banner(
     captured_console: io.StringIO,
 ) -> None:

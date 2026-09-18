@@ -98,13 +98,11 @@ def test_collect_untrusted_mcp_servers_for_startup_notice(tmp_path: Path) -> Non
         trust_store,
     )
 
-    assert notices == (
-        {
-            "name": "docs",
-            "command": "python",
-            "args": "server.py",
-            "cwd": str(tmp_path),
-            "explicit_env_keys": "DOCS_TOKEN",
-            "base_env_keys": notices[0]["base_env_keys"],
-        },
-    )
+    assert len(notices) == 1
+    notice = notices[0]
+    assert notice["name"] == "docs"
+    assert notice["command"] == "python"
+    assert notice["args"] == "server.py"
+    assert notice["cwd"] == str(tmp_path)
+    assert notice["explicit_env_keys"] == "DOCS_TOKEN"
+    assert isinstance(notice["base_env_keys"], str)

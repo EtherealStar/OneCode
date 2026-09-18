@@ -531,49 +531,15 @@ def test_cli_plan_command_approve_exits_plan_mode(tmp_path: Path) -> None:
     assert first["variant"] == "exit"
 
 
-def test_repl_injects_plan_attachment_on_next_turn(tmp_path: Path) -> None:
-    import asyncio
-
-    from core.stream_events import AgentEvent
-    from services.context.message_store import MessageStore
-    from services.plans.store import PlanStore
-    from ui.cli.terminal.repl import InlineRepl
-    from ui.cli.types import CliRuntime
-
-    class _CaptureLoop:
-        def __init__(self) -> None:
-            self.attachments = None
-
-        async def stream(self, prompt: str, *, attachments=None):
-            assert prompt == "please plan"
-            self.attachments = attachments
-            yield AgentEvent(type="completed", text="done")
-
+def test_enter_plan_mode_injects_intro_attachment_once(tmp_path: Path) -> None:
     state = RuntimeState()
-    message_store = MessageStore(
-        transcript_root=tmp_path,
-        session_id=state.session_id,
-        cwd=tmp_path,
-    )
-    plan_store = PlanStore(tmp_path)
-    enter_plan_mode(state, plan_store)
-    loop = _CaptureLoop()
-    runtime = CliRuntime(
-        workspace=tmp_path,
-        state=state,
-        message_store=message_store,
-        loop=loop,  # type: ignore[arg-type]
-        plan_store=plan_store,
-    )
-    repl = InlineRepl(runtime)
+    store = PlanStore(tmp_path)
+    enter_plan_mode(state, store)
 
-    async def _collect() -> None:
-        events = [event async for event in repl._agent_events("please plan")]
-        assert events and events[-1].type == "completed"
+    attachments = build_plan_attachments_for_state(state, store)
 
-    asyncio.run(_collect())
-
-    assert loop.attachments
-    first = loop.attachments[0]
-    assert first["type"] == "plan_mode"
-    assert first["variant"] == "intro"
+    assert len(attachments) == 1
+    assert attachments[0]["type"] == "plan_mode"
+    assert attachments[0]["variant"] == "intro"
+    # The flag is consumed so a later turn does not re-inject it.
+    assert build_plan_attachments_for_state(state, store) == []

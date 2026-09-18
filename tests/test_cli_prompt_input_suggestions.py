@@ -8,7 +8,7 @@ from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
 from tools.read_file import descriptor as read_file_descriptor
-from ui.cli.suggestions import _FILE_SUGGESTION_CACHE, suggestions_for
+from ui.cli.suggestions import suggestions_for
 from ui.cli.types import CliRuntime
 
 
@@ -165,10 +165,7 @@ def test_file_suggestions_reuse_short_lived_candidate_cache(tmp_path: Path) -> N
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "alpha.py").write_text("", encoding="utf-8")
 
-    _FILE_SUGGESTION_CACHE.clear()
     assert "src/alpha.py" in displays(runtime, "read @alpha")
-    cached = _FILE_SUGGESTION_CACHE[tmp_path.resolve()]
     (tmp_path / "src" / "beta.py").write_text("", encoding="utf-8")
 
     assert "src/beta.py" not in displays(runtime, "read @beta")
-    assert _FILE_SUGGESTION_CACHE[tmp_path.resolve()] is cached

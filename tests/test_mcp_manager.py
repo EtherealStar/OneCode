@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 from threading import Thread
-from types import SimpleNamespace
 from typing import Any, Iterator
 
 import uvicorn
@@ -265,7 +264,29 @@ def test_mcp_connection_manager_discovers_and_calls_streamable_http_tools(
 def test_mcp_connection_manager_reconnects_once_after_call_failure(
     tmp_path: Path,
 ) -> None:
-    manager = _RetryingMcpConnectionManager(
+    marker = tmp_path / "crashed_once"
+    server_path = tmp_path / "flaky_mcp_server.py"
+    server_path.write_text(
+        "\n".join(
+            [
+                "import os",
+                "import sys",
+                "from mcp.server.fastmcp import FastMCP",
+                "marker = sys.argv[1]",
+                "mcp = FastMCP('flaky')",
+                "@mcp.tool(name='lookup.docs')",
+                "def lookup_docs(query: str) -> str:",
+                "    if not os.path.exists(marker):",
+                "        open(marker, 'w').close()",
+                "        os._exit(1)",
+                "    return 'reconnected:' + query",
+                "if __name__ == '__main__':",
+                "    mcp.run('stdio')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manager = McpConnectionManager(
         tmp_path,
         McpConfigSet(
             {
@@ -273,9 +294,12 @@ def test_mcp_connection_manager_reconnects_once_after_call_failure(
                     name="docs",
                     transport="stdio",
                     command=sys.executable,
+                    args=(str(server_path), str(marker)),
                 )
             }
         ),
+        timeout_seconds=10,
+        trust_policy=McpTrustPolicy.trust_all_servers(),
     )
 
     async def scenario() -> None:
@@ -287,8 +311,7 @@ def test_mcp_connection_manager_reconnects_once_after_call_failure(
         )
         assert result.is_error is False
         assert result.content == "reconnected:runtime"
-        assert manager.ensure_attempts == 2
-        assert manager.disconnects == ["docs"]
+        await manager.close_all()
 
     asyncio.run(scenario())
 
@@ -326,26 +349,6 @@ def _serve_asgi_app(app: Any) -> Iterator[str]:
             raise RuntimeError("uvicorn server failed to stop")
 
 
-class _RetryingMcpConnectionManager(McpConnectionManager):
-    def __init__(
-        self,
-        workspace: Path,
-        configs: McpConfigSet,
-    ) -> None:
-        super().__init__(workspace, configs)
-        self.ensure_attempts = 0
-        self.disconnects = []
-
-    async def ensure_connected(self, server_name: str) -> Any:
-        self.ensure_attempts += 1
-        if self.ensure_attempts == 1:
-            return SimpleNamespace(session=_FailingSession())
-        return SimpleNamespace(session=_SuccessfulSession())
-
-    async def _disconnect(self, server_name: str) -> None:
-        self.disconnects.append(server_name)
-
-
 class _OpeningTrackingMcpConnectionManager(McpConnectionManager):
     def __init__(
         self,
@@ -362,22 +365,3 @@ class _OpeningTrackingMcpConnectionManager(McpConnectionManager):
         self.open_attempts += 1
         raise AssertionError("untrusted stdio server should not open streams")
 
-
-class _FailingSession:
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        del tool_name, arguments
-        raise RuntimeError("connection lost")
-
-
-class _SuccessfulSession:
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        del tool_name
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": "reconnected:" + str(arguments["query"]),
-                }
-            ],
-            "isError": False,
-        }

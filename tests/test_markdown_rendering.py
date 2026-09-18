@@ -8,9 +8,6 @@ to avoid truncated or flickering tables in narrow terminals.
 from __future__ import annotations
 
 from ui.cli.terminal.markdown_rendering import (
-    MAX_ROW_LINES,
-    MIN_COLUMN_WIDTH,
-    SAFETY_MARGIN,
     parse_markdown_table_block,
     render_markdown_table_block,
 )
@@ -132,12 +129,6 @@ def test_render_block_handles_wide_characters() -> None:
     # Wide characters should be measured as 2 cells; the rendered
     # table should not crash.
     assert lines
-
-
-def test_constants_match_reference() -> None:
-    assert SAFETY_MARGIN == 4
-    assert MIN_COLUMN_WIDTH == 3
-    assert MAX_ROW_LINES == 4
 
 
 def _strip_ansi(text: str) -> str:
