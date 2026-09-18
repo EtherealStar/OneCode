@@ -162,10 +162,17 @@ class AgentLoop:
                 },
             )
             self.message_store.append_user(prompt)
+            user_message_uuid = self.message_store.last_record_uuid or ""
             self._begin_run_facts()
             if attachments is not None:
                 self.message_store.append_attachments(attachments)
-            yield AgentEvent(type="interaction_started")
+            # Carry the persisted identity of the just-appended user message so
+            # the application layer can associate the live draft with the
+            # stable record instead of inferring it from text or position.
+            yield AgentEvent(
+                type="interaction_started",
+                metadata={"user_message_uuid": user_message_uuid},
+            )
             try:
                 async for event in self._run_loop_async():
                     yield event

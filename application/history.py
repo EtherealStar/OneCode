@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from services.context.message_shapes import assistant_tool_call_ids
+from services.context.message_shapes import assistant_tool_declarations
 from services.context.recovery import select_active_chain
 from services.context.transcript import (
     InMemoryTranscriptStore,
@@ -25,6 +25,7 @@ from services.context.transcript import (
 class HistoryToolCall:
     tool_call_id: str
     tool_name: str
+    input: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,10 @@ class HistoryRecord:
     is_error: bool = False
     tool_calls: tuple[HistoryToolCall, ...] = ()
     attachments: tuple[HistoryAttachmentSummary, ...] = ()
+    #: Stable model-call attribution; the projection groups assistant and
+    #: tool-result records by it. None for legacy records without it.
+    assistant_call_id: str | None = None
+    model_turn_index: int | None = None
     source_uuid: str | None = None
     record_kind: str | None = None
     externalized: bool = False
@@ -207,8 +212,8 @@ def _to_history_record(
     metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
     role = str(message.get("role", "unknown"))
     tool_calls = tuple(
-        HistoryToolCall(tool_call_id=call_id, tool_name=name)
-        for call_id, name in assistant_tool_call_ids(message)
+        HistoryToolCall(tool_call_id=call_id, tool_name=name, input=tool_input)
+        for call_id, name, tool_input in assistant_tool_declarations(message)
     )
     return HistoryRecord(
         uuid=record.uuid,
@@ -220,6 +225,8 @@ def _to_history_record(
         is_error=message.get("is_error") is True,
         tool_calls=tool_calls,
         attachments=tuple(_attachment_summary(item) for item in attachments),
+        assistant_call_id=record.assistant_call_id,
+        model_turn_index=record.model_turn_index,
         source_uuid=record.source_uuid,
         record_kind=record.record_kind,
         externalized=metadata.get("tool_result_externalized") is True,

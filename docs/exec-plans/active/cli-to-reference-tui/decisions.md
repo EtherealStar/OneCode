@@ -130,6 +130,18 @@ Decision：删除并 `uv sync --dev` 重建，仅本地环境产物（`.venv/` �
 
 Date/Author：2026-09-18 / opencode。
 
+### 2026-09-18：Projection 身份来源与快照重同步
+
+Decision：`ConversationProjection` 消费 M2 契约，但为“实时树与权威历史同一身份”补齐最小事实来源：`HistoryRecord` 暴露 `assistant_call_id`/`model_turn_index` 与结构化工具 `input`；`application.types` 增加 `UserMessageCommitted`，`ToolUpdate`/`ToolRunState` 携带调用归属与 `input`；`core.loop` 在 `interaction_started` metadata 中交付刚持久化用户消息的 UUID；Controller 在取消收尾与 `/compact` 成功后发布权威快照，`apply` 遇到序号缺口只置 `resync_required` 并等待 `replace(snapshot)`，不猜补 delta；旧代次与重复序号直接拒绝。
+
+Context：参考 `UiProjection` 用单一 tool ID 并让孤立结果长期保留，且其快照类型定义在 UI；OneCode 的工具 ID 可跨模型调用重复，用户消息与 assistant 定稿的实时事件原先没有持久化 UUID，取消后也没有权威历史修正通知。
+
+Rationale：身份必须来自 runtime/application 的真实记录，不能从文本、下标或“最近 assistant”推断；工具按 session + assistant 调用 + tool ID 复合归组，结果先到也按明确归属保留。让缺口进入完整快照路径符合“不解析 trace 文本补消息”。
+
+Consequences：工具结果先于持久化仍可展示但不宣称已保存；`HistoryRecord` 新增字段与 `ToolUpdate` 新增默认字段向后兼容；`interaction_started` 成为携带用户记录身份的公共事件；M4 的 View 只需消费 `messages` 与 `ViewChange`，不直接读 runtime。旧记录缺调用标识时，工具结果按“已声明且无结果”的 tool_call_id 回配，属于 M1 兼容规则。
+
+Date/Author：2026-09-18 / opencode。
+
 ## 尚待实施验证的选择
 
 Textual 的具体版本在 M4.1 通过参考 API 的最小 headless 兼容验证后写入本文件并锁定；当前项目未声明 Textual，参考目录没有可供直接沿用的 `pyproject.toml`。这是版本兼容性验证，不重新讨论已确认的框架选择。

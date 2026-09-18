@@ -7,6 +7,8 @@ top-level ``tool_calls`` list and ``content`` blocks with ``type ==
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -14,7 +16,23 @@ from typing import Any
 def assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     """Return ``(call_id, tool_name)`` for both declaration representations."""
 
-    ids: list[tuple[str, str]] = []
+    return tuple(
+        (call_id, name)
+        for call_id, name, _input in assistant_tool_declarations(message)
+    )
+
+
+def assistant_tool_declarations(
+    message: dict[str, Any],
+) -> tuple[tuple[str, str, dict[str, Any]], ...]:
+    """Return ``(call_id, tool_name, input)`` for both declaration forms.
+
+    Tool input is parsed from the provider-neutral stored shapes so history
+    browsing can show the same argument summary as the live stream without
+    reading files or re-parsing user text.
+    """
+
+    declarations: list[tuple[str, str, dict[str, Any]]] = []
     raw_calls = message.get("tool_calls")
     if isinstance(raw_calls, list):
         for call in raw_calls:
@@ -29,7 +47,13 @@ def assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], .
                 function_name = function.get("name")
                 if isinstance(function_name, str):
                     name = function_name
-            ids.append((call_id, name if isinstance(name, str) else "unknown_tool"))
+            declarations.append(
+                (
+                    call_id,
+                    name if isinstance(name, str) else "unknown_tool",
+                    _declared_input(call),
+                )
+            )
 
     content = message.get("content")
     if isinstance(content, list):
@@ -40,8 +64,45 @@ def assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], .
             if not isinstance(call_id, str) or not call_id:
                 continue
             name = block.get("name")
-            ids.append((call_id, name if isinstance(name, str) else "unknown_tool"))
-    return tuple(ids)
+            declarations.append(
+                (
+                    call_id,
+                    name if isinstance(name, str) else "unknown_tool",
+                    _declared_input(block),
+                )
+            )
+    return tuple(declarations)
+
+
+def _declared_input(payload: Mapping[str, Any]) -> dict[str, Any]:
+    value = payload.get("input")
+    if isinstance(value, Mapping):
+        return dict(value)
+    for candidate in (payload.get("arguments"), _function_arguments(payload)):
+        parsed = _parse_arguments(candidate)
+        if parsed is not None:
+            return parsed
+    return {}
+
+
+def _function_arguments(payload: Mapping[str, Any]) -> Any:
+    function = payload.get("function")
+    if isinstance(function, Mapping):
+        return function.get("arguments")
+    return None
+
+
+def _parse_arguments(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def assistant_declarations(message: dict[str, Any]) -> tuple[str, ...]:

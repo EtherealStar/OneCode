@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -47,14 +48,29 @@ from application.types import (
     SubmissionReceipt,
     ToolRunState,
     ToolUpdate,
+    UsageChanged,
+    UserMessageCommitted,
     WithdrawalResult,
 )
 from core.stream_events import AgentEvent
+from services.model.types import ModelUsage
 from services.observability import ErrorLogRecorder
 from services.plans import build_plan_attachments_for_state
 
 _CLOSED = object()
 _SUBSCRIBER_QUEUE_SIZE = 256
+
+
+def _tool_input(tool: Any, metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract declared tool arguments for display without guessing."""
+
+    value = getattr(tool, "input", None)
+    if isinstance(value, Mapping):
+        return dict(value)
+    declared = metadata.get("tool_input")
+    if isinstance(declared, Mapping):
+        return dict(declared)
+    return {}
 
 
 @dataclass
@@ -73,6 +89,7 @@ class _ActiveRun:
     last_completed_text: str = ""
     assistant_call_id: str | None = None
     model_turn_index: int | None = None
+    user_message_uuid: str = ""
     tools: dict[str, ToolRunState] = field(default_factory=dict)
 
     def to_run_state(self) -> RunState:
@@ -568,6 +585,9 @@ class SessionController:
             )
         )
         self._emit_queue_changed()
+        # The cleanup rewrote the transcript: publish the authoritative history
+        # so observers replace their projection instead of guessing deletions.
+        self._publish_snapshot()
 
     async def _collect_attachments(
         self, item: QueueItem
@@ -600,6 +620,23 @@ class SessionController:
 
     def _handle_event(self, run: _ActiveRun, event: AgentEvent) -> None:
         event_type = event.type
+        if event_type == "interaction_started":
+            # The loop appends the user message before this event and carries
+            # its stable record UUID, so the projection can key the committed
+            # user message without guessing from text or position.
+            user_uuid = event.metadata.get("user_message_uuid") or ""
+            if isinstance(user_uuid, str) and user_uuid:
+                run.user_message_uuid = user_uuid
+            self._emit(
+                lambda generation, sequence: UserMessageCommitted(
+                    generation=generation,
+                    sequence=sequence,
+                    input_id=run.input_id,
+                    message_uuid=run.user_message_uuid,
+                    text=run.text,
+                )
+            )
+            return
         if event_type == "assistant_delta":
             call_id = event.metadata.get("assistant_call_id")
             if call_id != run.assistant_call_id:
@@ -620,9 +657,12 @@ class SessionController:
             )
             return
         if event_type == "assistant_message_completed":
-            call_id = event.metadata.get("assistant_call_id")
+            call_id = event.metadata.get("assistant_call_id") or run.assistant_call_id
             if call_id != run.assistant_call_id:
                 run.assistant_call_id = call_id
+            model_turn_index = event.metadata.get("model_turn_index")
+            if isinstance(model_turn_index, int):
+                run.model_turn_index = model_turn_index
             if event.text:
                 run.assistant_text = event.text
                 run.last_completed_text = event.text
@@ -639,8 +679,30 @@ class SessionController:
                     model_turn_index=run.model_turn_index,
                 )
             )
+            usage = getattr(self._runtime.state, "usage", None)
+            if isinstance(usage, ModelUsage):
+                usage_copy = ModelUsage(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_input_tokens=usage.cache_read_input_tokens,
+                    cache_creation_input_tokens=usage.cache_creation_input_tokens,
+                )
+                self._emit(
+                    lambda generation, sequence, usage=usage_copy: UsageChanged(
+                        generation=generation,
+                        sequence=sequence,
+                        usage=usage,
+                    )
+                )
             return
         if event_type in {"tool_call_ready", "tool_started", "tool_progress"}:
+            call_id = event.metadata.get("assistant_call_id") or run.assistant_call_id
+            if call_id != run.assistant_call_id:
+                run.assistant_call_id = call_id
+                run.assistant_text = ""
+            model_turn_index = event.metadata.get("model_turn_index")
+            if isinstance(model_turn_index, int):
+                run.model_turn_index = model_turn_index
             tool = event.metadata.get("tool_call")
             tool_call_id = event.metadata.get("tool_call_id") or getattr(
                 tool, "id", ""
@@ -648,6 +710,7 @@ class SessionController:
             tool_name = event.metadata.get("tool_name") or getattr(
                 tool, "name", "unknown_tool"
             )
+            tool_input = _tool_input(tool, event.metadata)
             status = {
                 "tool_call_ready": "declared",
                 "tool_started": "started",
@@ -657,36 +720,45 @@ class SessionController:
                 return
             current = run.tools.get(tool_call_id)
             previous_text = current.text if current is not None else ""
+            if not tool_input and current is not None:
+                tool_input = dict(current.input)
             run.tools[tool_call_id] = ToolRunState(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
                 status=status,
                 text=previous_text,
+                input=tool_input,
                 metadata=dict(event.metadata),
             )
             self._emit(
-                lambda generation, sequence: ToolUpdate(
+                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: ToolUpdate(
                     generation=generation,
                     sequence=sequence,
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     status=status,
                     text=event.text or "",
+                    assistant_call_id=call_id,
+                    model_turn_index=index,
+                    input=tool_input,
                 )
             )
             return
         if event_type == "tool_result" and event.result is not None:
             result = event.result
+            current = run.tools.get(result.tool_call_id)
+            tool_input = dict(current.input) if current is not None else {}
             run.tools[result.tool_call_id] = ToolRunState(
                 tool_call_id=result.tool_call_id,
                 tool_name=result.tool_name,
                 status="error" if result.is_error else "completed",
                 text=result.content,
                 is_error=result.is_error,
+                input=tool_input,
                 metadata=dict(result.metadata),
             )
             self._emit(
-                lambda generation, sequence: ToolUpdate(
+                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: ToolUpdate(
                     generation=generation,
                     sequence=sequence,
                     tool_call_id=result.tool_call_id,
@@ -695,6 +767,9 @@ class SessionController:
                     text=result.content,
                     is_error=result.is_error,
                     result=result,
+                    assistant_call_id=call_id,
+                    model_turn_index=index,
+                    input=tool_input,
                 )
             )
             return
@@ -732,6 +807,13 @@ class SessionController:
             attachments = tuple(getattr(outcome, "attachments", ()) or ())
             if attachments:
                 self._pending_attachments.extend(attachments)
+        if (
+            getattr(outcome, "name", "") == "compact"
+            and getattr(outcome, "status", "") == "ok"
+        ):
+            # Compaction rewrote the active chain; republish the authority so
+            # projections can rebuild their message tree from real history.
+            self._publish_snapshot()
         return outcome
 
     # --- session rebinding ------------------------------------------------
