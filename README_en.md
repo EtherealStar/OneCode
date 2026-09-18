@@ -68,9 +68,11 @@ OneCode's model Provider configuration is read from `.env`. If you prefer not to
 # On Windows, please activate the virtual environment first
 .\.venv\Scripts\Activate.ps1
 
-# Launch the inline terminal REPL
+# Launch the full-screen terminal TUI
 uv run python -m ui.cli.app
 ```
+
+TUI keys: `Enter` submits (selects a completion candidate first when the menu is open), `Ctrl+Enter` inserts a newline (some terminals use `Ctrl+J`), `Tab` completes, `Ctrl+C` cancels the active run (it never exits or deletes the draft), `Esc` closes the completion menu or a panel, `F8` withdraws the last queued input, `F9` resumes a paused queue, and `/exit` quits.
 
 Batch mode is also supported: it automatically enters batch processing when standard input is not a TTY, for example:
 

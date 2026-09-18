@@ -21,8 +21,6 @@ from application.runtime import (
     build_unconfigured_runtime as _build_unconfigured_application_runtime,
 )
 from services.mcp import McpConfigSet, McpTrustStore
-from services.model.types import ProviderError
-from ui.cli import renderer
 from ui.cli.input import ConfirmOption, read_confirm_sync
 from ui.cli.types import CliRuntime
 
@@ -128,36 +126,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    # The TTY path is an inline REPL (prompt_toolkit + Rich). We wire
-    # MCP trust prompts through ``default_trust_prompt`` and start with
-    # ``mcp_trust_mode="prompt"`` so the user is asked to trust project
-    # stdio servers on startup rather than having them silently skipped.
-    from ui.cli.terminal.interaction_host import TerminalInteractionHost
-    from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
-    from ui.cli.terminal.repl import InlineRepl
-    from ui.cli.terminal.trust_prompt import default_trust_prompt
+    # The TTY path is the full-screen Textual TUI. The App builds the runtime
+    # (and asks for MCP trust) after mounting so startup never blocks input.
+    from ui.tui.app import run_tui
 
     try:
-        interaction_host = TerminalInteractionHost()
-        permission_prompter = TtyPermissionPrompter(interaction_host)
-        try:
-            runtime = build_runtime(
-                workspace,
-                trust_prompt=default_trust_prompt,
-                permission_prompter=permission_prompter,
-                mcp_trust_mode="prompt",
-            )
-        except ProviderError:
-            # .env is missing or incomplete — start in unconfigured mode.
-            runtime = build_unconfigured_runtime(workspace)
-        repl = InlineRepl(
-            runtime,
-            permission_prompter=permission_prompter,
-            interaction_host=interaction_host,
-        )
-        return repl.run()
+        return run_tui(workspace)
     except Exception as exc:
-        renderer.print_renderable(renderer.render_error(str(exc)))
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 

@@ -206,55 +206,24 @@ def test_main_errors_when_stdout_is_not_tty(
     assert "stdout is not a TTY" in output.err
 
 
-def test_main_tty_builds_runtime_before_starting_repl(
+def test_main_tty_starts_textual_tui(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
+    """M5.2: the TTY entrypoint delegates to the Textual TUI, not the REPL."""
+
     from ui.cli import app as cli_app
 
-    runtime = _make_runtime(tmp_path, FakeLoop())
     calls: list[tuple[str, object]] = []
 
-    class FakeInlineRepl:
-        def __init__(
-            self,
-            app_runtime: CliRuntime,
-            *,
-            permission_prompter: object = None,
-            interaction_host: object = None,
-        ) -> None:
-            assert permission_prompter is not None
-            assert interaction_host is not None
-            calls.append(("init", app_runtime))
-
-        def run(self) -> int:
-            calls.append(("run", None))
-            return 0
-
-    def fake_build_runtime(
-        workspace: Path,
-        *,
-        trust_prompt: object = None,
-        permission_prompter: object = None,
-        mcp_trust_mode: str = "",
-        **kwargs: object,
-    ) -> CliRuntime:
-        assert kwargs == {}
-        assert workspace == tmp_path
-        assert permission_prompter is not None
-        assert trust_prompt is not None
-        # The inline REPL prompts for MCP trust on startup (batch mode
-        # still skips it).
-        assert mcp_trust_mode == "prompt"
-        calls.append(("build", permission_prompter))
-        return runtime
+    def fake_run_tui(workspace: Path) -> int:
+        calls.append(("run_tui", workspace))
+        return 0
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli_app.sys, "stdin", FakeTty(True))
     monkeypatch.setattr(cli_app.sys, "stdout", FakeTty(True))
-    monkeypatch.setattr(cli_app, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr("ui.cli.terminal.repl.InlineRepl", FakeInlineRepl)
+    monkeypatch.setattr("ui.tui.app.run_tui", fake_run_tui)
 
     assert cli_app.main([]) == 0
-    assert [name for name, _ in calls] == ["build", "init", "run"]
-    assert calls[1] == ("init", runtime)
+    assert calls == [("run_tui", tmp_path)]
