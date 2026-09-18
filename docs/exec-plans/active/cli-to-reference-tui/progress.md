@@ -2,9 +2,9 @@
 
 ## Current State
 
-Status：M1 已实现并有测试证据；未提交（按用户要求）。M2 尚未开始。
+Status：M1 与 M2 已实现并有测试证据；未提交（按用户要求）。M3 尚未开始。
 
-Current milestone：M1 完成；下一未完成批次 M2.1（应用装配、单 worker、快照与观察）。
+Current milestone：M2 完成；下一未完成批次 M3.1（ConversationProjection 移植、固定身份与声明顺序）。
 
 Last updated：2026-09-18，Asia/Shanghai。
 
@@ -29,10 +29,10 @@ M1 交付：
 - [x] M1：取消与历史记录基础。
   - [x] M1.1：稳定记录身份、压缩来源、历史保留引用读取。
   - [x] M1.2：运行事实、受控整理、恢复与故障注入。
-- [ ] M2：共用 Controller。
-  - [ ] M2.1：应用装配、单 worker、快照与观察。
-  - [ ] M2.2：命令、交互、队列、切换与关闭。
-  - [ ] M2.3：batch Adapter。
+- [x] M2：共用 Controller。
+  - [x] M2.1：应用装配、单 worker、快照与观察。
+  - [x] M2.2：命令、交互、队列、切换与关闭。
+  - [x] M2.3：batch Adapter。
 - [ ] M3：ConversationProjection。
   - [ ] M3.1：移植归并、固定身份与声明顺序。
   - [ ] M3.2：权威修正、同步、详情与管线集成。
@@ -97,6 +97,37 @@ Command：`uv run --no-sync python -m pytest tests/test_import_boundaries.py -q`
 
 证据文件：`tests/test_conversation_history.py`、`tests/test_session_interrupt_cleanup.py`；受控整理入口 `services/context/message_store.py:finalize_interrupted_run`；运行事实 `services/context/run_facts.py`。
 
+### M2 验证（2026-09-18，Windows）
+
+M2 交付：
+- 新增 `application/runtime.py`：从 `ui.cli.app::build_runtime/build_unconfigured_runtime` 与 `ui.cli.types::CliRuntime` 提取装配、`with_session`、`with_model_config`；应用层不 import UI。`ui/cli/types.py` 与 `ui/cli/app.py` 改为向 application 委托/重导出；`DeferredPermissionPrompter`/`DeferredUserQuestionPrompter` 允许 Controller 在装配后接管交互。
+- 新增 `application/types.py`：`SessionSnapshot`、`SessionUpdate` 家族、`SubmissionReceipt`、`WithdrawalResult`、`CancelResult`、`ResponseResult`、`InteractionRequest/Answer`、`DetailRef/DetailResult`，全部为冻结值类型。
+- 新增 `application/session.py::SessionController`：bootstrap task、单前台 worker、FIFO 队列与暂停、watch 无空隙订阅与慢观察者快照重同步、代次/序号、取消后调用 `finalize_interrupted_run` 收尾、`clear_session`/`resume_session` 重绑定并发布新代次、幂等 `close`。
+- 新增 `application/interactions.py`：单 active 请求、按到达顺序排队、按 request ID + 类型校验回答、取消唤醒全部等待者；`PermissionPromptAdapter`/`UserQuestionPromptAdapter` 适配既有协议。
+- 新增 `application/commands.py`：结构化命令 registry 与 `CommandOutcome`；查看即时、修改经 `await_safe_point` 串行、生命周期动作交 Controller。
+- 新增 `application/sessions.py`：resume/list/restore 业务从 `ui.cli.resume` 迁入；`ui/cli/resume.py` 重导出。
+- 重写 `ui/cli/batch.py`：改为 Controller Adapter，删除独立 loop/附件/shutdown；保留纯文本流式、工具摘要、成功/失败退出码、EOF 与权限/问答协议；不 import Textual。
+
+Command：`uv run --no-sync python -m pytest tests/test_session_controller.py tests/test_session_commands.py tests/test_session_interactions.py tests/test_batch_session_controller.py -q`。
+
+Result：退出码 0；**43 passed**（`test_session_controller.py` 15、`test_session_commands.py` 12、`test_session_interactions.py` 8、`test_batch_session_controller.py` 8）。
+
+Command：`uv run --no-sync python -m pytest tests/test_session_controller.py tests/test_runtime_integration.py tests/test_import_boundaries.py -q` 与 M2.2/M2.3 指定的既有测试组合。
+
+Result：退出码 0；**110 passed**（含 `test_plan_mode`、`test_permission_policy`、`test_cli_resume`、`test_cli_connect`、`test_cli_mcp_trust_prompt`、`test_async_cli_streaming`）。
+
+Command：`uv run --no-sync python -m pytest tests -q`。
+
+Result：退出码 1；**687 passed, 3 failed in 13.76s**。3 个失败与 M1 记录一致，均为与 M2 无关的既有平台失败（`test_bash_tool`、`test_openai_compatible_provider`、`test_search_tools`）。无新增失败。
+
+代码复查后修复（2026-09-18）：`/permissions`（查看）与 `/plan show|open` 按具体 invocation 归为查看以免等待运行；取消调用 `InteractionCoordinator.cancel_pending` 唤醒全部等待者；`resume_queue` 在收尾失败后拒绝继续；`/plan <描述>` 与审批附件经同一 submit/附件入口；`respond` 接受 `InteractionAnswer` 或 kind+payload；`reload_model_config` 在安全点执行；快照附带 pending interactions。
+
+Command：`uv run --no-sync python -m compileall -q core services infrastructure application ui` → 退出码 0。
+
+Command：`uv run --no-sync python -m pytest tests/test_import_boundaries.py -q` → 4 passed。
+
+证据文件：`tests/test_session_controller.py`、`tests/test_session_commands.py`、`tests/test_session_interactions.py`、`tests/test_batch_session_controller.py`；Controller `application/session.py`；交互 `application/interactions.py`；命令 `application/commands.py`。
+
 ## Artifacts And Notes
 
 入口为 [plan.md](plan.md)，批次与命令为 [execution.md](execution.md)，选择与兼容门槛为 [decisions.md](decisions.md)。当前不新增第五份计划/研究报告；参考适配清单放 plan 的 Context，发现与证据保留在本文件。
@@ -105,6 +136,11 @@ Command：`uv run --no-sync python -m pytest tests/test_import_boundaries.py -q`
 
 ## Outcomes & Retrospective
 
-计划编写已形成可交接的五里程碑实施路线，明确三个模块的接口、参考代码适配差异和当前功能保留范围。迁移本身尚未开始，不能把三个目标设计标为已实现，也不能关闭 TD-007/TD-016。
+M1、M2 已交付，应用层现在有可独立于 Textual 运行、被 batch 与后续 TUI 共用的 `SessionController`。三个目标设计仍视为“部分实现”：Projection 与 View 尚未存在，M2 只关闭了应用会话边界，不能宣称 TUI 已完成，也不能关闭 TD-007/TD-016。
 
-执行者从 M1.1 开始，先复核基线失败对相关工作影响，再完成来源/历史 fixture 与存储改动。每个里程碑完成后补充产物、实际测试结果和未完成项；全部验收达到后整体移入 completed。
+M2 已知限制（不阻塞本批次验收，记入后续）：
+- MCP trust 交互能力已在 `InteractionCoordinator` 与 Controller 公开（`interaction_requested`/`respond`），batch watcher 会以纯文本回答；但 `build_runtime` 的启动期 trust 仍在装配时同步完成，Controller 尚未在 bootstrap 阶段主动发布 trust 请求。该异步启动编排属于 M5.1 薄 App 的职责，M2 只提供机制。
+- `/resume` 目标解析在应用层支持 session ID 与 `.jsonl` 路径；标题模糊匹配仍保留在旧 CLI 路径，M5 迁移时统一。
+- `ui/cli/terminal/` 旧 REPL 仍在，M2 未删除，默认入口未切换。
+
+执行者从 M3.1 开始：以 M2 的 `SessionSnapshot`/`SessionUpdate` 契约构造 Projection，不启动 Textual 即可验证消息身份与排序。全部验收达到后将计划包整体移入 completed。
