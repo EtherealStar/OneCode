@@ -12,6 +12,7 @@ dependencies = [
     "tree-sitter",
     "tree-sitter-bash",
     "prompt-toolkit>=3.0.52",
+    "textual>=0.89",
 ]
 
 [dependency-groups]

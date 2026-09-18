@@ -95,6 +95,18 @@ class ConversationProjection:
     # --- public reads -----------------------------------------------------
 
     @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    @property
+    def sequence(self) -> int:
+        return self._sequence
+
+    @property
     def messages(self) -> tuple[UiMessage, ...]:
         return tuple(self._message_view(state) for state in self._messages)
 

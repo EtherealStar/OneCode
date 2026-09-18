@@ -1,0 +1,111 @@
+Screen {
+    layout: vertical;
+    background: $background;
+}
+
+#conversation-view {
+    width: 100%;
+    height: 1fr;
+    background: $background;
+}
+
+ConversationView {
+    width: 100%;
+    height: 1fr;
+    background: $background;
+}
+
+#message-viewport {
+    width: 100%;
+    height: 100%;
+    background: $background;
+}
+
+#todo-list {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 3;
+    padding: 0 1;
+    color: $text-muted;
+    background: $surface;
+}
+
+.run-notice {
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.message {
+    padding: 0 1;
+    margin-bottom: 1;
+    width: 100%;
+    height: auto;
+}
+
+/* Textual has no right/bottom properties; MessageViewport offsets this
+   relative to the parent size after layout. */
+#new-content {
+    display: none;
+    position: absolute;
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $primary;
+}
+
+#status-bar {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    padding: 0 1;
+}
+
+#status-left {
+    width: 1fr;
+}
+
+#status-right {
+    width: auto;
+}
+
+#composer-wrap {
+    width: 100%;
+    height: auto;
+    background: $background;
+}
+
+#composer {
+    width: 100%;
+    height: 5;
+    min-height: 3;
+    padding: 0 1;
+    border: none;
+    border-top: solid $surface;
+    background: $background;
+}
+
+#composer:focus {
+    border: none;
+    border-top: solid $primary;
+}
+
+#composer-hint {
+    position: absolute;
+    offset: 2 1;
+    width: auto;
+    height: 1;
+    color: $text-muted;
+    background: $background;
+}
+
+#completion-overlay {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 8;
+    border: solid $panel;
+    background: $surface;
+}

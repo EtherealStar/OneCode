@@ -2,9 +2,9 @@
 
 ## Current State
 
-Status：M1、M2 与 M3 已实现并有测试证据；未提交（按用户要求）。M4 尚未开始。
+Status：M1、M2、M3 与 M4 已实现并有测试证据；未提交（按用户要求）。M5 尚未开始。
 
-Current milestone：M3 完成；下一未完成批次 M4.1（Textual 版本验证、主题与虚拟视口）。
+Current milestone：M4 完成；下一未完成批次 M5.1（薄 App、Composer、命令视图与 Modal）。
 
 Last updated：2026-09-18，Asia/Shanghai。
 
@@ -36,9 +36,9 @@ M1 交付：
 - [x] M3：ConversationProjection。
   - [x] M3.1：移植归并、固定身份与声明顺序。
   - [x] M3.2：权威修正、同步、详情与管线集成。
-- [ ] M4：ConversationView。
-  - [ ] M4.1：Textual 版本验证、主题与虚拟视口。
-  - [ ] M4.2：刷新、Markdown、详情与资源回收。
+- [x] M4：ConversationView。
+  - [x] M4.1：Textual 版本验证、主题与虚拟视口。
+  - [x] M4.2：刷新、Markdown、详情与资源回收。
 - [ ] M5：完整交互与入口切换。
   - [ ] M5.1：App、Composer、命令视图与 Modal。
   - [ ] M5.2：切换入口、删除旧路径、完整自动/人工验收与归档。
@@ -154,6 +154,35 @@ Result：退出码 1；**714 passed, 3 failed in 13.04s**。3 个失败与 M1/M2
 
 证据文件：`tests/test_conversation_projection.py`、`tests/test_conversation_pipeline.py`；实现 `ui/tui/projection.py`、`ui/tui/projection_types.py`。
 
+### M4 验证（2026-09-18，Windows）
+
+M4 交付：
+- 依赖：`uv add "textual>=0.89"` 锁定 `textual==8.2.8`（另引入 `linkify-it-py`、`mdit-py-plugins`、`platformdirs`），`uv sync --dev` 成功。
+- 新增 `ui/tui/theme.py`：OneCode 调色板、`ONECODE_THEME`、`RICH_STYLES`（`ui.*`/`markdown.*` 命名样式）、`apply_theme(app)`；新增 `ui/tui/onecode.tcss`（深背景、对话区占剩余高度、新内容入口、状态栏/Composer 规则）。
+- 新增 `ui/tui/renderers/`：`tool.py`（基于 OneCode 公共事实的 presenter registry + 通用 fallback + 脱敏）、`message.py`（user/assistant/system/tool 渲染，按消息内 part 顺序）、`status.py`（状态栏与运行态）。
+- 新增 `ui/tui/conversation/`：`layout_index.py::VirtualLayoutIndex`、`render_cache.py::MarkdownBlockCache`（流式空行分块 + 定稿整文重解析，混合围栏处理）、`refresh_scheduler.py::UiRefreshScheduler`（40ms 合并、immediate、close）、`viewport.py`（可见区挂载 + overscan=8、spacer、message ID + 行偏移锚点、resize/滚底代次、详情 `DetailRequested`）、`view.py::ConversationView.update(projection, change)`（只调度刷新，辅助状态空 dirty 也刷新）。包 `__init__` 使用惰性属性避免 renderers↔view 循环 import。
+- 新增 `tests/test_conversation_view.py`（9）、`tests/test_tui_rendering.py`（15）、`tests/test_tui_refresh_scheduler.py`（7）、`tests/test_tui_details.py`（8）与共享构造 `tests/tui_test_support.py`。
+
+Command：`uv run python -m pytest tests/test_conversation_view.py tests/test_tui_rendering.py tests/test_conversation_projection.py -q`。
+
+Result：退出码 0；**46 passed**。
+
+Command：`uv run python -m pytest tests/test_conversation_view.py tests/test_tui_rendering.py tests/test_tui_refresh_scheduler.py tests/test_tui_details.py tests/test_conversation_projection.py -q`。
+
+Result：退出码 0；**61 passed**。
+
+Command：`uv run python -m pytest tests -q`。
+
+Result：退出码 1；**754 passed, 3 failed in 27.81s**。3 个失败与 M1/M2/M3 记录一致，均为与 M4 无关的既有平台失败（`test_bash_tool`、`test_openai_compatible_provider`、`test_search_tools`）。无新增失败。
+
+Command：`uv run python -m compileall -q core services infrastructure application ui` → 退出码 0；`uv run python -m pytest tests/test_import_boundaries.py -q` → 4 passed。
+
+环境与测量：Windows 11、CPython 3.14.5、Textual 8.2.8，headless `run_test(size=...)`。5,000 条固定内容消息在 120×40 与 60×20 下，布局稳定后挂载的 `MessageWidget` 数量约 28（顶部/中部/底部抽样），断言 `mounted <= viewport.height + 16` 且远小于历史总量；两个 spacer 不计。10,000 个 `AssistantDelta` 在 40ms 调度器上 `requested_updates=10001`、`flush_count=2`（含挂载时一次 immediate 刷新，流式窗口合并为一次），`projection.messages[0].parts[0].content` 与 widget 消息正文均为完整 10,000 字符，渲染尾部与首部带标记；`MessageCommitted` 的 immediate 刷新在无等待下即可见。
+
+代码复查后修复：`ui/tui/conversation/__init__.py` 改为惰性导出以解除 `renderers.message → conversation.render_cache → conversation.__init__ → view → viewport → renderers.message` 的循环 import；`tests/test_batch_session_controller.py` 的“batch 不 import TUI”断言改为子进程内用 meta_path finder 拦截 `textual`，因 pytest 收集期会导入 TUI 测试模块导致进程内 `sys.modules` 检查失效。
+
+证据文件：`tests/test_conversation_view.py`、`tests/test_tui_rendering.py`、`tests/test_tui_refresh_scheduler.py`、`tests/test_tui_details.py`；实现 `ui/tui/theme.py`、`ui/tui/conversation/`、`ui/tui/renderers/`。
+
 ## Artifacts And Notes
 
 入口为 [plan.md](plan.md)，批次与命令为 [execution.md](execution.md)，选择与兼容门槛为 [decisions.md](decisions.md)。当前不新增第五份计划/研究报告；参考适配清单放 plan 的 Context，发现与证据保留在本文件。
@@ -177,3 +206,10 @@ M3 已知限制（不阻塞本批次验收，记入后续）：
 - 取消收尾现在额外发布一次快照；慢观察者仍会先收到 `RunCancelled`/`QueueChanged` 再被快照替换，投影按快照收敛。
 
 执行者从 M4.1 开始：先以固定 Projection 的测试 App 验证 Textual `run_test`/TextArea/Theme/timer/resize 等实际 API，锁版本后再移植虚拟视口。全部 M1–M5 验收达到后将计划包整体移入 completed。
+
+M4 已交付：`ui/tui/ConversationView` 以投影 `messages` 为唯一事实，只在可见区 + overscan 内挂载 MessageWidget，支持向上阅读时增长不跳底、主动返回最新、resize 与锚点删除回退、工具详情按需外置读取与迟到/缺失处理，Markdown 定稿整文重解析。Textual 版本锁定为 8.2.8。三个目标设计仍视为“部分实现”：App、Composer、命令视图与 Modal 属 M5，默认入口未切换，因此不能宣称 TUI 已完成，也不能关闭 TD-007/TD-016。
+
+M4 已知限制（不阻塞本批次验收，记入后续）：
+- View 目前只在测试 App 中挂载；生产 Textual App 装配、状态栏/Composer/补全与按键绑定在 M5.1。
+- `DetailRequested` 事件已定义并由 View 发出，但 `App → Controller.load_detail` 的实际连接在 M5.1；M4 用测试 App 模拟该回链。
+- `onecode.tcss` 已提供目标布局规则，M4 未在真实终端做视觉验收（M5.2 人工验收）。
