@@ -272,6 +272,34 @@ def test_replace_messages_for_compaction_appends_new_chain_without_deleting_hist
     ]
 
 
+def test_records_store_call_attribution_and_compaction_source(tmp_path: Path) -> None:
+    state = RuntimeState(session_id="session-attribution")
+    message_store = make_store(tmp_path, state)
+
+    message_store.append_user("question")
+    message_store.append_assistant(
+        {"content": "answer"},
+        assistant_call_id="ac_deadbeef_t1_m1",
+        model_turn_index=1,
+    )
+    records = message_store.active_records()
+    message_store.replace_messages_for_compaction(
+        [records[-1].message],
+        reason="manual",
+        metadata={"boundary_id": "b1"},
+        source_uuids=[records[-1].uuid],
+    )
+    message_store.flush_transcript()
+
+    disk = read_jsonl(session_messages_path(tmp_path, state.session_id))
+    assert disk[1]["assistant_call_id"] == "ac_deadbeef_t1_m1"
+    assert disk[1]["model_turn_index"] == 1
+    copy = disk[-1]
+    assert copy["source_uuid"] == records[-1].uuid
+    assert copy["record_kind"] == "compaction"
+    assert copy["message"]["metadata"]["compaction"]["reason"] == "manual"
+
+
 def test_restore_skips_bad_lines_and_continues_same_session(tmp_path: Path) -> None:
     state = RuntimeState(session_id="session-restore")
     message_store = make_store(tmp_path, state)

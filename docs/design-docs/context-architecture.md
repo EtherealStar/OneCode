@@ -1,5 +1,7 @@
 # Context Architecture
 
+> TUI 替换涉及的目标存储变更见 [SessionController：中断与记录整理](session-controller-architecture.md#中断与记录整理)：中断文字作为普通 assistant 保存，未配对工具记录从实际 transcript 与内存移除，不再合成中断结果。这是尚未实现的受控重写例外；本文其余部分继续描述现有追加与压缩语义。
+
 本文描述 `services/context/` 的架构边界：内部消息结构、session transcript、模型调用前的上下文快照和消息滑窗投影。上层的压缩、记忆、附件治理见 `compaction-architecture.md`、`memory-architecture.md`、`attachment-architecture.md`；动态 prompt 见 `prompt-architecture.md`。
 
 ## 文件职责
@@ -18,12 +20,15 @@
 
 ```python
 def append_user(content) -> dict
-def append_assistant(message) -> dict
-def append_tool_results(results) -> list[dict]
+def append_assistant(message, *, assistant_call_id=None, model_turn_index=None) -> dict
+def append_tool_results(results, *, assistant_call_id=None, model_turn_index=None) -> list[dict]
 def append_attachments(attachments) -> list[dict]
 def current_messages() -> tuple[dict, ...]          # 返回 deepcopy
+def active_records() -> tuple[ActiveMessage, ...]   # 记录身份与消息副本
+@property last_record_uuid -> str | None
 def seed_messages(messages) -> list[dict]
-def replace_messages_for_compaction(messages, *, reason, metadata=None) -> list[dict]
+def replace_messages_for_compaction(messages, *, reason, metadata=None, source_uuids=None) -> list[dict]
+def finalize_interrupted_run(facts, *, error_log_recorder=None) -> InterruptCleanupResult
 def bind_session(session_id) / clear_for_new_session(new_session_id) / flush_transcript()
 @classmethod from_transcript(transcript_store, state) -> MessageStore
 ```
@@ -67,7 +72,17 @@ flowchart TD
 
 ### JsonlTranscriptStore
 
-`messages.jsonl` 每条 record：`type`、`uuid`、`parent_uuid`、`session_id`、`timestamp`、`cwd`、`message`。`VALID_MESSAGE_ROLES = {user, assistant, tool_result, attachment}`。写入采用缓冲，默认 `flush_interval_seconds=1.0`，测试/退出/session 切换/恢复时可显式 flush。
+`messages.jsonl` 每条 record：`type`、`uuid`、`parent_uuid`、`session_id`、`timestamp`、`cwd`、`message`，以及可选的记录身份字段 `assistant_call_id`、`model_turn_index`、`source_uuid`、`record_kind`。`VALID_MESSAGE_ROLES = {user, assistant, tool_result, attachment}`。写入采用缓冲，默认 `flush_interval_seconds=1.0`，测试/退出/session 切换/恢复时可显式 flush。写入临界区（append 入缓冲、定时 flush、受控重写）共用同一把写锁，flush 在持锁状态下完成磁盘写入。
+
+`load_messages(*, restore_external_results=True)` 用于模型恢复，默认读回外置正文；`read_records()` 返回文件与待写缓冲中的全部记录且不读外置正文，`rewrite_records(records)` 用修正后的完整记录集在同目录暂存并原子替换正式文件。`application/history.py` 只使用不恢复外置正文的读取路径。
+
+### 记录身份、来源与受控中断整理
+
+持久化记录 UUID 与模型调用的 `assistant_call_id` / `model_turn_index` 是两类身份：记录 UUID 由存储生成并随 `message` 一起写入 JSONL，模型调用归属由 `core/loop.py` 在追加 assistant / tool_result 时显式传入。身份映射保存在 `MessageStore` 内部的记录元数据中，不进入 provider-neutral 的 `message` 字典，因此 `current_messages()` 的 wire 语义不变。
+
+compaction 复制旧记录时通过 `replace_messages_for_compaction(..., source_uuids=...)` 保存来源：每个 replacement record 的 `source_uuid` 指向原始记录，`record_kind="compaction"` 标明内部产物；历史读取按来源和分支规则保留压缩前消息、过滤复制项。没有来源字段的旧 compact 记录按其 `metadata.compaction` 与边界标记识别，不用正文去重。
+
+`finalize_interrupted_run(facts)` 是 append-only 的明确例外：它按中断整理契约在串行写锁内修正内存链与完整 transcript（保留半段 assistant 文字一次、保留真实工具配对含失败/拒绝、删除未配对声明与孤立结果、清理空 assistant），在同目录暂存并原子替换；失败时保留原文件与暂存文件、记录 error log 并返回失败结果，不提交内存状态。`InMemoryTranscriptStore` 以同一接口在内存中完成整理，不强制落盘。
 
 ### Tool result 外置
 

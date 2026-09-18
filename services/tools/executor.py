@@ -583,7 +583,19 @@ class RegistryToolExecutor:
             async with semaphore:
                 return await self._run_handler_async(ready)
 
-        return list(await asyncio.gather(*(run_one(ready) for ready in ready_calls)))
+        tasks = [
+            asyncio.ensure_future(run_one(ready)) for ready in ready_calls
+        ]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            # Cancellation (or a handler failure) must not return before the
+            # foreground handlers have observed it, otherwise a writer could
+            # still be mutating state after the caller believes the turn ended.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _prepare_input(
         self,
