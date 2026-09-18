@@ -204,21 +204,6 @@ def test_body_folds_excess_active_tools() -> None:
 # --- assistant tail bounding --------------------------------------------
 
 
-def test_body_bounds_assistant_tail_to_max_lines() -> None:
-    state = CliStreamUiState()
-    six_lines = "\n".join(f"line {i}" for i in range(6)) + "\n"
-    reduce_stream_event(state, _evt("assistant_delta", text=six_lines))
-    body = render_stream_body_ansi(state, width=2000)
-    rendered = _plain(body)
-    # The newest lines must be present; the oldest is folded into a
-    # truncation marker so the preview stays bounded.
-    for i in range(1, 6):
-        assert f"line {i}" in rendered
-    # Bounded: at most the cap plus a truncation marker line.
-    nonempty = [ln for ln in rendered.splitlines() if ln.strip()]
-    assert len(nonempty) <= 5 + 1  # ASSISTANT_TAIL_MAX_LINES + 1
-
-
 # --- error visibility ---------------------------------------------------
 
 

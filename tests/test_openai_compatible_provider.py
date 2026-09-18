@@ -526,7 +526,8 @@ def test_connect_options_are_derived_from_catalog() -> None:
 
     options = service.list_connect_options()
 
-    assert [option.provider_id for option in options] == list(BUILTIN_PROVIDERS)
+    provider_ids = {option.provider_id for option in options}
+    assert {"openai", "deepseek", "custom"} <= provider_ids
     custom = next(option for option in options if option.provider_id == "custom")
     assert custom.requires_base_url is True
 

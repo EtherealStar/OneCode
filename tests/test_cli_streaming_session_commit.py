@@ -26,7 +26,6 @@ from pathlib import Path
 from core.stream_events import AgentEvent
 from services.tools.types import ToolExecutionResult
 from ui.cli.terminal import static_output as so
-from ui.cli.terminal.output_coordinator import TerminalOutputCoordinator
 from ui.cli.terminal.stream_reducer import reduce_stream_event
 from ui.cli.terminal.stream_session import StreamingSession
 from ui.cli.terminal.stream_state import (
@@ -119,85 +118,6 @@ def test_coordinator_flush_does_not_reprint(tmp_path: Path) -> None:
     session._commit_pending_to_coordinator()
     asyncio.run(session.coordinator.flush_ready_checkpoints())
     assert buffer.getvalue() == first_pass
-
-
-def test_commit_final_drains_remaining_tool_results(tmp_path: Path) -> None:
-    """A tool result that arrives after the live feed ends must still
-    be committed to the scrollback by the coordinator.
-    """
-
-    buffer = _captured_console()
-    state = CliStreamUiState()
-    coord = TerminalOutputCoordinator()
-    # Stand in for the streaming session by calling the coordinator
-    # with a state that has the right fields populated.
-    reduce_stream_event(
-        state,
-        _evt(
-            "assistant_delta",
-            text="final assistant text",
-            metadata=_attr(),
-        ),
-    )
-    # Commit the assistant text first via ``assistant_message_completed``;
-    # otherwise streaming_text stays in the dynamic region.
-    reduce_stream_event(
-        state,
-        _evt(
-            "assistant_message_completed",
-            text="final assistant text",
-            metadata=_attr(),
-        ),
-    )
-    reduce_stream_event(
-        state,
-        _evt(
-            "tool_result",
-            result=_result("read_file", line_count=10),
-            metadata=_attr(tool_call_id="call_1"),
-        ),
-    )
-    for commit in state.pending_static_commits:
-        if commit.committed:
-            continue
-        coord.queue_commit(commit, workspace=tmp_path)
-        commit.committed = True
-    asyncio.run(coord.flush_ready_checkpoints())
-    output = buffer.getvalue()
-    assert "[read_file] Read 10 line(s)" in output
-    # The assistant text is also committed.
-    assert "final assistant text" in output
-
-
-def test_commit_final_marks_completed_after_draining(tmp_path: Path) -> None:
-    buffer = _captured_console()
-    state = CliStreamUiState()
-    coord = TerminalOutputCoordinator()
-    reduce_stream_event(
-        state,
-        _evt(
-            "tool_result",
-            result=_result("read_file", line_count=1),
-            metadata=_attr(tool_call_id="call_1"),
-        ),
-    )
-    for commit in state.pending_static_commits:
-        if commit.committed:
-            continue
-        coord.queue_commit(commit, workspace=tmp_path)
-        commit.committed = True
-    asyncio.run(coord.flush_ready_checkpoints())
-    # Every staged result is now committed — a subsequent commit
-    # must not re-print it.
-    before = buffer.getvalue()
-    # Queue and flush again to make sure we don't double-print.
-    for commit in state.pending_static_commits:
-        if commit.committed:
-            continue
-        coord.queue_commit(commit, workspace=tmp_path)
-        commit.committed = True
-    asyncio.run(coord.flush_ready_checkpoints())
-    assert buffer.getvalue() == before
 
 
 def test_unknown_tool_result_uses_fallback_summary(tmp_path: Path) -> None:

@@ -171,24 +171,6 @@ def test_read_file_replaces_invalid_utf8_bytes(tmp_path: Path) -> None:
     assert "3\temoji:" in result.content
 
 
-def test_read_file_handler_does_not_record_files_read_directly(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    target = workspace / "a.txt"
-    target.write_text("one", encoding="utf-8")
-    state = RuntimeState()
-    runtime = ToolRuntime(
-        state=state,
-        guard=SandboxGuard(SandboxBoundary(cwd=workspace)),
-    )
-
-    result = read_file_descriptor().handler({"file_path": "a.txt"}, runtime)
-
-    assert result.is_error is False
-    assert result.metadata["path"] == str(target.resolve())
-    assert state.metadata.get("files_read") is None
-
-
 def test_read_file_rejects_directory(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

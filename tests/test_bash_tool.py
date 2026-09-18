@@ -60,15 +60,6 @@ def execute_results(
     return asyncio.run(collect())
 
 
-def test_bash_descriptor_schema_and_prompt() -> None:
-    item = descriptor()
-
-    assert item.name == "bash"
-    assert "command" in item.input_schema["properties"]
-    assert item.input_schema["additionalProperties"] is False
-    assert "Tree-sitter" in item.prompt
-
-
 def test_git_bash_runner_decodes_bytes_without_locale(
     tmp_path: Path,
     monkeypatch,

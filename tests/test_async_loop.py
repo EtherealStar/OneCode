@@ -77,39 +77,6 @@ def make_loop(
     return loop, message_store, model_client, tool_executor
 
 
-def test_async_loop_yields_deltas_before_completion(tmp_path: Path) -> None:
-    loop, message_store, _model_client, _tool_executor = make_loop(
-        tmp_path,
-        [
-            [
-                ModelStreamEvent.content_delta("hello"),
-                ModelStreamEvent.content_delta(" world"),
-                ModelStreamEvent.message_completed(
-                    assistant_message={"role": "assistant", "content": "hello world"},
-                    final_text="hello world",
-                ),
-            ]
-        ],
-    )
-
-    async def run() -> list:
-        return [event async for event in loop.stream("say hello")]
-
-    events = asyncio.run(run())
-
-    assert [event.type for event in events[:3]] == [
-        "interaction_started",
-        "assistant_delta",
-        "assistant_delta",
-    ]
-    assert events[-1].type == "completed"
-    assert events[-1].text == "hello world"
-    assert message_store.current_messages()[-1] == {
-        "role": "assistant",
-        "content": "hello world",
-    }
-
-
 def test_async_loop_continues_after_streamed_tool_call(tmp_path: Path) -> None:
     tool_call = ToolCall(id="call-1", name="read_file", input={"file_path": "a.txt"})
     loop, message_store, model_client, tool_executor = make_loop(

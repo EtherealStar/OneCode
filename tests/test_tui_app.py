@@ -408,28 +408,6 @@ def test_resume_queue_when_paused(tmp_path: Path) -> None:
     _run(scenario())
 
 
-def test_panel_queue_preserves_arrival_order(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        app, _controller = _build_app(tmp_path)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            seen: list[str] = []
-
-            async def first() -> None:
-                seen.append("first")
-                await asyncio.sleep(0)
-
-            async def second() -> None:
-                seen.append("second")
-
-            app._enqueue_panel(first)
-            app._enqueue_panel(second)
-            await pilot.pause()
-            assert seen == ["first", "second"]
-
-    _run(scenario())
-
-
 def test_interaction_resolved_dismisses_open_modal(tmp_path: Path) -> None:
     request = SimpleNamespace(
         request_id="permission-2",

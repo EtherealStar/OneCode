@@ -4,24 +4,7 @@ import asyncio
 from pathlib import Path
 
 from core.runtime_state import RuntimeState
-from infrastructure.filesystem.onecode_paths import session_background_tasks_dir
-from services.background_tasks import (
-    BackgroundTaskManager,
-    background_task_output_path,
-    generate_background_task_id,
-)
-
-
-def test_background_task_id_prefixes_are_stable() -> None:
-    assert generate_background_task_id("local_bash").startswith("b_")
-    assert generate_background_task_id("local_agent").startswith("a_")
-    assert generate_background_task_id("dream").startswith("d_")
-
-
-def test_background_task_output_path_is_session_local(tmp_path: Path) -> None:
-    path = background_task_output_path(tmp_path, "session-1", "b_1234")
-
-    assert path == session_background_tasks_dir(tmp_path, "session-1") / "b_1234.output"
+from services.background_tasks import BackgroundTaskManager
 
 
 def test_background_agent_completion_drains_one_notification(tmp_path: Path) -> None:

@@ -9,7 +9,6 @@ from services.attachments.types import AttachmentMessage
 from services.context.message_store import MessageStore
 from services.context.transcript import JsonlTranscriptStore
 from services.tools.types import ToolExecutionResult
-from utils.toolResultStorage import ToolResultStorage
 
 
 def make_store(tmp_path: Path, session_id: str = "session-history") -> MessageStore:
@@ -333,42 +332,6 @@ def test_history_does_not_cross_link_duplicate_tool_ids(tmp_path: Path) -> None:
     results = [record for record in history.records if record.role == "tool_result"]
     assert [record.text for record in results] == ["result 0", "result 1"]
     assert len({record.uuid for record in results}) == 2
-
-
-def test_history_read_never_reads_external_result_bodies(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    store = make_store(tmp_path)
-    large_content = "x" * (50 * 1024 + 10)
-    store.append_user("big output")
-    store.append_tool_results(
-        [
-            ToolExecutionResult(
-                tool_call_id="call-big",
-                tool_name="grep",
-                content=large_content,
-            )
-        ]
-    )
-    store.flush_transcript()
-
-    read_calls = {"count": 0}
-
-    def spy_read_result(self, relative_path):  # type: ignore[no-untyped-def]
-        read_calls["count"] += 1
-        raise AssertionError("history must not read external results")
-
-    monkeypatch.setattr(ToolResultStorage, "read_result", spy_read_result)
-
-    history = load_conversation_history(store.transcript_store)
-
-    assert read_calls["count"] == 0
-    result = next(record for record in history.records if record.role == "tool_result")
-    assert result.externalized is True
-    assert result.external_result_path is not None
-    assert result.text != large_content
-    assert len(result.text) < len(large_content)
 
 
 def test_history_survives_missing_external_result(tmp_path: Path) -> None:

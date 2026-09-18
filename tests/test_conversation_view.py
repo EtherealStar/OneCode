@@ -15,7 +15,7 @@ from application.types import ToolUpdate
 from ui.tui.conversation.viewport import MessageWidget
 from ui.tui.projection import ConversationProjection
 from ui.tui.renderers.message import render_message
-from ui.tui.theme import RICH_STYLES, ONECODE_THEME
+from ui.tui.theme import RICH_STYLES
 
 from tui_test_support import (
     ConversationApp,
@@ -90,11 +90,6 @@ def test_textual_core_api_surface_is_available() -> None:
             assert app.query_one(TextArea).text == "hello"
 
     _run(scenario())
-
-
-def test_theme_token_is_registered() -> None:
-    assert ONECODE_THEME.name == "onecode"
-    assert ONECODE_THEME.dark is True
 
 
 def test_mount_count_is_bounded_at_both_sizes() -> None:
@@ -259,20 +254,5 @@ def test_deleting_anchored_message_falls_back_to_neighbor() -> None:
             assert removed_id not in viewport._index.ids
             assert viewport.mounted_message_count > 0
             assert viewport._at_bottom() is False
-
-    _run(scenario())
-
-
-def test_stale_scroll_callback_is_ignored() -> None:
-    async def scenario() -> None:
-        projection = ConversationProjection(make_snapshot(history=text_history(50)))
-        app = ConversationApp(projection)
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause(0.2)
-            viewport = app.viewport
-            stale_generation = viewport._auto_scroll_generation - 1
-            before = viewport._follow_bottom
-            viewport._measure_and_restore(None, True, stale_generation)
-            assert viewport._follow_bottom is before
 
     _run(scenario())

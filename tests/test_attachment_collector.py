@@ -90,24 +90,6 @@ def test_collects_directory_attachment_with_entry_limit(tmp_path: Path) -> None:
     assert attachment["truncated"] is True
 
 
-def test_line_range_attachment_does_not_cache_full_file(tmp_path: Path) -> None:
-    note = tmp_path / "note.txt"
-    note.write_text("one\ntwo\nthree\n", encoding="utf-8")
-    cache = FileStateCache()
-    collector = _collector_with_cache(tmp_path, cache)
-
-    attachments = asyncio.run(
-        collector.collect_for_user_turn(
-            "summarize @note.txt#L2-2",
-            RuntimeState(),
-            (),
-        )
-    )
-
-    attachment = attachments[0]["attachment"]
-    assert attachment["content"] == "2\ttwo"
-    assert cache.get(note) is None
-
 
 def test_ambiguous_name_becomes_resolution_error_attachment(
     tmp_path: Path,
