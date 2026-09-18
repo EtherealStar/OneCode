@@ -147,7 +147,7 @@ def test_runtime_with_model_config_rebinds_model_client(
     runtime = make_runtime(tmp_path)
     new_client = FakeModelClient(display_name="DeepSeek", model="deepseek-chat")
     monkeypatch.setattr(
-        "ui.cli.types.create_model_client",
+        "application.runtime.create_model_client",
         lambda env_path: new_client,
     )
 

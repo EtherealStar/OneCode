@@ -98,6 +98,30 @@ Consequences：历史读取对无来源字段的旧 compact 记录按 `metadata.
 
 Date/Author：2026-09-18 / opencode。
 
+### 2026-09-18：M2 装配归属与交互接管方式
+
+Decision：把 `CliRuntime` 与 `build_runtime`/`build_unconfigured_runtime` 整体移入 `application/runtime.py`，`ui/cli/types.py` 仅保留 `CliRuntime = ApplicationRuntime` 别名，`ui/cli/app.py` 委托并保留终端 trust 提示。工具 executor 在装配期捕获 prompter，因此 `build_runtime` 注入 `DeferredPermissionPrompter`/`DeferredUserQuestionPrompter` 代理，由 `SessionController` 在构造后把代理 target 指向 `InteractionCoordinator` 适配器。resume/list/restore 业务移入 `application/sessions.py`。
+
+Context：应用层不得 import UI，但旧 CLI 在 M5 前仍需 `build_runtime`/`InlineRepl` 与相关测试；Controller 必须在 runtime 已构建后接管权限/问答。
+
+Rationale：移动而非复制装配逻辑，避免两套生命周期；代理让“装配期注入、运行期接管”不需要改 services 层工具 executor 的构造契约。旧测试的 monkeypatch 目标随机制迁移同步更新（`application.runtime.create_model_client`、`ui.cli.batch.*` 保留）。
+
+Consequences：`ui/cli/session_memory.py`、`ui/cli/resume.py` 变成重导出；`application` 成为 runtime 唯一来源。启动期 MCP trust 的异步编排不在 M2 完成，由 M5.1 在 App 挂载后处理；M2 只交付交互机制与 batch 纯文本回答。
+
+Date/Author：2026-09-18 / opencode。
+
+### 2026-09-18：Controller 的一致性与取消契约实现
+
+Decision：单个前台 worker + FIFO；订阅注册与初始快照在同一同步区段完成，更新带代次与单调序号；慢订阅者队列满时清空并替换为当前完整快照；取消时由 worker 任务接收 `CancelledError`，在异常处理中同步调用 `MessageStore.finalize_interrupted_run`，随后暂停队列并发布修正，`cancel_active` 等待 worker 结束后按需重启；`close` 幂等并唤醒所有交互等待者。
+
+Context：运行事实已由 M1 提供；需要不依赖 Textual 的确定结果。
+
+Rationale：把“取消等待真实收尾”落在 worker 任务边界，取消后不自动 drain；查看命令不等待，修改命令经 `await_safe_point` + 命令锁串行。
+
+Consequences：`snapshot.run.assistant_text` 来自运行事实累加的草稿，不从 Projection 倒读；测试通过可控 fake loop、事件屏障与直接 JSONL/快照断言验证，不依赖付费 provider。
+
+Date/Author：2026-09-18 / opencode。
+
 ### 2026-09-18：环境重建说明
 
 Observation：仓库内 `.venv` 为 Linux venv，Windows `uv` 无法复用（`failed to remove .venv/lib64`）。
