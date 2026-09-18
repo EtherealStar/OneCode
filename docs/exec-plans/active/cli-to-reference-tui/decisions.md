@@ -142,9 +142,21 @@ Consequences：工具结果先于持久化仍可展示但不宣称已保存；`H
 
 Date/Author：2026-09-18 / opencode。
 
+### 2026-09-18：View 身份、详情请求与 Markdown 定稿策略
+
+Decision：`ui/tui/conversation` 以字符串消息 ID（含投影的合成 draft ID 与持久化 UUID）作为虚拟布局键，不再使用参考的 `UUID`/`MessageLifecycle` 枚举；投影无 notices 概念，视口文档仅由消息构成。工具展开请求条件为“存在 `detail_ref`、未加载、无 `detail_error`”，因此内联小结果（无 `detail_ref`）不触发外置读取，缺失 artifact 不重试。`MarkdownBlockCache` 在流式时按空行增量复用已闭合块，消息定稿（`lifecycle != draft`）时整文重解析，保证跨块列表、链接引用、围栏空行、中文/emoji 的最终语义正确。M4 的 View 只消费 `messages` 与 `ViewChange`，详情经 `DetailRequested → App → Controller.load_detail → DetailLoaded` 回链。
+
+Context：参考 `viewport.py`/`render_message` 依赖 `UiMessage.lifecycle.value` 与 `UiPart.kind` 枚举，且拥有 notices、reasoning 与具体工具输入模型；OneCode 投影使用字符串生命周期、text/tool/attachment 三种 part，且工具输入以结构化 mapping 交付。
+
+Rationale：身份必须来自投影已有的稳定事实，View 不制造第二套领域类型；详情读取只能由 Controller 授权，View 不读任意路径；增量 Markdown 只作为流式优化，不能为保留优化而固化错误解析。
+
+Consequences：`tests/test_conversation_view.py`、`tests/test_tui_rendering.py`、`tests/test_tui_refresh_scheduler.py`、`tests/test_tui_details.py` 覆盖挂载数、锚点回退、详情请求/迟到/缺失、10,000 delta 完整正文与 Markdown 定稿一致性。`tests/test_batch_session_controller.py` 的“batch 不 import TUI”断言改为在子进程内拦截 `textual` import，因为 pytest 会在收集期导入 TUI 测试模块，进程内 `sys.modules` 检查不再可靠。
+
+Date/Author：2026-09-18 / opencode。
+
 ## 尚待实施验证的选择
 
-Textual 的具体版本在 M4.1 通过参考 API 的最小 headless 兼容验证后写入本文件并锁定；当前项目未声明 Textual，参考目录没有可供直接沿用的 `pyproject.toml`。这是版本兼容性验证，不重新讨论已确认的框架选择。
+Textual 版本已按 M4.1 兼容性验证锁定为 `textual==8.2.8`（`pyproject.toml` 依赖 `textual>=0.89`，`uv.lock` 固定 8.2.8）。在 headless `run_test` 测试 App 中实际验证了 `Theme` 注册与 `app.theme` 选择、`set_timer`、`pilot.resize_terminal`、`TextArea`、`mount`/`move_child` 与延迟 `call_after_refresh`；参考移植所需的 `VerticalScroll.scroll_to/scroll_end(immediate=)`、`Watch` 属性和 `outer_size` 均可用。版本失配时修改适配层，不回退为全量 widget 或静态打印。
 
 旧历史兼容规则由 M1.1 fixture 验证，无法证明的非标准分支必须有读取诊断，不能悄悄用正文 hash 去重。目标终端 Ctrl+Enter/Ctrl+J 的实际行为由 M5 验证。二者失败时在相应里程碑内解决并更新证据，不把关键限制留给最终用户猜测。
 

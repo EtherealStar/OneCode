@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -228,7 +229,29 @@ def test_batch_does_not_import_or_enter_tui(
     output = capsys.readouterr().out
     assert "\x1b[?1049h" not in output
     assert "\x1b[?1049l" not in output
-    assert not any(
-        name == "textual" or name.startswith("textual.")
-        for name in sys.modules
+
+
+def test_batch_import_does_not_pull_textual() -> None:
+    """Collection imports TUI test modules, so prove isolation in a subprocess."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+    code = (
+        "import sys\n"
+        "class _BlockTextual:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'textual' or name.startswith('textual.'):\n"
+        "            raise ImportError('batch must not import textual')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, _BlockTextual())\n"
+        "import ui.cli.batch\n"
+        "assert not any(n == 'textual' or n.startswith('textual.') for n in sys.modules)\n"
+        "print('BATCH_OK')\n"
     )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "BATCH_OK" in result.stdout
