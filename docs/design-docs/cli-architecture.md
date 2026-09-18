@@ -1,8 +1,10 @@
 # CLI Architecture
 
+> 目标替换设计见 [SessionController](session-controller-architecture.md)、[ConversationProjection](conversation-projection-architecture.md) 和 [ConversationView](conversation-view-architecture.md)。交互式入口已迁为 Textual 全屏 TUI（`ui/tui/app.py::OneCodeTuiApp`，TTY 时由 `ui/cli/app.py::main` 调用 `run_tui`）；本文继续记录仍在仓库中、但已不被生产 TTY 入口引用的内联 CLI 实现，不代表目标已完成（旧路径退役与真实终端验收仍待完成）。
+
 本文描述 `ui/cli/` 的架构。CLI 是 OneCode 当前的增强 REPL 界面，负责应用装配、交互输入、命令处理、附件收集、权限提示和终端渲染，但不实现 agent 主循环、工具执行、安全策略或 provider 协议。
 
-启动：`uv run python -m ui.cli.app`（TTY 时启动内联终端 REPL；stdin 非 TTY 时走 batch 路径）。
+启动：`uv run python -m ui.cli.app`（TTY 时启动 Textual 全屏 TUI；stdin 非 TTY 时走 batch 路径）。
 
 TTY 路径采用 **内联终端渲染模型**（与 Claude Code / Ink 的 Static + dynamic 分层同类，基于 `prompt_toolkit` + Rich）：定稿内容打印进终端正常缓冲区（继承终端明暗背景、可向上滚动回看）；底部输入框、流式预览、斜杠补全画在可擦除的动态区；`/status`、`/resume` 等临时界面进入备用屏幕（DEC 1049），退出后主屏幕恢复且临时内容不进入 scrollback。
 
@@ -51,10 +53,10 @@ TTY 路径采用 **内联终端渲染模型**（与 Claude Code / Ink 的 Static
 
 ## 入口分流
 
-- **TTY**：`main()` 先构建 `CliRuntime`，使用 `mcp_trust_mode="prompt"` 在启动期询问未信任项目 stdio MCP server 的信任（通过 `trust_prompt` 回调），再运行 `InlineRepl(runtime).run()`。`InlineRepl` 打印 banner，提示被跳过的 MCP server，进入主循环。
+- **TTY**：`main()` 延迟导入并启动 Textual 全屏 TUI（`ui.tui.app.run_tui`）。`OneCodeTuiApp` 挂载后在后台线程构建 `ApplicationRuntime`，启动期 MCP trust 由 TUI 面板回答，再以 `SessionController` 驱动对话。`main()` 不再提前构建 runtime 或启动内联 REPL。
 - **非 TTY**：`batch.run_batch(workspace)`，不启动 prompt_toolkit；MCP trust 与权限 fallback 使用 stdin `read_confirm_sync()`。
 
-## 内联布局（`terminal/`）
+## 内联布局（`terminal/`，遗留，不再被生产入口引用）
 
 - **静态区**（终端 scrollback，`static_output.py`）：banner、反色 `>` 用户行、`onecode>` 助手前缀 + Markdown 定稿、工具横幅与结果摘要。用绑定 `sys.stdout` 的 Rich `Console` 打印，**不设 background**，背景由终端宿主提供。
 - **动态区**（`prompt_session.py` / `stream_session.py`）：非全屏 `prompt_toolkit.Application(full_screen=False, erase_when_done=True)`。空闲时是带上下 `─` 边框的输入框（`PromptSession`）；agent 运行时是同一个 prompt_toolkit 应用承载的 live Markdown 流式预览 + 状态行 + 底部 running input box（`StreamingSession`）。阶段结束时动态区自擦除，不污染 scrollback。

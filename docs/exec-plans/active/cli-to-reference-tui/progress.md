@@ -2,9 +2,9 @@
 
 ## Current State
 
-Status：M1、M2、M3 与 M4 已实现并有测试证据；未提交（按用户要求）。M5 尚未开始。
+Status：M1、M2、M3 与 M4 已实现并有测试证据；未提交（按用户要求）。M5.1 已实现；M5.2 已切换默认 TTY 入口并加固依赖边界，但旧 `ui/cli/terminal/` 物理删除、随旧机制退役的测试迁移及真实终端人工烟测尚未完成。
 
-Current milestone：M4 完成；下一未完成批次 M5.1（薄 App、Composer、命令视图与 Modal）。
+Current milestone：M5.1 完成；M5.2 部分完成（入口切换与边界检查），剩余旧 TTY 路径退役与人工验收。
 
 Last updated：2026-09-18，Asia/Shanghai。
 
@@ -40,8 +40,8 @@ M1 交付：
   - [x] M4.1：Textual 版本验证、主题与虚拟视口。
   - [x] M4.2：刷新、Markdown、详情与资源回收。
 - [ ] M5：完整交互与入口切换。
-  - [ ] M5.1：App、Composer、命令视图与 Modal。
-  - [ ] M5.2：切换入口、删除旧路径、完整自动/人工验收与归档。
+  - [x] M5.1：App、Composer、命令视图与 Modal。
+  - [~] M5.2：入口已切换、边界检查已加固；旧 TTY 删除、旧机制测试退役与真实终端人工验收待完成。
 
 ## Surprises & Discoveries
 
@@ -183,6 +183,44 @@ Command：`uv run python -m compileall -q core services infrastructure applicati
 
 证据文件：`tests/test_conversation_view.py`、`tests/test_tui_rendering.py`、`tests/test_tui_refresh_scheduler.py`、`tests/test_tui_details.py`；实现 `ui/tui/theme.py`、`ui/tui/conversation/`、`ui/tui/renderers/`。
 
+### M5 验证（2026-09-18，Windows）
+
+M5.1 交付：
+- 新增 `ui/tui/app.py::OneCodeTuiApp`：装配 Controller/Projection/ConversationView/StatusBar/Composer/CompletionOverlay，挂载后经 `asyncio.to_thread` 构建 runtime（未配置回退 `build_unconfigured_runtime`），启动期 MCP trust 通过 `run_coroutine_threadsafe` + 模态面板回答，不阻塞 UI。App 只提交意图、转发详情请求、显示交互面板，不 drain 队列、不收集附件、不重绑定 runtime。
+- 新增 `ui/tui/composer.py::Composer`：`TextArea` 子类，覆写 `_on_key` 保证 Enter 提交、Ctrl+Enter/Ctrl+J 换行、Tab 补全、Ctrl+C 取消，避免 Textual 8.2.8 的 TextArea 原生 Enter 插入换行；`cursor_offset` 自行计算。
+- 新增 `ui/tui/completion.py::CompletionOverlay`：参考布局的 `OptionList`，命令/文件两种模式，pending 帧拒绝过期接受。
+- 新增 `ui/tui/status_bar.py::StatusBar` 与 `ui/tui/command_views.py`（`CommandOutcome` → Rich renderable，覆盖全部注册命令与 alias）。
+- 新增 `ui/tui/modals/`：`PermissionModal`（只消费 `request.options`，Esc 拒绝）、`QuestionModal`（单选 OptionList、多选 SelectionList）、`PlanApprovalModal`、`McpTrustModal`、`SessionPickerModal`、`ProviderPickerModal`/`CredentialModal`/`ModelPickerModal`、`CommandOutputModal`。
+- 计划审批：`exit_plan_mode` 工具结果带 `awaiting_approval` 时弹出面板，批准/拒绝仍走既有 `/plan approve|reject` 业务。
+- `/connect` 经供应商选择 → 凭据 → 模型选择，保存仍用 `write_provider_env`，随后 `SessionController.reload_model_config()`。
+- 文件 `@` 补全复用 `ui.cli.suggestions.suggestions_for`，经 `asyncio.to_thread` 异步计算并用 generation 拒绝旧结果。
+- 交互面板经单一 FIFO worker 串行呈现，不叠加；`InteractionResolved` 会关闭当前面板。Ctrl+C 只取消运行，不退出、不静默删除草稿；提交/命令仅在文本未被改写时清理对应草稿。F8 撤回最后一条排队输入（草稿非空则不覆盖），F9 在暂停时继续队列。
+
+M5.2 已完成部分：
+- `ui/cli/app.py::main` 的 TTY 分支不再构建 runtime/启动内联 REPL，改为延迟 import 并调用 `ui.tui.app.run_tui`；非 TTY stdin 仍走 batch；stdin TTY + stdout 重定向保留明确错误与非零退出；TUI 启动异常写 stderr 并返回 1。
+- `tests/test_import_boundaries.py` 增加基于 AST 的边界检查：`core/services/infrastructure` 不依赖 `application`/`ui`/`textual`；`application` 不依赖 `ui`/`textual`；Projection 不依赖 Textual 或旧 reducer；生产代码不依赖 `reference`/`miniagent`。
+- `tests/test_async_cli_streaming.py` 的 TTY 用例迁移为断言调用 `run_tui`。
+
+Command：`uv run python -m pytest tests/test_tui_app.py tests/test_tui_composer.py tests/test_tui_interactions.py tests/test_tui_entrypoint.py -q`。
+
+Result：退出码 0；**36 passed**（App 14、Composer 6、Interactions 12、Entrypoint 4）。
+
+Command：`uv run python -m pytest tests/test_tui_app.py tests/test_tui_composer.py tests/test_tui_interactions.py tests/test_session_commands.py tests/test_session_interactions.py tests/test_plan_mode.py -q`（execution M5.1 指定组合）。
+
+Result：退出码 0；**78 passed**。
+
+Command：`uv run python -m pytest tests -q`。
+
+Result：退出码 1；**794 passed, 3 failed in 31.19s**。3 个失败与 M1–M4 记录一致，均为与 M5 无关的既有平台失败（`test_bash_tool`、`test_openai_compatible_provider`、`test_search_tools`）。无新增失败。
+
+Command：`uv run python -m compileall -q core services infrastructure application ui` → 退出码 0；`uv run python -m pytest tests/test_import_boundaries.py -q` → 8 passed。
+
+M5.2 未完成（记录为剩余工作）：
+- 旧 `ui/cli/terminal/` 中 REPL、stream state/reducer/view/session、output coordinator、static replay、page/selector/permission/trust/connect transient 路径仍在磁盘上，但已不被生产 TTY 入口引用；`test_cli_terminal.py`、`test_cli_checkpoint_state.py`、`test_cli_output_coordinator.py`、`test_cli_stream_reducer.py`、`test_cli_stream_view.py`、`test_cli_streaming_session_commit.py`、`test_streaming_coalescer.py`、`test_markdown_rendering.py`、`test_text_cache.py` 仍验证旧静态打印机制，尚未迁走或退役。
+- `prompt-toolkit` 仍作为依赖保留，因为 batch/旧 helper 与上述测试仍引用。
+- Windows Terminal / POSIX 真实终端人工烟测（中文输入、Ctrl+Enter、resize、Modal 焦点、退出恢复）未执行；headless 通过不代表真实终端验收。
+- README 的运行/按键说明尚未更新；撤回承接区目前复用 Composer（草稿非空时不覆盖），非独立可选择编辑区；计划审批由 `exit_plan_mode` 工具结果驱动而非 `plan_approval` interaction。
+
 ## Artifacts And Notes
 
 入口为 [plan.md](plan.md)，批次与命令为 [execution.md](execution.md)，选择与兼容门槛为 [decisions.md](decisions.md)。当前不新增第五份计划/研究报告；参考适配清单放 plan 的 Context，发现与证据保留在本文件。
@@ -213,3 +251,11 @@ M4 已知限制（不阻塞本批次验收，记入后续）：
 - View 目前只在测试 App 中挂载；生产 Textual App 装配、状态栏/Composer/补全与按键绑定在 M5.1。
 - `DetailRequested` 事件已定义并由 View 发出，但 `App → Controller.load_detail` 的实际连接在 M5.1；M4 用测试 App 模拟该回链。
 - `onecode.tcss` 已提供目标布局规则，M4 未在真实终端做视觉验收（M5.2 人工验收）。
+
+M5.1 已交付：`OneCodeTuiApp` 装配 Controller/Projection/View/StatusBar/Composer/补全与全部交互面板，默认 TTY 入口已切到 `ui.tui.app.run_tui`（M5.2 部分）。三个目标设计仍视为“部分实现”：旧 `ui/cli/terminal/` 未删除、随旧机制退役的测试未迁移、真实终端人工烟测未执行，因此不能关闭 TD-007/TD-016，计划包不能归档。
+
+M5 已知限制（记入剩余工作）：
+- 旧 TTY 展示管线仍在磁盘但无生产引用；`prompt-toolkit` 依赖与旧机制测试待退役。
+- `/connect` 的模型列表获取失败时回退手动输入，未在真实供应商上做端到端烟测。
+- 计划审批面板由 `exit_plan_mode` 工具结果的 `awaiting_approval` 驱动，而非 `plan_approval` interaction；业务仍由 `/plan approve|reject` 承担。
+- 真实终端的中文输入法预编辑/确认、Ctrl+Enter 实际键码、窄窗口 resize 与退出恢复未验证。

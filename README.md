@@ -68,9 +68,11 @@ OneCode 的模型 Provider 配置从 `.env` 读取。如果暂时不想配置，
 # Windows 请先激活虚拟环境
 .\.venv\Scripts\Activate.ps1
 
-# 启动内联终端 REPL
+# 启动全屏终端 TUI
 uv run python -m ui.cli.app
 ```
+
+TUI 常用按键：`Enter` 提交（补全候选打开时先选候选）、`Ctrl+Enter` 换行（部分终端使用 `Ctrl+J`）、`Tab` 补全、`Ctrl+C` 取消当前运行（不退出、不删除草稿）、`Esc` 关闭补全或面板、`F8` 撤回最后一条排队输入、`F9` 继续暂停的队列、`/exit` 退出。
 
 也支持 Batch 模式：当标准输入不是 TTY 时自动进入批处理，例如：
 
