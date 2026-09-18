@@ -15,6 +15,7 @@ from services.compaction.types import (
     CompactionResult,
     CompactionTrigger,
 )
+from services.context.message_shapes import assistant_tool_call_ids
 from services.context.message_store import MessageStore
 from services.context.projector import ContextProjector
 from services.context.snapshot import PreparedContext
@@ -283,18 +284,19 @@ class ContextCompactionService:
             message_count=len(messages),
         )
         tail = self._recent_tail_for_session_memory(messages)
-        compacted = _compact_messages(
+        compacted_records = _compact_message_records(
             trigger=trigger,
             boundary_id=boundary_id,
             summary=memory.content,
             tail=tail,
             source="session_memory",
         )
+        compacted = tuple(message for message, _source in compacted_records)
         token_after = estimate_messages_tokens(compacted)
         if token_after >= self.config.auto_compact_threshold_tokens:
             return None
         stored = self._replace_active_messages(
-            compacted,
+            compacted_records,
             trigger=trigger,
             boundary_id=boundary_id,
             metadata={**hook_metadata, "source": "session_memory"},
@@ -356,19 +358,18 @@ class ContextCompactionService:
         if result.is_error:
             raise RuntimeError(result.final_text)
         summary = _extract_summary(result.final_text)
-        tail = ContextProjector(max_messages=min(20, self.config.snip_max_messages)).project(
-            messages,
-        )
-        compacted = _compact_messages(
+        tail = self._project_tail_records(min(20, self.config.snip_max_messages))
+        compacted_records = _compact_message_records(
             trigger=trigger,
             boundary_id=boundary_id,
             summary=summary,
             tail=tail,
             source="full",
         )
+        compacted = tuple(message for message, _source in compacted_records)
         token_after = estimate_messages_tokens(compacted)
         stored = self._replace_active_messages(
-            compacted,
+            compacted_records,
             trigger=trigger,
             boundary_id=boundary_id,
             metadata={**hook_metadata, "source": "full"},
@@ -390,7 +391,7 @@ class ContextCompactionService:
     def _recent_tail_for_session_memory(
         self,
         messages: tuple[dict[str, Any], ...],
-    ) -> tuple[dict[str, Any], ...]:
+    ) -> list[tuple[dict[str, Any], str | None]]:
         selected: list[dict[str, Any]] = []
         token_count = 0
         text_count = 0
@@ -418,11 +419,52 @@ class ContextCompactionService:
             messages,
             start_index,
         )
-        return tuple(deepcopy(message) for message in messages[adjusted:])
+        records = self._active_records()
+        if records and len(records) == len(messages):
+            return [
+                (deepcopy(record.message), record.uuid)
+                for record in records[adjusted:]
+            ]
+        return [(deepcopy(message), None) for message in messages[adjusted:]]
+
+    def _active_records(self) -> tuple[Any, ...]:
+        if self._message_store is None:
+            return ()
+        return tuple(self._message_store.active_records())
+
+    def _project_tail_records(
+        self,
+        max_messages: int,
+    ) -> list[tuple[dict[str, Any], str | None]]:
+        records = self._active_records()
+        if not records:
+            return []
+        messages = tuple(record.message for record in records)
+        start = max(0, len(messages) - max_messages)
+        start = ContextProjector().adjust_start_index_to_preserve_tool_pairs(
+            messages,
+            start,
+        )
+        window = records[start:]
+        visible_call_ids: set[str] = set()
+        for record in window:
+            if record.message.get("role") == "assistant":
+                visible_call_ids.update(
+                    call_id
+                    for call_id, _name in assistant_tool_call_ids(record.message)
+                )
+        tail: list[tuple[dict[str, Any], str | None]] = []
+        for record in window:
+            if record.message.get("role") == "tool_result":
+                call_id = record.message.get("tool_call_id")
+                if call_id not in visible_call_ids:
+                    continue
+            tail.append((deepcopy(record.message), record.uuid))
+        return tail
 
     def _replace_active_messages(
         self,
-        messages: tuple[dict[str, Any], ...],
+        messages: list[tuple[dict[str, Any], str | None]],
         *,
         trigger: CompactionTrigger,
         boundary_id: str,
@@ -431,9 +473,10 @@ class ContextCompactionService:
         if self._message_store is None:
             raise RuntimeError("compaction requires a bound MessageStore")
         stored = self._message_store.replace_messages_for_compaction(
-            messages,
+            [message for message, _source in messages],
             reason=trigger.value,
             metadata={"boundary_id": boundary_id, **metadata},
+            source_uuids=[source for _message, source in messages],
         )
         self._trace_recorder.event(
             "compact_completed",
@@ -666,14 +709,14 @@ def _prepared_context_from_result(result: CompactionResult) -> PreparedContext:
     )
 
 
-def _compact_messages(
+def _compact_message_records(
     *,
     trigger: CompactionTrigger,
     boundary_id: str,
     summary: str,
-    tail: tuple[dict[str, Any], ...],
+    tail: list[tuple[dict[str, Any], str | None]],
     source: str,
-) -> tuple[dict[str, Any], ...]:
+) -> list[tuple[dict[str, Any], str | None]]:
     boundary = {
         "role": "user",
         "content": (
@@ -701,7 +744,12 @@ def _compact_messages(
             "compact_source": source,
         },
     }
-    return (boundary, summary_message, *tuple(deepcopy(message) for message in tail))
+    records: list[tuple[dict[str, Any], str | None]] = [
+        (boundary, None),
+        (summary_message, None),
+    ]
+    records.extend((deepcopy(message), source_uuid) for message, source_uuid in tail)
+    return records
 
 
 def _compact_prompt(

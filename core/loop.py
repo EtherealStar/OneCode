@@ -39,6 +39,7 @@ from core.stream_events import AgentEvent, mint_assistant_call_id
 from core.transitions import TransitionReason
 from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
+from services.context.run_facts import InterruptedRunFacts, RunFactsAccumulator
 from services.hooks import HookEvent, HookRegistry
 from services.model.client import ModelClient
 from services.model.retry import ModelRetryRunner, RetryDecision
@@ -128,6 +129,19 @@ class AgentLoop:
         self.compaction_service = compaction_service
         self.session_memory_extractor = session_memory_extractor
         self.session_memory_updater = session_memory_updater
+        self._run_facts: RunFactsAccumulator | None = None
+
+    def snapshot_run_facts(self, *, status: str | None = None) -> InterruptedRunFacts | None:
+        """Return a frozen copy of the current foreground run facts.
+
+        The loop keeps these facts live until a run completes normally, so an
+        interrupt can be finalized from what really happened even when the
+        result had not yet been appended to the message store.
+        """
+
+        if self._run_facts is None:
+            return None
+        return self._run_facts.freeze(status=status)
 
     async def stream(
         self,
@@ -148,11 +162,16 @@ class AgentLoop:
                 },
             )
             self.message_store.append_user(prompt)
+            self._begin_run_facts()
             if attachments is not None:
                 self.message_store.append_attachments(attachments)
             yield AgentEvent(type="interaction_started")
-            async for event in self._run_loop_async():
-                yield event
+            try:
+                async for event in self._run_loop_async():
+                    yield event
+            except BaseException:
+                self._mark_run_interrupted()
+                raise
 
     async def continue_stream(self) -> AsyncIterator[AgentEvent]:
         """Continue from messages already seeded into the message store."""
@@ -161,9 +180,26 @@ class AgentLoop:
             "interaction",
             {"continued_from_seeded_messages": True},
         ):
+            self._begin_run_facts()
             yield AgentEvent(type="interaction_started")
-            async for event in self._run_loop_async():
-                yield event
+            try:
+                async for event in self._run_loop_async():
+                    yield event
+            except BaseException:
+                self._mark_run_interrupted()
+                raise
+
+    def _begin_run_facts(self) -> None:
+        accumulator = RunFactsAccumulator(session_id=self.state.session_id)
+        accumulator.user_prompt_uuid = self.message_store.last_record_uuid
+        self._run_facts = accumulator
+
+    def _mark_run_interrupted(self) -> None:
+        if self._run_facts is not None:
+            self._run_facts.status = "interrupted"
+
+    def _complete_run_facts(self) -> None:
+        self._run_facts = None
 
     async def _run_loop_async(self) -> AsyncIterator[AgentEvent]:
         while True:
@@ -178,6 +214,11 @@ class AgentLoop:
                 self.state.turn_count,
                 model_turn_index,
             )
+            if self._run_facts is not None:
+                self._run_facts.begin_model_call(
+                    assistant_call_id,
+                    model_turn_index,
+                )
             if (
                 self.state.max_turns is not None
                 and self.state.turn_count > self.state.max_turns
@@ -201,6 +242,7 @@ class AgentLoop:
                         "assistant_call_id": assistant_call_id,
                     },
                 )
+                self._complete_run_facts()
                 return
 
             # 主循环保持薄：上下文、prompt 和工具 schema 都交给
@@ -268,6 +310,8 @@ class AgentLoop:
                         # buffer; the caller (CLI) decides how to render.
                         if model_event.type == "content_delta":
                             streamed_any_text = True
+                            if self._run_facts is not None:
+                                self._run_facts.add_text(model_event.text or "")
                             yield AgentEvent(
                                 type="assistant_delta",
                                 text=model_event.text,
@@ -290,6 +334,11 @@ class AgentLoop:
                             )
                             continue
                         if model_event.type == "tool_call_completed":
+                            if self._run_facts is not None and model_event.tool_call is not None:
+                                self._run_facts.declare(
+                                    model_event.tool_call.id,
+                                    model_event.tool_call.name,
+                                )
                             yield AgentEvent(
                                 type="tool_call_ready",
                                 metadata={
@@ -311,6 +360,11 @@ class AgentLoop:
                         if model_event.type == "message_completed":
                             completed_message = model_event
                             completed_tool_calls = self._event_tool_calls(model_event)
+                            if self._run_facts is not None:
+                                self._run_facts.set_assistant_message(
+                                    model_event.assistant_message
+                                )
+                                self._run_facts.declare_many(completed_tool_calls)
                             end_attributes = {
                                 "tool_call_count": len(completed_tool_calls),
                                 "stop_reason": model_event.stop_reason,
@@ -390,7 +444,9 @@ class AgentLoop:
                 self.state.add_usage(completed_message.usage)
 
             output_recovery = self._prepare_output_interruption_recovery(
-                completed_message
+                completed_message,
+                assistant_call_id=assistant_call_id,
+                model_turn_index=model_turn_index,
             )
             if output_recovery is not None:
                 yield AgentEvent(
@@ -407,7 +463,15 @@ class AgentLoop:
             # been forwarded live. We now just record the final
             # assistant message into the message store and announce the
             # completion to hooks.
-            self.message_store.append_assistant(completed_message.assistant_message)
+            self.message_store.append_assistant(
+                completed_message.assistant_message,
+                assistant_call_id=assistant_call_id,
+                model_turn_index=model_turn_index,
+            )
+            if self._run_facts is not None:
+                self._run_facts.note_assistant_record(
+                    self.message_store.last_record_uuid
+                )
             tool_calls = completed_tool_calls or self._event_tool_calls(completed_message)
             yield AgentEvent(
                 type="assistant_message_completed",
@@ -432,7 +496,11 @@ class AgentLoop:
                     tool_calls, result_blocks, model_turn_index, assistant_call_id
                 ):
                     yield event
-                self.message_store.append_tool_results(result_blocks)
+                self.message_store.append_tool_results(
+                    result_blocks,
+                    assistant_call_id=assistant_call_id,
+                    model_turn_index=model_turn_index,
+                )
                 followup_messages = tuple(
                     message
                     for result in result_blocks
@@ -472,6 +540,7 @@ class AgentLoop:
                     "assistant_call_id": assistant_call_id,
                 },
             )
+            self._complete_run_facts()
             return
 
     async def _execute_tools(
@@ -511,6 +580,8 @@ class AgentLoop:
                 )
             elif update.result is not None:
                 results.append(update.result)
+                if self._run_facts is not None:
+                    self._run_facts.add_result(update.result)
                 yield AgentEvent(
                     type="tool_result",
                     result=update.result,
@@ -581,6 +652,9 @@ class AgentLoop:
     def _prepare_output_interruption_recovery(
         self,
         completed_message: ModelStreamEvent,
+        *,
+        assistant_call_id: str | None = None,
+        model_turn_index: int | None = None,
     ) -> TransitionReason | None:
         if not completed_message.output_interrupted:
             return None
@@ -606,7 +680,15 @@ class AgentLoop:
             # Continuation recovery persists the truncated assistant
             # (the user has already seen it) and follows it with a
             # terse user prompt so the model can resume.
-            self.message_store.append_assistant(completed_message.assistant_message)
+            self.message_store.append_assistant(
+                completed_message.assistant_message,
+                assistant_call_id=assistant_call_id,
+                model_turn_index=model_turn_index,
+            )
+            if self._run_facts is not None:
+                self._run_facts.note_assistant_record(
+                    self.message_store.last_record_uuid
+                )
             self.message_store.append_user(CONTINUATION_PROMPT)
             self.state.max_output_recovery_count += 1
             self.state.set_transition(TransitionReason.MAX_OUTPUT_TOKENS_RECOVERY)

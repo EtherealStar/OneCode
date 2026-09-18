@@ -31,15 +31,18 @@ def test_restore_drops_orphan_tool_result(tmp_path: Path) -> None:
         ]
     )
     store.flush_transcript()
+    orphan_uuid = _record_uuid(store)
 
     restored = restore_transcript_active_chain(store.transcript_store)
 
     assert restored.messages == ()
     assert restored.last_uuid is None
-    assert restored.warnings == ("dropped_orphan_tool_result:" + _record_uuid(store),)
+    assert restored.warnings == (f"dropped_orphan_tool_result:{orphan_uuid}",)
+    # Recovery repairs the real transcript, not only the returned messages.
+    assert store.transcript_store.load_messages() == ()
 
 
-def test_restore_inserts_synthetic_result_for_interrupted_tool_call(
+def test_restore_removes_unpaired_tool_call_without_synthetic_result(
     tmp_path: Path,
 ) -> None:
     store = make_store(tmp_path)
@@ -55,13 +58,34 @@ def test_restore_inserts_synthetic_result_for_interrupted_tool_call(
 
     restored = restore_transcript_active_chain(store.transcript_store)
 
-    assert len(restored.messages) == 2
-    assert restored.messages[0]["role"] == "assistant"
-    assert restored.messages[1]["role"] == "tool_result"
-    assert restored.messages[1]["tool_call_id"] == "call-read"
-    assert restored.messages[1]["tool_name"] == "read_file"
-    assert restored.messages[1]["is_error"] is True
-    assert restored.messages[1]["metadata"]["synthetic"] is True
+    assert restored.messages == ()
+    assert all(
+        message.get("metadata", {}).get("synthetic") is not True
+        for message in restored.messages
+    )
+    assert store.transcript_store.load_messages() == ()
+
+
+def test_restore_keeps_text_and_drops_unpaired_tool_call(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.append_assistant(
+        {
+            "content": "half-written answer",
+            "tool_calls": [
+                {"id": "call-read", "function": {"name": "read_file"}},
+            ],
+        }
+    )
+    store.flush_transcript()
+
+    restored = restore_transcript_active_chain(store.transcript_store)
+
+    assert len(restored.messages) == 1
+    assert restored.messages[0]["content"] == "half-written answer"
+    assert "tool_calls" not in restored.messages[0]
+    disk = store.transcript_store.load_messages()
+    assert len(disk) == 1
+    assert "tool_calls" not in disk[0].message
 
 
 def test_restore_filters_blank_assistant_without_tool_calls(tmp_path: Path) -> None:

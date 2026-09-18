@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any
 
+from services.context.message_shapes import (
+    assistant_tool_call_ids,
+    message_has_body,
+    prune_assistant_declarations,
+)
 from services.context.transcript import JsonlTranscriptStore, LoadedTranscriptMessage
 
 
@@ -16,6 +19,7 @@ class RestoredTranscript:
     session_id: str
     messages: tuple[dict[str, Any], ...]
     last_uuid: str | None
+    records: tuple[LoadedTranscriptMessage, ...] = ()
     warnings: tuple[str, ...] = ()
 
 
@@ -26,7 +30,9 @@ def restore_transcript_active_chain(
 
     The transcript stores every historical branch append-only. Resume must feed
     the model only the current chain, then repair tool-call pairing so provider
-    adapters do not receive orphaned or interrupted tool sequences.
+    adapters do not receive orphaned or interrupted tool sequences. Unpaired
+    declarations are dropped; orphan results are removed from memory and from
+    the real transcript instead of being replaced by a synthetic result.
     """
 
     loaded = transcript_store.load_messages()
@@ -35,19 +41,43 @@ def restore_transcript_active_chain(
             session_id=transcript_store.session_id,
             messages=(),
             last_uuid=None,
+            records=(),
         )
 
-    chain = _select_active_chain(loaded)
-    messages, last_uuid, warnings = _sanitize_chain(chain)
+    chain = select_active_chain(loaded)
+    kept, deleted, modified, warnings = _sanitize_chain(chain)
+    if deleted or modified:
+        _repair_transcript(transcript_store, kept, deleted)
+    messages = tuple(record.message for record in kept)
     return RestoredTranscript(
         session_id=chain[-1].session_id if chain else loaded[-1].session_id,
         messages=messages,
-        last_uuid=last_uuid,
+        last_uuid=kept[-1].uuid if kept else None,
+        records=kept,
         warnings=tuple(warnings),
     )
 
 
-def _select_active_chain(
+def _repair_transcript(
+    transcript_store: JsonlTranscriptStore,
+    kept: list[LoadedTranscriptMessage],
+    deleted: set[str],
+) -> None:
+    overrides = {
+        record.uuid: record
+        for record in kept
+        if record.message.get("role") == "assistant"
+    }
+    raw = transcript_store.read_records()
+    repaired: list[LoadedTranscriptMessage] = []
+    for record in raw:
+        if record.uuid in deleted:
+            continue
+        repaired.append(overrides.get(record.uuid, record))
+    transcript_store.rewrite_records(repaired)
+
+
+def select_active_chain(
     loaded: tuple[LoadedTranscriptMessage, ...],
 ) -> tuple[LoadedTranscriptMessage, ...]:
     by_uuid = {item.uuid: item for item in loaded}
@@ -84,126 +114,73 @@ def _leaf_sort_key(item: LoadedTranscriptMessage) -> tuple[int, float, int]:
 
 def _sanitize_chain(
     chain: tuple[LoadedTranscriptMessage, ...],
-) -> tuple[tuple[dict[str, Any], ...], str | None, list[str]]:
-    restored: list[dict[str, Any]] = []
+) -> tuple[list[LoadedTranscriptMessage], set[str], set[str], list[str]]:
+    kept: list[LoadedTranscriptMessage] = []
     warnings: list[str] = []
-    last_uuid: str | None = None
+    deleted: set[str] = set()
+    modified: set[str] = set()
     index = 0
     while index < len(chain):
         item = chain[index]
-        message = deepcopy(item.message)
-        role = message.get("role")
+        role = item.message.get("role")
 
         if role == "assistant":
-            call_ids = _assistant_tool_call_ids(message)
-            if not call_ids and _is_blank_content(message.get("content")):
-                warnings.append(f"dropped_blank_assistant:{item.uuid}")
-                index += 1
-                continue
-            restored.append(message)
-            last_uuid = item.uuid
-            if not call_ids:
-                index += 1
-                continue
-
-            expected = dict(call_ids)
-            matched: set[str] = set()
+            declarations = dict(assistant_tool_call_ids(item.message))
+            matched: dict[str, LoadedTranscriptMessage] = {}
             index += 1
             while index < len(chain) and chain[index].message.get("role") == "tool_result":
                 result_item = chain[index]
-                result = deepcopy(result_item.message)
-                tool_call_id = result.get("tool_call_id")
-                if isinstance(tool_call_id, str) and tool_call_id in expected and tool_call_id not in matched:
-                    result.setdefault(
-                        "tool_name",
-                        expected[tool_call_id]
-                        or result.get("tool_name")
-                        or "unknown_tool",
+                tool_call_id = result_item.message.get("tool_call_id")
+                if (
+                    isinstance(tool_call_id, str)
+                    and tool_call_id in declarations
+                    and tool_call_id not in matched
+                ):
+                    matched[tool_call_id] = result_item.with_message(
+                        {
+                            **result_item.message,
+                            "tool_name": result_item.message.get("tool_name")
+                            or declarations[tool_call_id]
+                            or "unknown_tool",
+                        }
                     )
-                    restored.append(result)
-                    matched.add(tool_call_id)
-                    last_uuid = result_item.uuid
                 else:
                     warnings.append(f"dropped_orphan_tool_result:{result_item.uuid}")
+                    deleted.add(result_item.uuid)
                 index += 1
-            for tool_call_id, tool_name in expected.items():
-                if tool_call_id in matched:
-                    continue
-                restored.append(_synthetic_interrupted_tool_result(tool_call_id, tool_name))
-                warnings.append(f"inserted_interrupted_tool_result:{tool_call_id}")
+
+            pruned_message = prune_assistant_declarations(
+                item.message,
+                set(matched),
+            )
+            if not message_has_body(pruned_message):
+                warnings.append(f"dropped_blank_assistant:{item.uuid}")
+                deleted.add(item.uuid)
+                for matched_item in matched.values():
+                    deleted.add(matched_item.uuid)
+                    warnings.append(
+                        f"dropped_orphan_tool_result:{matched_item.uuid}"
+                    )
+                continue
+            for call_id in declarations:
+                if call_id not in matched:
+                    warnings.append(f"dropped_unpaired_tool_call:{call_id}")
+            if pruned_message != item.message:
+                modified.add(item.uuid)
+            kept.append(item.with_message(pruned_message))
+            kept.extend(matched.values())
             continue
 
         if role == "tool_result":
             warnings.append(f"dropped_orphan_tool_result:{item.uuid}")
+            deleted.add(item.uuid)
             index += 1
             continue
 
-        restored.append(message)
-        last_uuid = item.uuid
+        kept.append(item)
         index += 1
 
-    return tuple(restored), last_uuid, warnings
-
-
-def _assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    ids: list[tuple[str, str]] = []
-    raw_calls = message.get("tool_calls")
-    if isinstance(raw_calls, list):
-        for call in raw_calls:
-            if not isinstance(call, dict):
-                continue
-            call_id = call.get("id")
-            if not isinstance(call_id, str) or not call_id:
-                continue
-            name = call.get("name")
-            function = call.get("function")
-            if not isinstance(name, str) and isinstance(function, dict):
-                function_name = function.get("name")
-                if isinstance(function_name, str):
-                    name = function_name
-            ids.append((call_id, name if isinstance(name, str) else "unknown_tool"))
-
-    content = message.get("content")
-    if isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            call_id = block.get("id")
-            if not isinstance(call_id, str) or not call_id:
-                continue
-            name = block.get("name")
-            ids.append((call_id, name if isinstance(name, str) else "unknown_tool"))
-    return tuple(ids)
-
-
-def _synthetic_interrupted_tool_result(
-    tool_call_id: str,
-    tool_name: str,
-) -> dict[str, Any]:
-    return {
-        "role": "tool_result",
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name or "unknown_tool",
-        "content": json.dumps(
-            {
-                "error": "interrupted_tool_call",
-                "message": "Tool call was interrupted before a result was recorded.",
-            },
-            ensure_ascii=False,
-        ),
-        "is_error": True,
-        "metadata": {"error": "interrupted_tool_call", "synthetic": True},
-    }
-
-
-def _is_blank_content(content: Any) -> bool:
-    if content is None:
-        return True
-    if isinstance(content, str):
-        return not content.strip()
-    if isinstance(content, list):
-        return not content
-    return False
+    return kept, deleted, modified, warnings
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
