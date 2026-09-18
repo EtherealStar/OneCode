@@ -2,9 +2,9 @@
 
 ## Current State
 
-Status：M1 与 M2 已实现并有测试证据；未提交（按用户要求）。M3 尚未开始。
+Status：M1、M2 与 M3 已实现并有测试证据；未提交（按用户要求）。M4 尚未开始。
 
-Current milestone：M2 完成；下一未完成批次 M3.1（ConversationProjection 移植、固定身份与声明顺序）。
+Current milestone：M3 完成；下一未完成批次 M4.1（Textual 版本验证、主题与虚拟视口）。
 
 Last updated：2026-09-18，Asia/Shanghai。
 
@@ -33,9 +33,9 @@ M1 交付：
   - [x] M2.1：应用装配、单 worker、快照与观察。
   - [x] M2.2：命令、交互、队列、切换与关闭。
   - [x] M2.3：batch Adapter。
-- [ ] M3：ConversationProjection。
-  - [ ] M3.1：移植归并、固定身份与声明顺序。
-  - [ ] M3.2：权威修正、同步、详情与管线集成。
+- [x] M3：ConversationProjection。
+  - [x] M3.1：移植归并、固定身份与声明顺序。
+  - [x] M3.2：权威修正、同步、详情与管线集成。
 - [ ] M4：ConversationView。
   - [ ] M4.1：Textual 版本验证、主题与虚拟视口。
   - [ ] M4.2：刷新、Markdown、详情与资源回收。
@@ -128,6 +128,32 @@ Command：`uv run --no-sync python -m pytest tests/test_import_boundaries.py -q`
 
 证据文件：`tests/test_session_controller.py`、`tests/test_session_commands.py`、`tests/test_session_interactions.py`、`tests/test_batch_session_controller.py`；Controller `application/session.py`；交互 `application/interactions.py`；命令 `application/commands.py`。
 
+### M3 验证（2026-09-18，Windows）
+
+M3 交付：
+- 新增 `ui/tui/projection.py::ConversationProjection`、`ui/tui/projection_types.py`：参考 `UiProjection` 的 `replace/apply/_ingest/_upsert` 组织方式，同步确定性、无 I/O；`ViewChange` 返回 updated/deleted IDs、结构、队列/状态/交互/usage/run 变化、reset 与 `resync_required`。工具键为 session + assistant 调用 + tool ID 复合；assistant 草稿以 `(model_turn_index, assistant_call_id)` 归组、定稿时原位重绑到持久化 UUID；工具按声明顺序出现在同一 assistant 容器，结果先到也保留；只有工具也创建容器；未配对结果不落为永久聊天消息；附件摘要消费 `HistoryRecord.attachments`，错误状态取自结果字段。
+- 契约补齐（M3 适配所需的最小扩展）：`HistoryRecord` 增加 `assistant_call_id`/`model_turn_index`，`HistoryToolCall` 增加结构化 `input`（`message_shapes.assistant_tool_declarations` 解析两种声明表示）；`application.types` 增加 `UserMessageCommitted`，为 `ToolUpdate`/`ToolRunState` 增加调用归属与 `input`；`core.loop` 的 `interaction_started` 携带刚追加用户消息的持久化 UUID；`SessionController` 在 `interaction_started` 发布 `UserMessageCommitted`、在工具事件补齐调用归属、在取消收尾后与 `/compact` 成功后发布权威快照供投影 `replace` 重同步。
+- 新增 `tests/test_conversation_projection.py`（22 项）与 `tests/test_conversation_pipeline.py`（5 项）：纯文本、工具 A/B 乱序声明完成、多次模型调用复用 tool ID、重复/晚到定稿、只有工具、撤回/清空队列、旧代次/重复序号拒绝、序号缺口要求完整快照、详情加载/缺失、状态/usage/交互无消息变化仍通知、pending interaction 增删、同会话快照替换保留 ID 且不置 reset、收尾删除未配对工具、无归属工具结果不产生永久孤立消息；管线用真实 `SessionController` + 记录型 fake loop，验证正常完成、工具完成、取消整理、compact 与慢订阅者重同步后投影与 Controller 权威历史一致，且旧会话详情不污染新投影。
+- 代码复查后修复：`replace` 现在按前后 `UiMessage` 差异给出精确 `updated_ids`/`deleted_ids`，仅当会话代次或 session 变化才置 `reset`；`UsageChanged` 更新连通 live usage；`InteractionRequested/Resolved` 维护 pending 列表且过期回答不再误报变化；无显式调用归属的工具结果不再创建永久孤立 assistant；历史未配对结果只在 tool_call_id 唯一已声明时回配；`assistant_tool_declarations` 与 `assistant_tool_call_ids` 共用同一解析实现。
+
+Command：`uv run python -m pytest tests/test_conversation_projection.py tests/test_conversation_history.py -q`。
+
+Result：退出码 0；**32 passed**。
+
+Command：`uv run python -m pytest tests/test_conversation_projection.py tests/test_conversation_pipeline.py tests/test_session_interrupt_cleanup.py -q`。
+
+Result：退出码 0；**41 passed**。
+
+Command：`uv run python -m compileall -q core services infrastructure application ui`。
+
+Result：退出码 0。
+
+Command：`uv run python -m pytest tests -q`。
+
+Result：退出码 1；**714 passed, 3 failed in 13.04s**。3 个失败与 M1/M2 记录一致，均为与 M3 无关的既有平台失败（`test_bash_tool`、`test_openai_compatible_provider`、`test_search_tools`）。无新增失败。
+
+证据文件：`tests/test_conversation_projection.py`、`tests/test_conversation_pipeline.py`；实现 `ui/tui/projection.py`、`ui/tui/projection_types.py`。
+
 ## Artifacts And Notes
 
 入口为 [plan.md](plan.md)，批次与命令为 [execution.md](execution.md)，选择与兼容门槛为 [decisions.md](decisions.md)。当前不新增第五份计划/研究报告；参考适配清单放 plan 的 Context，发现与证据保留在本文件。
@@ -136,11 +162,18 @@ Command：`uv run --no-sync python -m pytest tests/test_import_boundaries.py -q`
 
 ## Outcomes & Retrospective
 
-M1、M2 已交付，应用层现在有可独立于 Textual 运行、被 batch 与后续 TUI 共用的 `SessionController`。三个目标设计仍视为“部分实现”：Projection 与 View 尚未存在，M2 只关闭了应用会话边界，不能宣称 TUI 已完成，也不能关闭 TD-007/TD-016。
+M1、M2、M3 已交付：应用层有可独立于 Textual 运行的 `SessionController`，`ui/tui/ConversationProjection` 已能从权威快照与有序更新得到同一消息树。三个目标设计仍视为“部分实现”：View 与 App 尚未存在，M3 只关闭了展示投影边界，不能宣称 TUI 已完成，也不能关闭 TD-007/TD-016。
 
 M2 已知限制（不阻塞本批次验收，记入后续）：
 - MCP trust 交互能力已在 `InteractionCoordinator` 与 Controller 公开（`interaction_requested`/`respond`），batch watcher 会以纯文本回答；但 `build_runtime` 的启动期 trust 仍在装配时同步完成，Controller 尚未在 bootstrap 阶段主动发布 trust 请求。该异步启动编排属于 M5.1 薄 App 的职责，M2 只提供机制。
 - `/resume` 目标解析在应用层支持 session ID 与 `.jsonl` 路径；标题模糊匹配仍保留在旧 CLI 路径，M5 迁移时统一。
 - `ui/cli/terminal/` 旧 REPL 仍在，M2 未删除，默认入口未切换。
 
-执行者从 M3.1 开始：以 M2 的 `SessionSnapshot`/`SessionUpdate` 契约构造 Projection，不启动 Textual 即可验证消息身份与排序。全部验收达到后将计划包整体移入 completed。
+M3 已知限制（不阻塞本批次验收，记入后续）：
+
+- 任务明细没有独立更新类型（M2 snapshot 也无任务字段），`/tasks` 仍由命令视图负责；`pending_interactions` 与 usage 已有增量更新，任务状态变化留给 M5 命令视图。
+- 附件摘要只在 `replace(snapshot)` 时按 `HistoryRecord.attachments` 呈现；`UserMessageCommitted` 未携带附件，实时提交瞬间的摘要等下一次权威快照，这是 M3 的有意边界。
+- `HistoryRecord` 对旧记录不含 `assistant_call_id`/`model_turn_index` 时，工具结果按“已声明且无结果且 tool_call_id 全局唯一”回配；这是 M1 兼容规则下的配对，不是按最近 assistant 或正文猜测，多义时不配对。
+- 取消收尾现在额外发布一次快照；慢观察者仍会先收到 `RunCancelled`/`QueueChanged` 再被快照替换，投影按快照收敛。
+
+执行者从 M4.1 开始：先以固定 Projection 的测试 App 验证 Textual `run_test`/TextArea/Theme/timer/resize 等实际 API，锁版本后再移植虚拟视口。全部 M1–M5 验收达到后将计划包整体移入 completed。

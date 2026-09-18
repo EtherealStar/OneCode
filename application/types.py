@@ -47,6 +47,7 @@ class ToolRunState:
     status: ToolStatus = "declared"
     text: str = ""
     is_error: bool = False
+    input: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -186,6 +187,15 @@ class AssistantDelta:
 
 
 @dataclass(frozen=True)
+class UserMessageCommitted:
+    generation: int
+    sequence: int
+    input_id: str
+    message_uuid: str
+    text: str
+
+
+@dataclass(frozen=True)
 class MessageCommitted:
     generation: int
     sequence: int
@@ -205,6 +215,9 @@ class ToolUpdate:
     text: str = ""
     is_error: bool = False
     result: ToolExecutionResult | None = None
+    assistant_call_id: str | None = None
+    model_turn_index: int | None = None
+    input: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -265,6 +278,13 @@ class InteractionResolved:
 
 
 @dataclass(frozen=True)
+class UsageChanged:
+    generation: int
+    sequence: int
+    usage: ModelUsage
+
+
+@dataclass(frozen=True)
 class DetailLoaded:
     generation: int
     sequence: int
@@ -275,6 +295,7 @@ class DetailLoaded:
 SessionUpdate = Union[
     SnapshotUpdate,
     RunStarted,
+    UserMessageCommitted,
     AssistantDelta,
     MessageCommitted,
     ToolUpdate,
@@ -285,6 +306,7 @@ SessionUpdate = Union[
     StatusChanged,
     InteractionRequested,
     InteractionResolved,
+    UsageChanged,
     DetailLoaded,
 ]
 
@@ -302,6 +324,7 @@ __all__ = [
     "InteractionRequested",
     "InteractionResolved",
     "MessageCommitted",
+    "ModelUsage",
     "QueueChanged",
     "QueueItem",
     "ResponseResult",
@@ -317,5 +340,7 @@ __all__ = [
     "SubmissionReceipt",
     "ToolRunState",
     "ToolUpdate",
+    "UsageChanged",
+    "UserMessageCommitted",
     "WithdrawalResult",
 ]
