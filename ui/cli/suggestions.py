@@ -1,4 +1,4 @@
-"""Prompt suggestions for slash commands, sessions, and file attachments."""
+"""用于斜杠命令、会话以及文件附件的提示词补全建议。"""
 
 from __future__ import annotations
 

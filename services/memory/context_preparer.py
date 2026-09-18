@@ -1,4 +1,4 @@
-"""Context preparer that appends selected long-term memory attachments."""
+"""追加所选长期记忆附件的上下文准备器。"""
 
 from __future__ import annotations
 

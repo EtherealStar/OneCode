@@ -1,4 +1,4 @@
-"""Rich rendering helpers for the CLI."""
+"""CLI 的 Rich 渲染辅助函数。"""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def render_error(message: str) -> Text:
 
 
 def render_text(message: str) -> Text:
-    """Render a plain string inside a Text widget for consistent theming."""
+    """在 Text 控件内渲染纯文本字符串，以保持主题样式一致。"""
 
     return Text(message, style="onecode.dim")
 

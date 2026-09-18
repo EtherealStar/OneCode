@@ -1,2 +1,2 @@
-"""Filesystem infrastructure helpers."""
+"""文件系统基础设施辅助函数。"""
 

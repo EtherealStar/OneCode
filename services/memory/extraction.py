@@ -1,4 +1,4 @@
-"""Blocked first-version long-term memory extraction via restricted fork child."""
+"""通过受限的 fork child 实现的长期记忆提取初始版本。"""
 
 from __future__ import annotations
 

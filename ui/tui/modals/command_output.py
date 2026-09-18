@@ -1,4 +1,4 @@
-"""Read-only command output modal (``/status``, ``/usage``, ``/mcp`` ...)."""
+"""只读命令输出结果模态弹窗（``/status``, ``/usage``, ``/mcp`` 等）。"""
 
 from __future__ import annotations
 

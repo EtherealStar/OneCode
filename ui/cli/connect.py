@@ -1,4 +1,4 @@
-"""Provider connection helpers for the CLI."""
+"""CLI 的提供商连接辅助函数。"""
 
 from __future__ import annotations
 
@@ -109,14 +109,14 @@ def _provider_assignment_lines(assignments: dict[str, str]) -> list[str]:
 
 
 def read_existing_env(env_path: Path) -> dict[str, str | None]:
-    """Read all assignments from a ``.env`` file without interpolation."""
+    """从 .env 文件中读取所有赋值项，不进行变量插值。"""
 
     result: dict[str, str | None] = {}
     for line in _read_env_lines(env_path):
         key = _line_key(line)
         if key is not None:
             raw_value = line.strip().split("=", 1)[1].strip()
-            # Strip surrounding quotes if present.
+            # 若存在外层引号则予以剥除。
             if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
                 raw_value = raw_value[1:-1]
             result[key] = raw_value or None
@@ -124,7 +124,7 @@ def read_existing_env(env_path: Path) -> dict[str, str | None]:
 
 
 def has_provider_config(env_path: Path) -> bool:
-    """Return ``True`` when ``.env`` has the active provider block configured."""
+    """当 .env 中已配置活跃提供商块时返回 True。"""
 
     existing = read_existing_env(env_path)
     provider_id = existing.get(ACTIVE_PROVIDER_KEY)
@@ -135,7 +135,7 @@ def has_provider_config(env_path: Path) -> bool:
     model = existing.get(f"{prefix}_MODEL")
     if not provider_id or not model:
         return False
-    # Ollama doesn't require an API key.
+    # Ollama 不需要 API 密钥。
     from infrastructure.providers.catalog import BUILTIN_PROVIDERS
 
     provider = BUILTIN_PROVIDERS.get(provider_id)
@@ -145,7 +145,7 @@ def has_provider_config(env_path: Path) -> bool:
 
 
 def existing_key_for_provider(env_path: Path, provider_id: str) -> str | None:
-    """Return the existing provider-specific API key from ``.env``."""
+    """从 .env 中返回指定提供商现有的 API 密钥。"""
 
     existing = read_existing_env(env_path)
     return existing.get(f"{provider_env_prefix(provider_id)}_API_KEY")

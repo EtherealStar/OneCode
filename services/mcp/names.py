@@ -1,4 +1,4 @@
-"""MCP name normalization for provider-visible tool names."""
+"""面向模型提供商可见工具名的 MCP 名称规范化。"""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ _DISALLOWED_CHARS_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 def normalize_mcp_name(name: str, *, max_length: int = MAX_PROVIDER_TOOL_NAME_CHARS) -> str:
-    """Return a provider-safe MCP name component.
+    """返回符合提供商安全规范的 MCP 名称组件。
 
-    Tool providers commonly restrict function names to letters, numbers,
-    underscores and hyphens. Empty or all-invalid names collapse to ``unnamed``.
-    Long names keep a stable hash suffix so truncation does not silently collide.
+    工具提供商通常将函数名称限制为字母、数字、下划线和连字符。
+    空名称或全无效名称将被归一为 unnamed。
+    长名称会保留稳定的哈希后缀，以防截断导致静默冲突。
     """
 
     normalized = _sanitize_component(name)

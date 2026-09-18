@@ -1,4 +1,4 @@
-"""Resume selector and session history views."""
+"""恢复选择器与会话历史视图。"""
 
 from __future__ import annotations
 

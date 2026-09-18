@@ -1,4 +1,4 @@
-"""Message construction for fork subagents."""
+"""fork 子 agent 的消息构建。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def build_forked_messages(
     parent_messages: Iterable[dict[str, Any]],
     directive: str,
 ) -> tuple[dict[str, Any], ...]:
-    """Deep-copy parent history and append fork repair messages plus directive."""
+    """深拷贝父级历史消息，并追加 fork 修复消息和指令。"""
 
     messages = [deepcopy(message) for message in parent_messages]
     existing_results = {

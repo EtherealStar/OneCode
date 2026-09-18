@@ -1,4 +1,4 @@
-"""In-memory message store backed by JSONL session persistence."""
+"""由 JSONL 会话持久化支持的内存消息存储。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class StoredRecordMeta:
-    """Record-level identity kept alongside the provider-neutral message."""
+    """与中立消息一并保存的记录级身份标识。"""
 
     uuid: str
     parent_uuid: str | None
@@ -43,7 +43,7 @@ class StoredRecordMeta:
 
 @dataclass(frozen=True)
 class ActiveMessage:
-    """One active-chain record with its stable identity."""
+    """带有稳定身份标识的单条活动链记录。"""
 
     meta: StoredRecordMeta
     message: dict[str, Any]
@@ -176,7 +176,7 @@ class MessageStore:
         return tuple(deepcopy(self._messages))
 
     def active_records(self) -> tuple[ActiveMessage, ...]:
-        """Return active-chain records with their stable identities."""
+        """返回带有稳定身份标识的活动链记录。"""
 
         return tuple(
             ActiveMessage(meta=meta, message=deepcopy(message))
@@ -209,13 +209,11 @@ class MessageStore:
         metadata: dict[str, Any] | None = None,
         source_uuids: Iterable[str | None] | None = None,
     ) -> list[dict[str, Any]]:
-        """Replace only the active memory chain after a completed compact.
+        """压缩完成后仅替换活动内存链。
 
-        The transcript remains append-only: existing records are flushed first,
-        then the compacted chain is appended as new message records. Each
-        replacement record keeps an explicit ``source_uuid`` link to the
-        original record it was copied from, so history can filter duplicates
-        without comparing text.
+        transcript 保持仅追加：先刷盘已有记录，再将压缩后的链作为新消息记录追加。
+        每条替换记录保留明确指向原始被复制记录的 source_uuid 链接，
+        以便历史记录无需比对文本即可过滤重复项。
         """
 
         replacement = [deepcopy(message) for message in messages]
@@ -300,11 +298,10 @@ class MessageStore:
         *,
         error_log_recorder: ErrorLogRecorder | None = None,
     ) -> InterruptCleanupResult:
-        """Apply the interrupt cleanup contract to memory and transcript.
+        """将中断清理契约应用到内存和 transcript。
 
-        Keeps user output and real tool pairs, removes unpaired declarations
-        and orphan results, and rewrites the real transcript atomically. Memory
-        and terminal state are only committed after the disk rewrite succeeds.
+        保留用户输出和真实的工具配对，移除未配对声明和孤立结果，
+        并原子重写实际的 transcript。仅在磁盘重写成功后才提交内存和终端状态。
         """
 
         with self._state_lock:
@@ -317,7 +314,7 @@ class MessageStore:
         *,
         session_id: str,
     ) -> "MessageStore":
-        """Create a message store whose transcript never writes to disk."""
+        """创建其 transcript 绝不写入磁盘的消息存储。"""
 
         return cls(transcript_store=InMemoryTranscriptStore(session_id))
 
@@ -497,8 +494,7 @@ class MessageStore:
         if removed == 0 and modified == 0 and added == 0:
             return InterruptCleanupResult(success=True)
 
-        # Build the full corrected transcript: untouched prefix + prior active
-        # records + corrected run region.
+        # 构建完整修正后的 transcript：未修改的前缀 + 先前的活动记录 + 修正后的运行区域。
         corrected_records = [
             _to_loaded(
                 meta,
@@ -613,7 +609,7 @@ def _has_assistant_record(
             if meta.assistant_call_id == facts.assistant_call_id:
                 return True
             continue
-        # No stable call id: treat any assistant as the persisted draft.
+        # 无稳定调用 ID：将任意 assistant 视为已持久化的草稿。
         return True
     return False
 
@@ -655,7 +651,7 @@ def _persistable_message(
     message: dict[str, Any],
     original: LoadedTranscriptMessage | None,
 ) -> dict[str, Any]:
-    """Prefer the raw stored record so externalized results stay externalized."""
+    """优先使用原始存储记录，使外置的结果保持外置状态。"""
 
     if original is not None:
         return deepcopy(original.message)

@@ -1,4 +1,4 @@
-"""Session resume picker modal."""
+"""会话恢复选择器模态弹窗。"""
 
 from __future__ import annotations
 

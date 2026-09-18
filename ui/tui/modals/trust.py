@@ -1,8 +1,8 @@
-"""MCP trust modal.
+"""MCP 信任确认模态弹窗。
 
-Shown during startup when a project stdio MCP server is not yet trusted. The
-answer is ``"trust"`` or ``"skip"`` and is returned synchronously to the
-runtime assembly worker so startup and the UI never deadlock.
+在系统启动阶段当项目 stdio MCP 服务器尚未获得信任时展示。
+回答结果为 ``"trust"`` 或 ``"skip"``，并同步返回给运行时装配 worker，
+以确保启动过程与 UI 界面绝不死锁。
 """
 
 from __future__ import annotations

@@ -1,1 +1,1 @@
-"""User interface entry points."""
+"""用户界面入口。"""

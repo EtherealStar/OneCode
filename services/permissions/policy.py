@@ -1,4 +1,4 @@
-"""Permission policy that coordinates guard decisions and session grants."""
+"""协调防护决策和会话授权的权限策略。"""
 
 from __future__ import annotations
 
@@ -36,13 +36,10 @@ _RESERVED_DEVICE_NAMES = {
     *(f"LPT{index}" for index in range(1, 10)),
 }
 
-# Plan mode allows a small, explicit tool whitelist plus a hard requirement
-# that any filesystem write targets the active plan file. These names are
-# referenced by both ``evaluate`` (execution entry) and ``is_tool_visible``
-# (model-visible tool set). ``bash`` is gated by the classification's
-# ``read_only`` flag at the executor layer: the whitelist membership only
-# admits the tool into plan mode, but a non-read-only classification denies
-# the call.
+# 计划模式允许一个小型显式工具白名单，并严格要求任何文件系统写入必须以活动计划文件为目标。
+# 这些名称同时被 evaluate（执行入口）和 is_tool_visible（模型可见工具集）引用。
+# bash 在执行器层通过分类的 read_only 标志进行把关：进入白名单仅代表允许该工具进入计划模式，
+# 但非只读分类将直接拒绝该调用。
 PLAN_MODE_ALLOWED_TOOLS: frozenset[str] = frozenset(
     {
         "read_file",
@@ -59,10 +56,10 @@ PLAN_MODE_WRITE_TOOLS: frozenset[str] = frozenset({"write_file", "edit_file"})
 
 
 class PermissionPolicy:
-    """Deny-first policy for concrete tool calls.
+    """具体工具调用的优先拒绝策略。
 
-    The policy is intentionally conservative: session grants can only turn an
-    ``ask`` into ``allow`` and never override guard or tool-level deny results.
+    该策略具有审慎保守性：会话授权只能将 ask 转为 allow，
+    绝不能覆盖防护或工具级别的 deny 结果。
     """
 
     def __init__(
@@ -82,7 +79,7 @@ class PermissionPolicy:
         self,
         allowed_tools: tuple[str, ...],
     ) -> PermissionPolicy:
-        """Return a policy sharing persistent grants plus one runtime-local grant set."""
+        """返回共享持久授权并附加一组运行时局部授权的策略。"""
 
         return PermissionPolicy(
             self.session_store,
@@ -102,11 +99,10 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
-        # Plan mode is a hard, code-enforced boundary. The decision happens
-        # before read_only_agent, before tool_policy and before any session
-        # grant, so plan-mode denies cannot be overridden by hooks, allow
-        # grants, or user prompts. The same policy is enforced again by
-        # ``is_tool_visible`` so the model never sees forbidden tools.
+        # 计划模式是代码强制执行的硬边界。该决策发生在 read_only_agent、
+        # tool_policy 以及任何会话授权之前，因此计划模式的拒绝绝不能被 hook、
+        # allow 授权或用户提示覆盖。该策略还在 is_tool_visible 中再次生效，
+        # 使模型永远看不到被禁用的工具。
         if state.permission_mode == PermissionMode.PLAN:
             plan_decision = self._plan_mode_decision(
                 descriptor=descriptor,
@@ -269,16 +265,15 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision | None:
-        """Hard-cap plan mode at a small whitelist and the active plan file.
+        """将计划模式严格限制在小型白名单和活动计划文件范围内。
 
-        Returns ``None`` when the call is allowed in plan mode; otherwise
-        returns a deny decision. ``bash`` is handled by checking the existing
-        read-only classification rather than naming the tool, so the same rule
-        applies to future shell-shaped tools.
+        当调用在计划模式下被允许时返回 None；否则返回拒绝决策。
+        bash 通过检查既有的只读分类而非直接限定工具名称来处理，
+        因此相同规则也适用于未来的 shell 类型工具。
         """
 
         name = descriptor.name
-        # Non-whitelisted, non-write tools are denied outright.
+        # 非白名单且非写入工具直接拒绝。
         if name not in PLAN_MODE_ALLOWED_TOOLS and name not in PLAN_MODE_WRITE_TOOLS:
             return PermissionDecision(
                 action="deny",
@@ -293,9 +288,8 @@ class PermissionPolicy:
                 guard_policies=guard_policies,
             )
 
-        # bash is in the whitelist implicitly only when it is read-only.
-        # The tool itself is registered as ``bash`` but plan mode restricts
-        # its behaviour to read-only commands at the executor layer.
+        # bash 仅在只读时隐式包含在白名单中。
+        # 该工具本身注册为 bash，但计划模式在执行器层将其行为限制为只读命令。
         if name == "bash" and not classification.read_only:
             return PermissionDecision(
                 action="deny",
@@ -305,10 +299,8 @@ class PermissionPolicy:
                 guard_policies=guard_policies,
             )
 
-        # The agent tool is only allowed in plan mode when it requests an
-        # explore subagent that itself is read-only. The classifier already
-        # marks the call as read-only; the deeper contract is enforced by the
-        # subagent runner forcing ``read_only_agent`` on the child runtime.
+        # agent 工具仅在请求自身为只读的探索子智能体时才允许在计划模式中使用。
+        # 分类器已将该调用标记为只读；更深层的契约由子智能体运行器在子运行时强制设置 read_only_agent 来保障。
         if name == "agent" and not classification.read_only:
             return PermissionDecision(
                 action="deny",
@@ -318,7 +310,7 @@ class PermissionPolicy:
                 guard_policies=guard_policies,
             )
 
-        # Write tools in plan mode: only the active plan file is allowed.
+        # 计划模式下的写入工具：仅允许以活动计划文件为目标。
         if name in PLAN_MODE_WRITE_TOOLS:
             return self._plan_mode_write_decision(
                 descriptor=descriptor,
@@ -337,7 +329,7 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
-        """Restrict write_file/edit_file to the active plan file under plan mode."""
+        """在计划模式下将 write_file/edit_file 限制在活动计划文件内。"""
 
         plan_path = state.plan.plan_slug
         if not plan_path:
@@ -361,9 +353,8 @@ class PermissionPolicy:
                 targets=classification.targets,
                 guard_policies=guard_policies,
             )
-        # The plan file lives in ``.onecode/plans/<slug>.md``. We compare
-        # the normalized path of every write target against that expected
-        # path; anything else is denied.
+        # 计划文件位于 .onecode/plans/<slug>.md。我们将每个写入目标的规范化路径与该预期路径进行比对；
+        # 任何不匹配的目标都会被拒绝。
         targets = classification.targets
         if not targets:
             return PermissionDecision(
@@ -409,7 +400,7 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
-        """Hard-limit internal memory agents to one Markdown write target."""
+        """严格限制内部记忆智能体仅能写入一个 Markdown 目标。"""
 
         allowed_path = state.metadata.get("allowed_memory_path")
         if not isinstance(allowed_path, str) or not allowed_path:
@@ -472,7 +463,7 @@ class PermissionPolicy:
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
     ) -> PermissionDecision:
-        """Hard-limit internal long-term memory agents."""
+        """严格限制内部长期记忆智能体的权限。"""
 
         allowed_dir = state.metadata.get("allowed_memory_dir")
         if not isinstance(allowed_dir, str) or not allowed_dir:
@@ -637,11 +628,9 @@ class PermissionPolicy:
             and not self.is_tool_disabled(descriptor.name, state)
         ):
             return False
-        # Plan mode trims the visible tool set. Implementation-only tools
-        # are hidden so the model doesn't waste tokens asking for them. The
-        # write tools remain visible on purpose: their deny logic at the
-        # execution entry point enforces the "only plan file" rule and the
-        # prompt section explains the restriction.
+        # 计划模式裁剪可见工具集。隐藏仅用于实现的工具，避免模型浪费 token 请求它们。
+        # 写入工具特意保持可见：它们在执行入口处的拒绝逻辑强制实施仅限计划文件的规则，
+        # 并且提示词部分解释了此项限制。
         if state.permission_mode == PermissionMode.PLAN:
             return descriptor.name in PLAN_MODE_ALLOWED_TOOLS or descriptor.name in PLAN_MODE_WRITE_TOOLS
         return True
@@ -882,13 +871,11 @@ def _workspace_from_memory_dir(memory_dir: Path) -> Path:
 
 
 def _workspace_from_plan_state(state: RuntimeState) -> Path | None:
-    """Recover the workspace root from plan-state metadata, if present.
+    """从计划状态元数据中恢复工作区根目录（若存在）。
 
-    Plan mode does not store the workspace on the state object, so we look at
-    the conventional ``metadata["workspace"]`` key written by ``CliRuntime``.
-    The helper is intentionally lenient: a missing workspace just means the
-    plan-mode write decision will skip the path comparison, which the caller
-    treats as deny via the empty ``plan_slug`` check above.
+    计划模式未在状态对象上存储工作区，因此我们检查 CliRuntime 写入的常规 metadata["workspace"] 键。
+    该辅助函数被设计为宽松容错：工作区缺失仅意味着计划模式写入决策将跳过路径比较，
+    调用方会通过上方的空 plan_slug 检查将其视为拒绝。
     """
 
     workspace = state.metadata.get("workspace")

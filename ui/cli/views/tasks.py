@@ -1,4 +1,4 @@
-"""Durable and background task views."""
+"""持久化任务与后台任务视图。"""
 
 from __future__ import annotations
 

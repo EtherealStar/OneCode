@@ -1,4 +1,4 @@
-"""Read-only permission policy view."""
+"""只读权限策略视图。"""
 
 from __future__ import annotations
 

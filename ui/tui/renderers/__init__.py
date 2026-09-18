@@ -1,8 +1,8 @@
-"""TUI renderers: message bodies, tool presentations, and status bars.
+"""TUI 渲染器：消息正文、工具呈现与状态栏。
 
-The renderers translate projection value types into Rich renderables. They
-never read files, call tools, or depend on Textual widgets, so they are usable
-from a plain :class:`rich.console.Console` in tests.
+各渲染器负责将投影值类型转换为 Rich 可渲染对象。
+它们绝不读取文件、不调用工具，也不依赖 Textual 控件，因此在测试中可直接配合基础的
+:class:`rich.console.Console` 使用。
 """
 
 from __future__ import annotations

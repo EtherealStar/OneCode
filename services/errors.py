@@ -1,8 +1,7 @@
-"""Provider-neutral error types and classification helpers.
+"""供应商中立的错误类型与分类辅助函数。
 
-This module is intentionally low level.  It only depends on the Python
-standard library so core, services, tools, and infrastructure can classify
-errors without creating import cycles.
+此模块设计为底层模块。它仅依赖 Python 标准库，
+以便 core、services、tools 和 infrastructure 可以分类错误而不会产生循环导入。
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ class ErrorDetails:
 
 
 class OneCodeError(Exception):
-    """Base class for classified runtime errors."""
+    """已分类运行时错误的基类。"""
 
     def __init__(
         self,

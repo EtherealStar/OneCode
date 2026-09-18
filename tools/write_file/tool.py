@@ -1,4 +1,4 @@
-"""Guarded complete text file write tool."""
+"""受防护的完整文本文件写入工具。"""
 
 from __future__ import annotations
 

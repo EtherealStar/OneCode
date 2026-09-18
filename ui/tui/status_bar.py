@@ -1,7 +1,7 @@
-"""Status bar widget for the OneCode TUI.
+"""OneCode TUI 状态栏控件。
 
-Left side: product / workspace / model. Right side: run state with a spinning
-frame while a turn is active. It renders only projected facts.
+左侧：产品/工作区/模型。右侧：运行状态，在轮次处于活跃状态时显示旋转动画帧。
+仅渲染投影出来的既定事实。
 """
 
 from __future__ import annotations

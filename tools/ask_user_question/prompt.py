@@ -1,4 +1,4 @@
-"""Prompt text for the ``ask_user_question`` tool."""
+"""ask_user_question 工具的提示词文本。"""
 
 PROMPT = """\
 Use this tool when you need structured input from the user before continuing.

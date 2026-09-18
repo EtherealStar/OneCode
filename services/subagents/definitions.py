@@ -1,4 +1,4 @@
-"""Built-in subagent definitions."""
+"""内置子 agent 定义。"""
 
 from __future__ import annotations
 
@@ -60,6 +60,6 @@ BUILT_IN_AGENTS: dict[str, AgentDefinition] = {
 
 
 def get_agent_definition(agent_type: str) -> AgentDefinition | None:
-    """Return the built-in definition for a user-visible or synthetic agent."""
+    """返回用户可见或合成 agent 的内置定义。"""
 
     return BUILT_IN_AGENTS.get(agent_type)

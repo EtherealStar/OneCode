@@ -1,4 +1,4 @@
-"""Tool-owned file state cache for read/write side effects."""
+"""用于读写副作用的工具自有文件状态缓存。"""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class FileStateCache:
         limit: int | None = None,
         partial: bool = False,
     ) -> FileState | None:
-        """Read current disk text and cache mtime for successful file tools."""
+        """读取当前磁盘文本并缓存修改时间（mtime），供成功执行的文件工具使用。"""
 
         resolved = path.resolve()
         if not resolved.exists() or resolved.is_dir():
@@ -72,7 +72,7 @@ class FileStateCache:
         return state
 
     def changed_text_files(self) -> tuple[ChangedTextFile, ...]:
-        """Compare cached mtimes with disk and return bounded diffs."""
+        """比较缓存的修改时间（mtime）与磁盘状态，并返回有界的差异（diff）。"""
 
         changed: list[ChangedTextFile] = []
         for path, cached in list(self._states.items()):

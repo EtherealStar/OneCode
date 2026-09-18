@@ -1,4 +1,4 @@
-"""Shared attachment path ignore rules."""
+"""共享的附件路径忽略规则。"""
 
 from __future__ import annotations
 

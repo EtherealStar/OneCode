@@ -1,10 +1,10 @@
-"""In-memory cache for rendered prompt sections."""
+"""已渲染提示词分节的内存缓存。"""
 
 from __future__ import annotations
 
 
 class PromptSectionCache:
-    """Small process-local cache keyed by section key and fingerprint."""
+    """以分节 key 和指纹为键的小型进程局部缓存。"""
 
     def __init__(self) -> None:
         self._entries: dict[tuple[str, str], str] = {}

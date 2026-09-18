@@ -1,4 +1,4 @@
-"""Path helpers for workspace-local long-term memory."""
+"""工作区局部的长期记忆路径辅助函数。"""
 
 from __future__ import annotations
 

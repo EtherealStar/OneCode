@@ -6,17 +6,17 @@
 
 设计动机：
 
-- **替换** 旧 ``ui.cli.terminal.turn_render_state.TurnRenderState`` 的混合
+- 替换旧 ui.cli.terminal.turn_render_state.TurnRenderState 的混合
   职责。旧类同时承载"动态区状态 + 已完成但未提交到 scrollback 的工具
   结果",让 reducer、view、flush 三者互相耦合,flush 阶段直接调用
-  ``print_tool_result`` 写 stdout,从而造成动态区擦除和静态写入竞争。
-- **借鉴** ``docs/references/ui/screens/REPL.tsx`` 的状态分层：把
-  ``streamingText``、``streamingToolUses``、``streamMode``、助手定稿
+  print_tool_result 写 stdout,从而造成动态区擦除和静态写入竞争。
+- 借鉴 docs/references/ui/screens/REPL.tsx 的状态分层：把
+  streamingText、streamingToolUses、streamMode、助手定稿
   标志、turn 完成标志分到独立字段,让 reducer、view、coordinator 三
   个职责之间通过 state object 通信。
-- **纯数据**。state 不会 import Rich、prompt_toolkit、static_output,
+- 纯数据。state 不会 import Rich、prompt_toolkit、static_output,
   不会在自身方法里产生 I/O。任何写入 stdout 的动作都走
-  :mod:`ui.cli.terminal.output_coordinator`。
+  ui.cli.terminal.output_coordinator。
 
 Checkpoint 提交模型 (execplan §M1)
 ------------------------------------
@@ -50,11 +50,9 @@ if TYPE_CHECKING:
 #: ``stream_mode`` 字段的合法值集合。把它们写成模块级常量便于测试和
 #: 文档检索；不引入 enum 是因为 dataclass 默认值直接用字符串更易读。
 class StreamMode:
-    """The current phase of the in-flight turn.
+    """当前正在进行的轮次的阶段。
 
-    Mirrors the reference REPL's ``streamMode`` field — a single
-    string the view reads to decide what to draw in the body and
-    status row.
+    与参考实现的 streamMode 字段对应：视图读取的单个字符串，用于决定在正文与状态行中绘制什么内容。
     """
 
     REQUESTING = "requesting"  # 等待模型响应
@@ -68,7 +66,7 @@ class StreamMode:
 
 #: 工具生命周期状态。
 class ToolStatus:
-    """Lifecycle status for one tool call in the active bucket."""
+    """活跃池中单个工具调用的生命周期状态。"""
 
     QUEUED = "queued"  # tool_call_ready 已收到, 等待 tool_started
     RUNNING = "running"  # tool_started 已收到, 等待 tool_result
@@ -83,12 +81,10 @@ VISIBLE_ACTIVE_TOOL_LIMIT = 3
 
 @dataclass
 class StreamingToolUseState:
-    """In-flight tool call tracked by the reducer.
+    """reducer 跟踪的运行中工具调用。
 
-    Distinct from :class:`StaticCommit` — this represents a
-    tool call the model announced (or the runtime started) and that
-    has not yet produced a result. The view reads ``status`` and
-    ``progress`` to render the tool panel.
+    与 StaticCommit 不同：这代表模型已声明（或运行时已启动）但尚未产生结果的工具调用。
+    视图读取 status 与 progress 来渲染工具面板。
     """
 
     call_id: str
@@ -100,13 +96,11 @@ class StreamingToolUseState:
 
 #: ``StaticCommit`` 提交类型。
 class CommitKind:
-    """The kind of static-region commit a :class:`StaticCommit` represents.
+    """StaticCommit 代表的静态区域提交类型。
 
-    Currently two flavours: the completed assistant message body, and
-    a tool result line. The coordinator prints them with the same
-    Rich pipeline but they are stored separately so the dynamic
-    region can show them in different positions in the scrollback
-    even when interleaved.
+    当前有两种类型：已完成的 assistant 消息正文，以及工具结果行。
+    协调器使用相同的 Rich 流水线打印它们，但它们分开存储，
+    以便动态区域即使在交织时也能在回滚历史的不同位置显示它们。
     """
 
     ASSISTANT_MARKDOWN = "assistant_markdown"
@@ -115,19 +109,15 @@ class CommitKind:
 
 @dataclass
 class StaticCommit:
-    """A checkpoint-ready payload waiting to be committed to scrollback.
+    """等待提交到回滚历史的就绪检查点载荷。
 
-    Carries the stable ``assistant_call_id`` and ``model_turn_index``
-    so the coordinator (and any future re-render) can match the
-    commit to the assistant message that produced it. ``sequence``
-    is a process-local monotonically increasing id that the
-    coordinator uses to deduplicate commits across restages; the
-    pair ``(assistant_call_id, sequence)`` is the unique identity.
+    携带稳定的 assistant_call_id 和 model_turn_index，
+    以便协调器（及未来的重渲染）将提交与产生它的 assistant 消息相匹配。
+    sequence 为进程本地单调递增的 ID，协调器用它在重新暂存时对提交去重；
+    二元组 (assistant_call_id, sequence) 即唯一身份标识。
 
-    ``declared_index`` is the tool's declaration order within the
-    same ``assistant_call_id``; it is ``None`` for assistant
-    markdown commits. The reducer uses it to release tool result
-    commits strictly in declaration order.
+    declared_index 是同一 assistant_call_id 下工具的声明顺序；
+    对于 assistant markdown 提交为 None。reducer 使用它严格按声明顺序释放工具结果提交。
     """
 
     sequence: int
@@ -155,19 +145,16 @@ CompletedToolCommit = StaticCommit
 
 @dataclass
 class CliStreamUiState:
-    """All in-memory state for one turn's dynamic region.
+    """单次轮次动态区域的所有内存中状态。
 
-    Constructed once at the start of a turn, mutated by
-    :func:`reduce_stream_event` in :mod:`ui.cli.terminal.stream_reducer`,
-    read by :mod:`ui.cli.terminal.stream_view` (to render the dynamic
-    region) and :class:`TerminalOutputCoordinator` (to decide when to
-    flush pending commits).
+    在轮次开始时构建一次，由 ui.cli.terminal.stream_reducer 中的
+    reduce_stream_event 变更，由 ui.cli.terminal.stream_view 读取（渲染动态区域），
+    并由 TerminalOutputCoordinator 读取（决定何时刷新待处理提交）。
     """
 
-    #: Concatenated assistant text from every ``assistant_delta`` so far.
-    #: When the assistant message is committed to the static region,
-    #: the reducer clears this string so the next round of assistant
-    #: text starts streaming in a fresh dynamic region.
+    #: 迄今为止所有 assistant_delta 拼接而成的 assistant 文本。
+    #: 当 assistant 消息提交到静态区域时，reducer 清空此字符串，
+    #: 以便下一轮 assistant 文本在全新的动态区域开始流式传输。
     streaming_text: str = ""
     #: 当前 assistant message 的稳定归属 id。每次进入新模型调用
     #: 时,reducer 用 ``AgentEvent.metadata["assistant_call_id"]``
@@ -175,7 +162,7 @@ class CliStreamUiState:
     current_assistant_call_id: str = ""
     #: 当前 assistant message 对应的 model turn 序号。
     current_model_turn_index: int | None = None
-    #: Active tool calls by ``call_id`` (insertion order preserved).
+    #: 按 call_id 索引的活跃工具调用（保留插入顺序）。
     tools: dict[str, StreamingToolUseState] = field(default_factory=dict)
     #: 工具 call_id → 所属 ``assistant_call_id`` 的映射。reducer 在
     #: 收到 ``tool_call_ready`` 时填充,``tool_result`` 时用来找到
@@ -201,19 +188,13 @@ class CliStreamUiState:
     #: append,coordinator 负责 drain。包含 assistant_markdown
     #: 和 tool_result 两类。
     pending_static_commits: list[StaticCommit] = field(default_factory=list)
-    #: Current turn phase. Updated by the reducer; read by the view to
-    #: decide what the body and status line should show.
+    #: 当前轮次阶段。由 reducer 更新；视图读取以决定正文与状态行展示什么。
     stream_mode: str = StreamMode.REQUESTING
-    #: Error text from the most recent ``error`` event. Empty when no
-    #: error has been seen this turn.
+    #: 最近一次 error 事件的错误文本。本轮次未遇到错误时为空。
     error_text: str = ""
-    #: Set when ``assistant_message_completed`` arrives. The view
-    #: uses this to allow early preview finalisation when no tools
-    #: are still running.
+    #: 在 assistant_message_completed 到达时置位。没有工具在运行时，视图据此允许提前结束预览。
     assistant_completed: bool = False
-    #: Set when ``completed`` arrives. The coordinator uses it as a
-    #: trigger for the final markdown commit; the view uses it to
-    #: lock the status line to "completed".
+    #: 在 completed 到达时置位。协调器将其作为最终 markdown 提交的触发信号；视图据此将状态行锁定为“completed”。
     turn_completed: bool = False
     #: Set when ``assistant_message_completed`` has already emitted a
     #: checkpoint for the current assistant message. ``completed`` 的
@@ -221,10 +202,10 @@ class CliStreamUiState:
     #: emit checkpoint。
     assistant_committed: bool = False
 
-    # --- helpers used by the reducer and view ---------------------------
+    # --- reducer 和 view 使用的辅助方法 ---
 
     def has_active_tools(self) -> bool:
-        """``True`` when at least one tool is queued or running."""
+        """当至少有一个工具处于排队或运行中时返回 True。"""
 
         return any(
             tool.status in (ToolStatus.QUEUED, ToolStatus.RUNNING)
@@ -232,7 +213,7 @@ class CliStreamUiState:
         )
 
     def active_tool_count(self) -> int:
-        """How many tools are currently queued or running."""
+        """当前处于排队或运行中的工具数量。"""
 
         return sum(
             1
@@ -241,11 +222,10 @@ class CliStreamUiState:
         )
 
     def uncommitted_commits(self) -> list[StaticCommit]:
-        """Return commits that have not yet been flushed to scrollback.
+        """返回尚未刷新至回滚历史的提交项。
 
-        The coordinator calls this to know what to print next. A
-        list (rather than a generator) keeps the call deterministic
-        and easy to test.
+        协调器调用此方法以获知接下来需要打印的内容。
+        返回列表（而非生成器）以保持调用的确定性与易测性。
         """
 
         return [c for c in self.pending_static_commits if not c.committed]
@@ -254,13 +234,11 @@ class CliStreamUiState:
         self,
         assistant_call_id: str,
     ) -> list[StaticCommit]:
-        """Return ready tool result commits for a given assistant call id.
+        """返回给定 assistant 调用 ID 的就绪工具结果提交项。
 
-        A tool result commit is "ready" once it has been staged
-        (declared) and is the next-in-line for release: its
-        ``declared_index`` matches
-        ``next_tool_result_index_to_release_by_assistant`` for that
-        assistant call. The list is returned in declaration order.
+        工具结果提交项在被暂存（声明）且轮到其释放时被视为“就绪”：
+        其 declared_index 与该 assistant 调用的
+        next_tool_result_index_to_release_by_assistant 相匹配。列表按声明顺序返回。
         """
 
         next_index = self.next_tool_result_index_to_release_by_assistant.get(
@@ -279,12 +257,10 @@ class CliStreamUiState:
         return ready
 
     def visible_active_tools(self, *, limit: int = VISIBLE_ACTIVE_TOOL_LIMIT) -> list[StreamingToolUseState]:
-        """Return up to ``limit`` active tools for the dynamic panel.
+        """为动态面板返回最多 limit 个活跃工具。
 
-        Tools with an empty ``tool_name`` (the rare case where the
-        model emits a tool call without a name) are filtered out so
-        the dynamic region never shows a blank line. Insertion order
-        is preserved so the user sees a stable list while tools run.
+        tool_name 为空的工具（模型发出无名工具调用的罕见情况）会被过滤掉，
+        确保动态区域绝不显示空行。保留插入顺序以使用户在工具运行时看到稳定的列表。
         """
 
         ordered = [
@@ -298,7 +274,7 @@ class CliStreamUiState:
         return ordered[:limit]
 
     def overflow_active_count(self, *, limit: int = VISIBLE_ACTIVE_TOOL_LIMIT) -> int:
-        """How many active tools are folded into the ``+N more`` line."""
+        """折叠进 +N more 行中的活跃工具数量。"""
 
         ordered = [
             tool
@@ -311,7 +287,7 @@ class CliStreamUiState:
         return len(ordered) - limit
 
     def next_sequence(self) -> int:
-        """Allocate the next ``StaticCommit.sequence`` value."""
+        """分配下一个 StaticCommit.sequence 值。"""
 
         seq = self.next_commit_sequence
         self.next_commit_sequence += 1

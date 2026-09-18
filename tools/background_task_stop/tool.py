@@ -1,4 +1,4 @@
-"""Tool descriptor for stopping background tasks."""
+"""停止后台任务的工具描述符。"""
 
 from __future__ import annotations
 

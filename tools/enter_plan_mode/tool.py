@@ -1,10 +1,8 @@
-"""Tool descriptor for ``enter_plan_mode``.
+"""enter_plan_mode 的工具描述符。
 
-The handler is intentionally small: it never executes user code, only mutates
-``RuntimeState`` and produces a durable attachment for the next turn. Real
-permission enforcement happens in the executor and permission policy; the
-tool itself is the entry point that tools call when the model requests plan
-mode.
+handler 保持轻量设计：它从不执行用户代码，仅变更 RuntimeState
+并在下一轮生成持久化附件。真正的权限强制在执行器与权限策略中完成；
+工具本身是模型请求计划模式时的入口点。
 """
 
 from __future__ import annotations
@@ -82,9 +80,8 @@ def _handle_for(plan_store: "PlanStore"):
 
 
 def _was_already_in_plan_mode(state: Any) -> bool:
-    # After ``enter_plan_mode`` runs, ``permission_mode`` is PLAN. We rely on
-    # the caller to compute the diff by snapshotting before the call; here we
-    # just report the new state.
+    # 在 enter_plan_mode 执行后，permission_mode 为 PLAN。我们依赖
+    # 调用方在调用前进行快照以计算差异；此处仅报告新状态。
     _ = state
     return False
 
@@ -102,9 +99,8 @@ def _classify_input(
     runtime: ToolRuntime,
 ) -> ToolCallClassification:
     return ToolCallClassification(
-        # Entering plan mode is purely a runtime state change; it doesn't
-        # touch the filesystem or run arbitrary code, so classify it as a
-        # concurrency-safe internal mutation.
+        # 进入计划模式纯粹是运行时状态变更；它不触碰
+        # 文件系统也不运行任意代码，因此将其分类为并发安全的内部变更。
         read_only=True,
         modifies_filesystem=False,
         concurrency_safe=True,

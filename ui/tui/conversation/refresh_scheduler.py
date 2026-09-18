@@ -1,9 +1,8 @@
-"""Coalesce high-frequency projection updates into one layout refresh.
+"""将高频投影更新合并为单次布局刷新。
 
-The scheduler only batches refresh *requests*; it never applies the projection
-and never drops body deltas. Auxiliary state changes (queue, status, usage,
-run) arrive with an empty dirty set and are still flushed because they set
-``structural``. Finalised/timed-out flushes can be requested immediately.
+该调度器仅合并批处理刷新“请求”；绝不自行应用投影，也绝不丢弃正文增量。
+附属状态变更（队列、状态、用量、运行状态）虽然携带空的脏标记集合，但因其标记了 ``structural`` 仍会被正常刷出。
+对于最终提交或超时的情况，可请求立即刷出。
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from typing import Hashable
 
 from textual.timer import Timer
 
-#: Dirty set of layout keys (message IDs).
+#: 布局键（消息 ID）的脏标记集合。
 DirtyIds = set[Hashable]
 Flush = Callable[[DirtyIds, bool], None]
 

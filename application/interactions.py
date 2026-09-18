@@ -1,9 +1,8 @@
-"""Coordination of permission, question, trust, and plan-approval requests.
+"""协调权限、提问、信任与计划审批请求。
 
-Only one request is active at a time; later requests wait in arrival order.
-The coordinator never decides policy itself: a guard ``deny`` never reaches
-it, and an answer is validated by request id and request type so an expired or
-mismatched answer cannot satisfy a different request.
+同一时刻只有一个请求处于活动状态；后续请求按到达顺序排队等待。
+协调器本身从不决定策略：守卫的 deny 从不会传递到此处；
+回答通过请求 ID 和请求类型进行校验，因此过期或不匹配的回答无法满足其他请求。
 """
 
 from __future__ import annotations
@@ -120,7 +119,7 @@ class InteractionCoordinator:
         self.cancel_pending(outcome)
 
     def cancel_pending(self, outcome: str = "cancelled") -> None:
-        """Synchronously wake every waiter. Safe to call from cancel paths."""
+        """同步唤醒所有等待者。可安全地从取消路径调用。"""
 
         pending_items = tuple(self._pending)
         self._pending.clear()
@@ -139,7 +138,7 @@ class InteractionCoordinator:
             self._notify_resolved(pending.request.request_id, outcome)
 
     def close(self) -> None:
-        """Synchronously mark closed and wake waiters without notification."""
+        """同步标记为已关闭并唤醒等待者，不发送通知。"""
 
         self._closed = True
         for pending in tuple(self._pending):
@@ -212,7 +211,7 @@ class InteractionCoordinator:
 
 
 class PermissionPromptAdapter:
-    """Adapts the interaction coordinator to the ``PermissionPrompter``."""
+    """将交互协调器适配为 PermissionPrompter。"""
 
     def __init__(self, coordinator: InteractionCoordinator) -> None:
         self._coordinator = coordinator
@@ -241,7 +240,7 @@ class PermissionPromptAdapter:
 
 
 class UserQuestionPromptAdapter:
-    """Adapts the interaction coordinator to the ``UserQuestionPrompter``."""
+    """将交互协调器适配为 UserQuestionPrompter。"""
 
     def __init__(self, coordinator: InteractionCoordinator) -> None:
         self._coordinator = coordinator

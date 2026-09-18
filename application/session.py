@@ -1,9 +1,8 @@
-"""The SessionController: the application-layer session Module.
+"""会话控制器：应用层会话模块。
 
-It owns one runtime, a single foreground turn worker, the pending input FIFO,
-interaction coordination, and the ordered snapshot/update stream. UI adapters
-(TUI, batch) submit intent and observe updates; they never assemble the agent
-loop or drain a private queue.
+它拥有一个运行时实例、单个前台轮次工作任务、待处理输入 FIFO 队列、
+交互协调机制以及有序的快照与更新流。UI 适配器（TUI、batch）提交意图并观察更新；
+它们从不装配代理主循环，也不消耗私有队列。
 """
 
 from __future__ import annotations
@@ -62,7 +61,7 @@ _SUBSCRIBER_QUEUE_SIZE = 256
 
 
 def _tool_input(tool: Any, metadata: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract declared tool arguments for display without guessing."""
+    """提取已声明的工具参数用于展示，不做猜测。"""
 
     value = getattr(tool, "input", None)
     if isinstance(value, Mapping):
@@ -295,8 +294,8 @@ class SessionController:
     async def resume_queue(self) -> None:
         if self._closed or not self._paused:
             return
-        # A failed interrupt cleanup must not be skipped silently: the on-disk
-        # transcript is not known-good, so refuse to run the next input.
+        # 失败的中断清理绝不能静默跳过：磁盘上的 transcript 并非已知良好状态，
+        # 因此拒绝运行下一条输入。
         if self._last_cancel is not None and self._last_cancel.cleanup_success is False:
             self._emit(
                 lambda generation, sequence: StatusChanged(
@@ -312,10 +311,10 @@ class SessionController:
         self._work_available.set()
 
     async def await_safe_point(self) -> None:
-        """Block until no foreground turn is running.
+        """阻塞直到没有前台轮次正在运行。
 
-        Mutation commands use this so a status change does not race model or
-        tool execution. View commands never wait.
+        修改类命令使用此方法，以确保状态变更不会与模型或工具执行发生竞争。
+        查看类命令从不等待。
         """
 
         if self._active is not None:
@@ -344,10 +343,10 @@ class SessionController:
     async def respond(
         self, request_id: str, kind: Any = None, payload: Any = None
     ) -> ResponseResult:
-        """Answer a request by id.
+        """按 ID 回答请求。
 
-        Accepts either an :class:`InteractionAnswer` (whose ``kind`` and
-        ``payload`` are used) or an explicit ``kind`` + ``payload`` pair.
+        接受 InteractionAnswer（使用其 kind 和 payload），
+        或显式的 kind + payload 二元组。
         """
 
         if isinstance(kind, InteractionAnswer):
@@ -585,8 +584,8 @@ class SessionController:
             )
         )
         self._emit_queue_changed()
-        # The cleanup rewrote the transcript: publish the authoritative history
-        # so observers replace their projection instead of guessing deletions.
+        # 清理操作重写了 transcript：发布权威历史快照，
+        # 使观察者替换其投影视图，而非猜测删除内容。
         self._publish_snapshot()
 
     async def _collect_attachments(
@@ -621,9 +620,8 @@ class SessionController:
     def _handle_event(self, run: _ActiveRun, event: AgentEvent) -> None:
         event_type = event.type
         if event_type == "interaction_started":
-            # The loop appends the user message before this event and carries
-            # its stable record UUID, so the projection can key the committed
-            # user message without guessing from text or position.
+            # 主循环在此事件之前追加用户消息并携带其稳定的记录 UUID，
+            # 从而投影端可以直接以此为键绑定已提交的用户消息，而无需猜测文本或位置。
             user_uuid = event.metadata.get("user_message_uuid") or ""
             if isinstance(user_uuid, str) and user_uuid:
                 run.user_message_uuid = user_uuid
@@ -811,8 +809,8 @@ class SessionController:
             getattr(outcome, "name", "") == "compact"
             and getattr(outcome, "status", "") == "ok"
         ):
-            # Compaction rewrote the active chain; republish the authority so
-            # projections can rebuild their message tree from real history.
+            # 压缩重写了活动链；重新发布权威快照，
+            # 以便投影可以根据真实历史重建其消息树。
             self._publish_snapshot()
         return outcome
 

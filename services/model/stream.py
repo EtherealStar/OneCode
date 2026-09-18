@@ -1,4 +1,4 @@
-"""Provider-neutral model streaming events."""
+"""供应商中立的模型流式事件。"""
 
 from __future__ import annotations
 

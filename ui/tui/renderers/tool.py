@@ -1,13 +1,11 @@
-"""Tool presentation registry for the TUI.
+"""TUI 工具呈现注册表。
 
-The registry is a policy dispatcher over OneCode public facts only: a tool
-name, its structured input mapping, its result preview text, and whether the
-result is an error. It never imports concrete tool input models or reference
-domain types.
+该注册表是仅基于 OneCode 公共既定事实的策略分发器：包含工具名称、
+结构化输入映射、结果预览文本以及结果是否为错误。
+它绝不导入具体的工具输入模型或引用领域类型。
 
-Unknown and MCP tools fall through to a generic presenter that keeps a usable
-summary and, on failure, a redacted first-line error excerpt. Missing a
-specialised presenter must never hide the error summary.
+未知工具和 MCP 工具将降级回退到通用呈现器，保留可用的摘要，并在失败时提供经过脱敏的首行错误摘要。
+缺少专用呈现器绝不能掩盖错误摘要信息。
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ _INLINE_SECRET = re.compile(
 
 
 def redact_sensitive(value: object, *, key: str = "") -> object:
-    """Redact secret-like keys, inline secrets, and absolute paths in text."""
+    """对文本中的机密键名、内联机密以及绝对路径进行脱敏处理。"""
 
     if _SECRET_KEY.search(key) or _PATH_KEY.search(key):
         return "[已隐藏]"
@@ -48,7 +46,7 @@ def redact_sensitive(value: object, *, key: str = "") -> object:
 
 
 def first_line_excerpt(content: str, limit: int = 120) -> str:
-    """Return the first non-empty, redacted line, truncated for display."""
+    """返回首个非空且经过脱敏的行，并按限制长度截断以供展示。"""
 
     safe = redact_sensitive(content, key="result")
     first = next((line.strip() for line in str(safe).splitlines() if line.strip()), "")
@@ -63,7 +61,7 @@ class ToolPresentation:
     preview_lines: tuple[Text, ...] = ()
 
 
-#: ``(name, tool_input, result_preview, is_error) -> ToolPresentation``.
+#: ``(name, tool_input, result_preview, is_error) -> ToolPresentation`` 回调签名。
 ToolPresenter = Callable[
     [str, Mapping[str, object] | None, str | None, bool], ToolPresentation
 ]
@@ -96,9 +94,9 @@ class ToolPresentationRegistry:
 def build_tool_presentation_registry(
     workspace_root: Path | None = None,
 ) -> ToolPresentationRegistry:
-    """Create the registry of built-in input-based presenters."""
+    """创建基于输入的内置工具呈现器注册表。"""
 
-    del workspace_root  # kept for call-site compatibility; paths stay lexical
+    del workspace_root  # 保留以维持调用兼容性；路径保持字面处理
     registry = ToolPresentationRegistry()
 
     registry.register("read_file", _generic_path_presenter(lambda values: values.get("path")))
@@ -111,7 +109,7 @@ def build_tool_presentation_registry(
     return registry
 
 
-# --- presenters ------------------------------------------------------------
+# --- 各具体呈现器 ----------------------------------------------------------
 
 
 def _generic_presenter(
@@ -206,7 +204,7 @@ def _bash_presenter(
     return ToolPresentation(summary, _body(result_preview, tool_input), is_error)
 
 
-# --- helpers ---------------------------------------------------------------
+# --- 辅助函数 --------------------------------------------------------------
 
 
 def _body(

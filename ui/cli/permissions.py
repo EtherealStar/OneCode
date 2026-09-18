@@ -1,4 +1,4 @@
-"""Permission request summary rendering for CLI surfaces."""
+"""面向 CLI 界面的权限请求摘要渲染。"""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from services.permissions import PermissionRequest
 
 
 def render_permission_request_summary(request: PermissionRequest) -> str:
-    """Render the tool request details shown before permission choices.
+    """渲染展示在权限选项之前的工具请求详情。
 
-    This module deliberately contains no input handling and no permission
-    response construction. TTY, batch, and tests should build responses from
-    ``request.options`` so the UI cannot add project-level grants.
+    本模块刻意不包含输入处理与权限响应构造逻辑。
+    TTY、批处理与测试均应依据 request.options 构建响应，
+    以避免界面层擅自添加项目级授权。
     """
 
     tool_name = request.descriptor.name

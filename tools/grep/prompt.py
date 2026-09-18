@@ -1,4 +1,4 @@
-"""Prompt section for the grep tool."""
+"""grep 工具的提示词文本。"""
 
 PROMPT = """Purpose:
 Search file contents with ripgrep-compatible regular expressions.

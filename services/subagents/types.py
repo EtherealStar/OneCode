@@ -1,4 +1,4 @@
-"""Provider-neutral subagent request and result types."""
+"""与提供商无关的子 agent 请求与结果类型。"""
 
 from __future__ import annotations
 

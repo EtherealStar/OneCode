@@ -1,29 +1,20 @@
-"""Input queue for the inline REPL.
+"""行内 REPL 的输入队列。
 
-This module owns the FIFO queue used by :class:`ui.cli.terminal.repl.InlineRepl`.
-The execplan in ``docs/exec-plans/active/cli-running-input-queue.md`` upgrades the
-queue from a bare ``deque[str]`` to a typed queue of :class:`QueuedInput`
-records so the REPL can dispatch different submission kinds (ordinary prompt
-vs. slash command) without re-classifying text on the consumer side.
+本模块负责 InlineRepl 使用的先进先出（FIFO）队列。
+将队列从原始的 deque[str] 升级为带有类型的 QueuedInput 记录队列，
+使 REPL 能够分发不同类型的提交（普通提示词 vs 斜杠命令），
+而无需在消费端重新分类文本。
 
-Responsibilities:
+职责：
 
-- keep insertion order (FIFO) — :class:`collections.deque` is used for O(1)
-  ``append`` / ``popleft``;
-- accept only non-blank lines (whitespace-stripped);
-- classify each entry as ``prompt`` or ``slash`` based on whether the line
-  starts with ``/``;
-- expose a read-only :meth:`InputQueue.snapshot` view that downstream
-  components (status line, queued preview) can render without mutating
-  the queue;
-- assign a monotonically increasing ``sequence`` so consumers and tests
-  can detect stable ordering without depending on deque indices.
+- 保持插入顺序（FIFO）：使用 collections.deque 实现 O(1) 复杂度的 append / popleft；
+- 仅接收非空白行（去除前后空白后）；
+- 根据行是否以 / 开头将每个条目归类为 prompt 或 slash；
+- 暴露只读的 InputQueue.snapshot 视图，供下游组件（状态行、排队预览）渲染，而无需修改队列；
+- 分配单调递增的 sequence，使消费者和测试能够感知稳定的顺序，而不依赖于双端队列索引。
 
-The single consumer remains :class:`ui.cli.terminal.repl.InlineRepl`. The
-running-turn input box inside :class:`ui.cli.terminal.stream_session.StreamingSession`
-also calls :meth:`InputQueue.push`, so the queue is intentionally the only
-shared channel between the running dynamic region and the idle-time
-dispatch loop.
+唯一消费者仍为 InlineRepl。StreamingSession 内部的运行中轮次输入框也会调用
+InputQueue.push，因此该队列是运行中动态区域与空闲期分发循环之间唯一有意保留的共享通道。
 """
 
 from __future__ import annotations
@@ -34,27 +25,19 @@ from dataclasses import dataclass, field
 from typing import Deque, Literal
 
 
-#: Kinds of input the queue can carry. ``prompt`` is a regular user turn;
-#: ``slash`` is a line starting with ``/`` and must be routed through the
-#: command dispatcher rather than the agent loop.
+# 队列可承载的输入类型。prompt 为常规用户轮次；slash 为以 / 开头的行，必须通过命令分发器路由而非走 agent 循环。
 QueuedInputKind = Literal["prompt", "slash"]
 
 
 @dataclass(frozen=True)
 class QueuedInput:
-    """A single queued submission waiting to be dispatched.
+    """等待分发的单个排队提交项。
 
-    Attributes:
-        text: The literal submission text (already stripped of trailing
-            whitespace). The original leading whitespace is also dropped
-            because the queue only accepts non-blank input.
-        kind: Either ``"prompt"`` or ``"slash"``. ``slash`` entries start
-            with ``/`` and must skip the agent loop.
-        sequence: Monotonic insertion counter so consumers can detect
-            ordering without depending on deque indices.
-        visible: Whether the running-turn preview should render this
-            entry. Reserved for future use (e.g. system-inserted entries
-            that should not clutter the preview).
+    属性：
+        text：字面提交文本（已剥离尾随空白）。原始前导空白也会被丢弃，因为队列仅接收非空白输入。
+        kind：prompt 或 slash 之一。slash 条目以 / 开头且必须跳过 agent 循环。
+        sequence：单调递增的插入计数器，使消费者能够感知顺序而不依赖于双端队列索引。
+        visible：运行中轮次预览是否应当渲染此条目。预留供后续使用（例如不应污染预览的系统插入条目）。
     """
 
     text: str
@@ -65,17 +48,16 @@ class QueuedInput:
 
 @dataclass
 class InputQueue:
-    """FIFO queue of :class:`QueuedInput` records awaiting dispatch."""
+    """等待分发的 QueuedInput 记录的先进先出（FIFO）队列。"""
 
     _items: Deque[QueuedInput] = field(default_factory=deque)
     _next_sequence: int = 0
 
     def push(self, line: str) -> QueuedInput | None:
-        """Append a submission; returns the queued object, or ``None`` if blank.
+        """追加提交项；返回排队对象，若为空白则返回 None。
 
-        A blank line (whitespace-only or empty after stripping) is silently
-        dropped. Slash commands keep their leading ``/``; the queue does
-        not re-format text.
+        空白行（仅含空白或去除空白后为空）将被静默丢弃。
+        斜杠命令保留前导 /；队列不会重新格式化文本。
         """
 
         normalized = line.rstrip()
@@ -92,23 +74,22 @@ class InputQueue:
         return item
 
     def pop(self) -> QueuedInput | None:
-        """Return and remove the next queued input, or ``None`` if empty."""
+        """返回并移除下一个排队的输入项，若为空则返回 None。"""
 
         if not self._items:
             return None
         return self._items.popleft()
 
     def snapshot(self) -> tuple[QueuedInput, ...]:
-        """Read-only snapshot used by the queued preview and tests.
+        """排队预览和测试使用的只读快照。
 
-        The returned tuple is a copy; later mutations to the queue do not
-        affect already-issued snapshots.
+        返回的元组为副本；后续对队列的修改不会影响已生成的快照。
         """
 
         return tuple(self._items)
 
     def clear(self) -> None:
-        """Drop every queued input. Used on shutdown."""
+        """丢弃所有排队的输入项。在关闭退出时使用。"""
 
         self._items.clear()
 

@@ -1,4 +1,4 @@
-"""Provider connection views."""
+"""提供商连接视图。"""
 
 from __future__ import annotations
 

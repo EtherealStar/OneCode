@@ -1,4 +1,4 @@
-"""In-memory session permission grants."""
+"""内存会话权限授权。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class SessionPermissionSnapshot:
 
 
 class SessionPermissionStore:
-    """Stores temporary grants for one runtime session only."""
+    """仅为单个运行时会话存储临时授权。"""
 
     def __init__(self) -> None:
         self._allowed_directories: set[tuple[str, str, Path]] = set()
@@ -56,7 +56,7 @@ class SessionPermissionStore:
         return False
 
     def allow_tool(self, tool_name: str) -> None:
-        """Allow a whole tool for this session without weakening deny checks."""
+        """在当前会话中允许使用整个工具，且不削弱拒绝检查。"""
 
         if tool_name:
             self._allowed_tools.add(tool_name)
@@ -93,7 +93,7 @@ class SessionPermissionStore:
         return tool_name in self._disabled_tools
 
     def snapshot(self) -> SessionPermissionSnapshot:
-        """Return a stable copy for read-only UI/reporting code."""
+        """为只读界面或报告代码返回一份稳定的快照副本。"""
 
         return SessionPermissionSnapshot(
             allowed_directories=tuple(

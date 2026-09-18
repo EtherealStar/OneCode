@@ -1,4 +1,4 @@
-"""Structured runtime trace primitives."""
+"""结构化运行时追踪原语。"""
 
 from services.observability.error_log import (
     ErrorLogRecorder,

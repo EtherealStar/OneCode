@@ -1,4 +1,4 @@
-"""Compatibility scan helpers for long-term memory catalogs."""
+"""长期记忆目录的兼容性扫描辅助函数。"""
 
 from __future__ import annotations
 

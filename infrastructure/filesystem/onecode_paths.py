@@ -1,4 +1,4 @@
-"""Workspace-local `.onecode` path helpers."""
+"""工作区本地 .onecode 路径辅助函数。"""
 
 from __future__ import annotations
 

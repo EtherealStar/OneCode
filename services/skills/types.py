@@ -1,4 +1,4 @@
-"""Domain types for OneCode skill loading."""
+"""OneCode 技能加载的领域类型。"""
 
 from __future__ import annotations
 

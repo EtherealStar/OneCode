@@ -1,9 +1,8 @@
-"""Shared CLI runtime types.
+"""共享的 CLI 运行时类型。
 
-The concrete runtime dataclass and assembly now live in
-``application.runtime``. This module keeps the historical ``CliRuntime`` name
-as an alias so existing CLI code and tests continue to work while the
-application layer owns the wiring.
+具体的运行时数据类与装配逻辑现已移至 application.runtime 模块。
+本模块保留历史名称 CliRuntime 作为别名，以便在应用层负责装配的同时，
+现有的 CLI 代码与测试能够继续正常工作。
 """
 
 from __future__ import annotations
@@ -27,18 +26,16 @@ class CommandResult:
     presentation: CommandPresentation = "inline"
     interaction: CommandInteraction | None = None
     reset_main_view: bool = False
-    # Messages a successful command asks the REPL to replay into the main
-    # scrollback using the normal static-output renderers. This is purely a
-    # UI replay request (e.g. session resume); it is not a source of truth
-    # for the model context, which lives in the runtime's MessageStore.
+    # 命令执行成功后请求 REPL 使用常规静态输出渲染器重放至主滚动缓冲区的消息。
+    # 这纯粹是界面层的重放请求（例如会话恢复）；它不是模型上下文的事实来源，
+    # 模型上下文由运行时的 MessageStore 维护。
     replay_messages: tuple[dict[str, Any], ...] = field(default_factory=tuple)
-    # Durable plan-mode attachments to inject into the next model turn. The
-    # REPL passes these to ``AgentLoop.stream(prompt, attachments=...)`` so
-    # plan-mode transitions become part of the transcript.
+    # 注入到下一轮模型调用的持久化计划模式附件。
+    # REPL 将这些附件传递给 AgentLoop.stream(prompt, attachments=...)，
+    # 使计划模式状态转换成为 transcript 的一部分。
     attachments: tuple[dict[str, Any], ...] = field(default_factory=tuple)
-    # Optional prompt the command wants the REPL to enqueue after the user
-    # finishes the current turn. Used by ``/plan <description>`` so the
-    # description becomes the next user message in plan mode.
+    # 命令请求 REPL 在用户完成当前轮次后入队的可选提示词。
+    # 由 /plan <description> 使用，使描述成为计划模式下的下一条用户消息。
     queued_prompt: str | None = None
 
 

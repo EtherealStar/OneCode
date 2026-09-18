@@ -1,16 +1,13 @@
-"""Full-screen ``/status``-style pages shown on the alternate screen.
+"""在备用屏幕上展示的全屏页面（如 /status 等）。
 
-A *page* is a Rich renderable that should occupy the whole terminal
-window while the user reads it, with ``Esc`` returning to the inline REPL.
-Pages are rendered inside a
-``full_screen`` :class:`prompt_toolkit.Application`, which manages the
-alternate screen (DEC 1049) itself — so the user's static scrollback
-is preserved unchanged and the page content never leaks into it.
+页面是一个 Rich 可渲染对象，在用户阅读期间占据整个终端窗口，
+按 Esc 可返回行内 REPL。页面在 full_screen 模式的 prompt_toolkit.Application
+中渲染，由其自行管理备用屏幕（DEC 1049），从而完整保留用户的静态回滚历史，
+页面内容绝不会泄漏到回滚历史中。
 
-We render the Rich renderable to ANSI text once and display it in a
-scrollable window. ``↑``/``↓``/``PageUp``/``PageDown`` scroll; ``Esc``
-closes. This is the "simple" page from execplan §M5 — no tabs, no live
-refresh.
+我们将 Rich 可渲染对象一次性渲染为 ANSI 文本并在可滚动窗口中显示。
+方向键上下与 PageUp/PageDown 用于滚动；Esc 用于关闭。
+这是轻量简易页面，不包含标签页或实时刷新。
 """
 
 from __future__ import annotations
@@ -34,7 +31,7 @@ from ui.cli.theme import RICH_THEME
 
 
 def _render_to_ansi(renderable: Any, *, width: int) -> str:
-    """Render a Rich renderable to an ANSI string for prompt_toolkit."""
+    """将 Rich 可渲染对象渲染为适用于 prompt_toolkit 的 ANSI 字符串。"""
 
     out = io.StringIO()
     console = Console(
@@ -49,7 +46,7 @@ def _render_to_ansi(renderable: Any, *, width: int) -> str:
 
 
 class TransientPage:
-    """Render a single Rich renderable full-screen until the user exits."""
+    """全屏渲染单个 Rich 可渲染对象，直到用户退出。"""
 
     def __init__(
         self,
@@ -67,11 +64,10 @@ class TransientPage:
         input=None,  # type: ignore[no-untyped-def]
         output=None,  # type: ignore[no-untyped-def]
     ) -> None:
-        """Display the page; block until the user closes it.
+        """展示页面并阻塞直到用户关闭。
 
-        On non-TTY hosts (where the alternate screen is unavailable)
-        the page is a no-op — callers should detect this and fall back
-        to inline printing instead.
+        在非 TTY 宿主环境（备用屏幕不可用）中该操作为空操作，
+        调用方应检测此情况并回退为行内打印。
         """
 
         if input is None and output is None and not can_enter_alternate_screen(
@@ -139,7 +135,7 @@ class TransientPage:
 
 
 class _PageLines:
-    """Lazily render + cache the page's ANSI lines and track scroll."""
+    """惰性渲染并缓存页面的 ANSI 行，同时跟踪滚动偏移量。"""
 
     def __init__(self, renderable: Any) -> None:
         self._renderable = renderable

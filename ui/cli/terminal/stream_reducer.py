@@ -79,15 +79,13 @@ if TYPE_CHECKING:
     from services.tools.types import ToolExecutionResult
 
 
-#: Counter used to mint synthetic call ids for ``tool_result`` events
-#: that arrive without an identifiable ``call_id``. The counter is
-#: process-local and only used as a last-resort bucket so two
-#: unidentified results never collapse onto the same id.
+# 计数器，用于为到达时缺少可识别 call_id 的 tool_result 事件生成合成调用 ID。
+# 该计数器为进程本地变量，仅作为最终保底手段，确保两个未识别的结果绝不会归并到同一个 ID。
 _unknown_call_counter = 0
 
 
 def _next_unknown_call_id() -> str:
-    """Return a unique synthetic call id for an unidentified result."""
+    """为未识别的结果返回唯一的合成调用 ID。"""
 
     global _unknown_call_counter
     _unknown_call_counter += 1
@@ -95,11 +93,10 @@ def _next_unknown_call_id() -> str:
 
 
 def _resolve_call_id(metadata: dict[str, Any], result: Any) -> str | None:
-    """Extract the canonical call id from event metadata or the result.
+    """从事件元数据或结果中提取规范的 call_id。
 
-    Returns ``None`` when no id is available; the reducer then falls
-    back to a synthetic id so the result still ends up in
-    ``pending_static_commits``.
+    无可用 ID 时返回 None；reducer 随后会回退使用合成 ID，
+    以确保结果仍能进入 pending_static_commits。
     """
 
     call_id = metadata.get("tool_call_id")
@@ -113,11 +110,10 @@ def _resolve_call_id(metadata: dict[str, Any], result: Any) -> str | None:
 
 
 def _preview_tool_input(input_obj: Any, *, limit: int = 120) -> str:
-    """Build a bounded one-line preview of a tool call's input.
+    """为工具调用的输入构建受限的单行预览。
 
-    Mirrors ``ui.cli.terminal.static_output._summarize_arguments``
-    but lives here so the reducer can pre-render the input without
-    depending on the static output module.
+    与 ui.cli.terminal.static_output._summarize_arguments 对应，
+    但独立实现以便 reducer 预渲染输入而不依赖静态输出模块。
     """
 
     if not isinstance(input_obj, dict):
@@ -148,13 +144,11 @@ def _preview_value(value: Any, *, inner_limit: int = 40) -> str:
 
 
 def _set_mode(state: CliStreamUiState, mode: str) -> None:
-    """Switch ``state.stream_mode`` unless the turn has already ended.
+    """切换 state.stream_mode，除非轮次已经结束。
 
-    ``completed`` and ``error`` are terminal — once entered the mode
-    does not get overwritten by a later event (e.g. an assistant
-    delta that races in after ``completed``). Other transitions are
-    best-effort and prefer the "more active" mode when there's a
-    tie.
+    completed 和 error 为终态，一旦进入便不会被后续事件覆盖
+    （例如 completed 之后滞后到达的 assistant delta）。
+    其他状态转换尽力而为，在竞争时倾向于更活跃的模式。
     """
 
     if state.stream_mode in (StreamMode.COMPLETED, StreamMode.ERROR):
@@ -163,12 +157,11 @@ def _set_mode(state: CliStreamUiState, mode: str) -> None:
 
 
 def _mark_tool_error(state: CliStreamUiState, call_id: str) -> None:
-    """Mark ``call_id`` as errored and remove it from the active bucket.
+    """将 call_id 标记为错误并从活跃集合中移除。
 
-    The reducer does not currently receive a distinct ``tool_error``
-    event — the error channel is the ``error`` event itself, which
-    also flips ``stream_mode``. This helper is kept for symmetry and
-    so future per-tool error events have a single place to land.
+    reducer 当前不会接收到单独的 tool_error 事件，
+    错误通道即 error 事件本身（同时会切换 stream_mode）。
+    保留此辅助函数是为了逻辑对称性，并为未来工具级错误事件预留统一处理入口。
     """
 
     tool = state.tools.get(call_id)
@@ -180,10 +173,10 @@ def _require_attribution(
     state: CliStreamUiState,
     event: "AgentEvent",
 ) -> tuple[str, int] | None:
-    """Return ``(assistant_call_id, model_turn_index)`` or None on failure.
+    """返回 (assistant_call_id, model_turn_index)，失败时返回 None。
 
-    Reducer 用它强制要求:归属于某次模型调用的事件必须携带稳定 id。
-    失败时不抛异常,而是切到 error 模式,把诊断写入 ``error_text``,
+    Reducer 用它强制要求：归属于某次模型调用的事件必须携带稳定 id。
+    失败时不抛异常，而是切到 error 模式，把诊断写入 error_text，
     让 coordinator / 端到端测试能够察觉实现错误。
     """
 
@@ -205,16 +198,16 @@ def _set_current_attribution(
     call_id: str,
     turn_index: int,
 ) -> None:
-    """Update the reducer's notion of the current assistant message.
+    """更新 reducer 对当前 assistant 消息的记录。
 
-    当 ``assistant_call_id`` 改变时(下一轮模型调用)同步重置声明
-    顺序游标和下一个可释放 index,这样不同 assistant message 下
+    当 assistant_call_id 改变时（下一轮模型调用）同步重置声明
+    顺序游标和下一个可释放 index，这样不同 assistant message 下
     的工具不会跨边界串味。
 
-    注意:``streaming_text`` 不会被本函数清空 — reducer 显式
-    在 ``assistant_message_completed`` 时清空它,这样可以保证同
-    一 call_id 内的多次 ``assistant_delta`` 不会互相冲掉。
-    ``assistant_committed`` 在 call_id 切换时重置,以允许新的
+    注意：streaming_text 不会被本函数清空，reducer 显式
+    在 assistant_message_completed 时清空它，这样可以保证同
+    一 call_id 内的多次 assistant_delta 不会互相冲掉。
+    assistant_committed 在 call_id 切换时重置，以允许新的
     assistant message 提交 checkpoint。
     """
 
@@ -236,16 +229,16 @@ def _set_current_attribution(
 
 
 def _next_declared_index(state: CliStreamUiState, call_id: str) -> int:
-    """Mint a strict, monotonic declared index for a tool call.
+    """为工具调用分配严格单调递增的声明索引。
 
-    同一 ``assistant_call_id`` 下,每次 ``tool_call_ready`` 都让
-    ``tool_call_declared_index[call_id]`` 自增 1;不同 call 之间
-    互不干扰 — 后到达的 tool_call_ready 永远得到更大的 index。
+    同一 assistant_call_id 下，每次 tool_call_ready 都让
+    tool_call_declared_index[call_id] 自增 1；不同 call 之间
+    互不干扰，后到达的 tool_call_ready 永远得到更大的 index。
 
-    我们以 ``state.tools`` 字典的插入顺序作为声明顺序的事实来源
-    (Python 3.7+ 保证 dict 有序),所以 call_id 的 declared_index
-    等于它在 tools 字典里出现的位置(0-based)。这避免维护
-    "next index" 计数器,确保声明顺序和实际展示顺序一致。
+    我们以 state.tools 字典的插入顺序作为声明顺序的事实来源
+    （Python 3.7+ 保证 dict 有序），所以 call_id 的 declared_index
+    等于它在 tools 字典里出现的位置（0-based）。这避免维护
+    next index 计数器，确保声明顺序和实际展示顺序一致。
     """
 
     current = state.tool_call_declared_index.get(call_id)
@@ -269,10 +262,10 @@ def release_ready_tool_result_commits(
     state: CliStreamUiState,
     assistant_call_id: str,
 ) -> list[StaticCommit]:
-    """释放同一 ``assistant_call_id`` 下从最小未提交 index 开始连续完成的结果。
+    """释放同一 assistant_call_id 下从最小未提交 index 开始连续完成的结果。
 
     防止“后声明但先完成”的工具越过前面的工具。返回本次新释放的
-    :class:`StaticCommit` 列表(已 append 到 ``pending_static_commits``)。
+    StaticCommit 列表（已追加到 pending_static_commits）。
     """
 
     bucket = state.completed_tool_results_by_assistant.setdefault(
@@ -308,10 +301,10 @@ def queue_assistant_checkpoint(
     assistant_call_id: str,
     model_turn_index: int,
 ) -> StaticCommit | None:
-    """Build an ``assistant_markdown`` checkpoint and append it to the queue.
+    """构建 assistant_markdown 检查点并追加至队列。
 
-    Empty text 不会产生 commit。reducer 在 ``assistant_message_completed``
-    时调用此 helper,确保 ``streaming_text`` 提交后立即清空。
+    空白文本不会产生 commit。reducer 在 assistant_message_completed
+    时调用此辅助函数，确保 streaming_text 提交后立即清空。
     """
 
     if not text:
@@ -328,12 +321,11 @@ def queue_assistant_checkpoint(
 
 
 def reduce_stream_event(state: CliStreamUiState, event: "AgentEvent") -> None:
-    """Fold one :class:`AgentEvent` into ``state`` in place.
+    """就地将一个 AgentEvent 折叠进 state 中。
 
-    The function is intentionally pure — it never writes to stdout,
-    never constructs a Rich ``Console``, and never raises. Unknown
-    event types are ignored so a forward-compatible provider that
-    emits a new ``AgentEventType`` doesn't crash the dynamic region.
+    该函数是纯函数：绝不向 stdout 输出，绝不构造 Rich Console，
+    绝不抛出异常。未知事件类型将被忽略，以便未来版本新增
+    AgentEventType 时不会导致动态区域崩溃。
     """
 
     event_type = getattr(event, "type", None)
@@ -546,17 +538,15 @@ def reduce_stream_event(state: CliStreamUiState, event: "AgentEvent") -> None:
         return
 
     if event_type == "interaction_started":
-        # Beginning of a turn. Nothing to fold — the streaming
-        # session resets the state object before the first event.
+        # 轮次起始。无需折叠，流式会话在首个事件到达前已重置状态对象。
         return
 
     if event_type == "transition":
-        # Model-only transition marker; UI ignores it.
+        # 仅限模型的转换标记，UI 予以忽略。
         return
 
-    # Unknown event types are intentionally ignored. Forward
-    # compatibility: a future ``AgentEventType`` literal won't crash
-    # the dynamic region.
+    # 未知事件类型有意忽略，保证前向兼容性：
+    # 未来新增的 AgentEventType 字面量不会使动态区域崩溃。
 
 
 __all__ = [

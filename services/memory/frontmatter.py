@@ -1,4 +1,4 @@
-"""Small Markdown frontmatter helpers for long-term memory files."""
+"""长期记忆文件的轻量 Markdown frontmatter 辅助函数。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Parse a tiny YAML-like frontmatter block at the beginning of a file."""
+    """解析文件开头的微型类似 YAML 的 frontmatter 块。"""
 
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized.split("\n")
@@ -22,7 +22,7 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def parse_frontmatter_lines(lines: list[str]) -> dict[str, Any]:
-    """Parse key/value lines plus simple indented YAML list items."""
+    """解析键值对行以及简单的缩进 YAML 列表项。"""
 
     values: dict[str, Any] = {}
     current_list_key: str | None = None
@@ -71,7 +71,7 @@ def clean_string(value: Any) -> str:
 
 
 def strip_html_comments(text: str) -> str:
-    """Remove all HTML comment spans from model-visible instruction text."""
+    """从模型可见的指令文本中移除所有 HTML 注释片段。"""
 
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 

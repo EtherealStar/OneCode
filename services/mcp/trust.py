@@ -1,4 +1,4 @@
-"""Project-local trust policy for MCP servers."""
+"""MCP 服务器的项目本地信任策略。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ BASE_STDIO_ENV_ALLOWLIST: tuple[str, ...] = (
 
 
 def fingerprint_mcp_server(config: McpServerConfig, workspace: Path) -> str:
-    """Return a stable fingerprint for execution-relevant MCP config fields."""
+    """返回与执行相关的 MCP 配置字段的稳定指纹。"""
 
     payload = {
         "name": config.name,
@@ -46,7 +46,7 @@ def fingerprint_mcp_server(config: McpServerConfig, workspace: Path) -> str:
 
 
 def build_stdio_child_env(parent_env: dict[str, str], config: McpServerConfig) -> dict[str, str]:
-    """Build the sanitized environment passed to a stdio MCP child process."""
+    """构建传递给 stdio MCP 子进程的已净化环境变量。"""
 
     allowed = {key.upper() for key in BASE_STDIO_ENV_ALLOWLIST}
     env = {
@@ -90,7 +90,7 @@ class McpTrustPolicy:
 
 
 class McpTrustStore:
-    """Stores local MCP trust decisions in .onecode/settings.json."""
+    """在 .onecode/settings.json 中存储本地 MCP 信任决策。"""
 
     def __init__(self, settings_path: Path) -> None:
         self.settings_path = settings_path

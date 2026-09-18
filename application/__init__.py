@@ -1,1 +1,1 @@
-"""Application layer: session orchestration and user-visible history."""
+"""应用层：会话编排与用户可见历史记录。"""

@@ -1,10 +1,8 @@
-"""Structured helpers for the plan-mode lifecycle.
+"""计划模式生命周期的结构化辅助函数。
 
-These helpers are deliberately side-effect free w.r.t. the model: they mutate
-``RuntimeState.plan`` and ``permission_mode``, optionally touch the filesystem
-via ``PlanStore``, and return enough metadata for the caller (a tool handler,
-the CLI, or the attachment projector) to react. The runtime loop never imports
-these directly; tools and the CLI do.
+这些辅助函数对模型完全无副作用：它们仅修改 RuntimeState.plan 和 permission_mode，
+按需通过 PlanStore 操作文件系统，并返回足够的元数据供调用方（工具处理器、CLI
+或附件投影器）响应。运行时循环从不直接导入这些函数，而是由工具和 CLI 负责调用。
 """
 
 from __future__ import annotations
@@ -19,10 +17,9 @@ from services.plans.store import PlanFile, PlanStore
 
 @dataclass(frozen=True)
 class PlanModeTransition:
-    """Result of a plan-mode lifecycle call.
+    """计划模式生命周期调用的结果。
 
-    The caller uses ``plan_file`` to render a UI hint and ``attachments`` to
-    inject the appropriate provider-visible message into the next turn.
+    调用方使用 plan_file 渲染 UI 提示，并使用 attachments 将相应的模型可见消息注入到下一轮次中。
     """
 
     plan_file: PlanFile
@@ -36,10 +33,9 @@ def enter_plan_mode(
     *,
     requested_by: str = "tool",
 ) -> PlanModeTransition:
-    """Transition the runtime into plan mode and prepare the plan file.
+    """将运行时转换为计划模式并准备计划文件。
 
-    Idempotent: calling this on a runtime that is already in plan mode returns
-    the existing plan file and refreshes the attachment flag.
+    具有幂等性：在已处于计划模式的运行时上调用此函数将返回已有计划文件并刷新附件标志。
     """
 
     if state.permission_mode != PermissionMode.PLAN:
@@ -62,7 +58,7 @@ def exit_plan_mode(
     *,
     approved: bool,
 ) -> PlanModeTransition:
-    """Leave plan mode and request the post-exit attachment on the next turn."""
+    """退出计划模式，并请求在下一轮次中注入退出后附件。"""
 
     if state.permission_mode != PermissionMode.PLAN:
         raise ValueError("Cannot exit plan mode: runtime is not in plan mode.")
@@ -74,8 +70,7 @@ def exit_plan_mode(
         state.plan.needs_plan_mode_attachment = False
         state.plan.needs_plan_mode_exit_attachment = True
     else:
-        # User rejected: stay in plan mode, refresh the re-entry attachment so
-        # the model can read existing plan content and adjust.
+        # 用户拒绝：保持在计划模式，刷新重入附件以便模型读取已有计划内容并进行调整。
         state.plan.needs_plan_mode_attachment = True
         state.plan.needs_plan_mode_exit_attachment = False
         state.plan.has_exited_plan_mode = False
@@ -86,14 +81,14 @@ def exit_plan_mode(
 
 
 def request_plan_mode_attachment(state: RuntimeState) -> None:
-    """Mark that the next model turn should receive a plan-mode attachment."""
+    """标记下一模型轮次应当接收计划模式附件。"""
 
     if state.permission_mode == PermissionMode.PLAN:
         state.plan.needs_plan_mode_attachment = True
 
 
 def consume_plan_mode_attachment(state: RuntimeState) -> bool:
-    """Atomically read-and-clear the plan-mode attachment flag."""
+    """以原子操作读取并清除计划模式附件标志。"""
 
     flag = state.plan.needs_plan_mode_attachment
     state.plan.needs_plan_mode_attachment = False
@@ -101,7 +96,7 @@ def consume_plan_mode_attachment(state: RuntimeState) -> bool:
 
 
 def consume_plan_mode_exit_attachment(state: RuntimeState) -> bool:
-    """Atomically read-and-clear the post-exit plan-mode attachment flag."""
+    """以原子操作读取并清除退出计划模式后的附件标志。"""
 
     flag = state.plan.needs_plan_mode_exit_attachment
     state.plan.needs_plan_mode_exit_attachment = False
@@ -109,7 +104,7 @@ def consume_plan_mode_exit_attachment(state: RuntimeState) -> bool:
 
 
 def reset_plan_state(state: RuntimeState) -> None:
-    """Public helper used by ``/clear`` so we never poke at metadata directly."""
+    """供 /clear 命令使用的公共辅助函数，避免直接篡改元数据。"""
 
     state.permission_mode = PermissionMode.DEFAULT
     state.plan.reset()

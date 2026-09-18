@@ -1,25 +1,21 @@
-"""CLI 动态区渲染 view（execplan §M2）。
+"""CLI 动态区渲染 view。
 
-本模块把 :class:`CliStreamUiState` 翻译成 prompt_toolkit 可显示的
-``ANSI`` / ``FormattedText``，不产生 I/O，不修改 state，不调用静态打
-印函数。
+本模块把 CliStreamUiState 翻译成 prompt_toolkit 可显示的
+ANSI / FormattedText，不产生 I/O，不修改 state，不调用静态打印函数。
 
 布局策略（自上而下）：
 
-1. **Assistant preview 段**：用
-   :func:`ui.cli.terminal.markdown_rendering.render_cached_markdown`
-   渲染 ``streaming_text`` 尾部若干行，与 tool panel 用一个空行隔
-   开。空行是视觉边界 — 旧 ``turn_render_state`` 把两段拼在同一个
-   ``out_lines`` 里再 ``\\n.join``，结果在窄终端上可能让工具行紧
-   贴 assistant 文本尾部。
-2. **Tool panel 段**：最多 ``VISIBLE_ACTIVE_TOOL_LIMIT`` 条工具行，
-   超过的折叠为 ``…  N more tools running`` 摘要行。
-3. **Status line 段**（独立函数 :func:`render_status_fragments`）：
-   始终由 ``stream_mode`` + ``active_tool_count`` 推导，绝不会在
-   仍有运行工具时显示裸 ``thinking…`` 提示。
+1. Assistant preview 段：用
+   ui.cli.terminal.markdown_rendering.render_cached_markdown
+   渲染 streaming_text 尾部若干行，与 tool panel 用一个空行隔开。
+2. Tool panel 段：最多 VISIBLE_ACTIVE_TOOL_LIMIT 条工具行，
+   超过的折叠为省略摘要行。
+3. Status line 段（独立函数 render_status_fragments）：
+   始终由 stream_mode + active_tool_count 推导，绝不会在
+   仍有运行工具时显示裸 thinking 提示。
 
-view 故意保持简单：它只读 state。Reducer 写、Coordinator 读 → 提交，
-view 读 → 渲染，循环单向。``StreamingSession`` 把三个组件串起来。
+view 故意保持简单：它只读 state。Reducer 写、Coordinator 读与提交，
+view 读与渲染，循环单向。StreamingSession 把三个组件串联起来。
 """
 
 from __future__ import annotations
@@ -55,16 +51,13 @@ QUEUED_PREVIEW_TEXT_LIMIT = 60
 
 
 def _format_active_tool_line(tool: "StreamingToolUseState") -> str:
-    """Format a single active-tool row for the dynamic region.
+    """为动态区域格式化单条活跃工具行。
 
-    Three visible states match the reference implementation:
+    三种可见状态与参考实现对应：
 
-    - ``queued`` — clean ``tool: <name> (queued)`` line, no input
-      preview. The full preview lives in the static banner printed
-      when the tool actually starts.
-    - ``running`` with progress — progress text replaces the input
-      preview so the user sees the latest status.
-    - ``running`` without progress — fall back to the input preview.
+    - queued：整洁的 tool: <name> (queued) 行，无输入预览。完整预览位于工具实际启动时打印的静态横幅中。
+    - running 且带进度：进度文本替换输入预览，使用户看到最新状态。
+    - running 且无进度：回退显示输入预览。
     """
 
     label = tool.tool_name or "tool"
@@ -78,12 +71,9 @@ def _format_active_tool_line(tool: "StreamingToolUseState") -> str:
 
 
 def _truncate_for_preview(text: str, *, limit: int = QUEUED_PREVIEW_TEXT_LIMIT) -> str:
-    """Bound the rendered text length so a long queued command does
-    not steal the dynamic region from assistant/tool output.
+    """限制渲染文本长度，避免冗长排队命令占据动态区域中属于 assistant / 工具输出的空间。
 
-    Whitespace is collapsed to single spaces so embedded newlines
-    cannot break the row layout. Trailing ellipsis is appended when
-    truncation actually happens.
+    空白字符折叠为单个空格，防止内嵌换行符破坏行布局。实际发生截断时追加末尾省略号。
     """
 
     collapsed = " ".join(text.split())
@@ -97,24 +87,20 @@ def render_queued_inputs(
     *,
     visible_limit: int = QUEUED_PREVIEW_LIMIT,
 ) -> list[str]:
-    """Format a queued preview block for the dynamic region.
+    """为动态区域格式化排队预览块。
 
-    Returns a list of plain lines. The first line is a leading
-    ``queued:`` header; subsequent lines are one per visible
-    queued input, and a final ``…  +N more queued`` summary line
-    is appended when there are more entries than ``visible_limit``.
+    返回纯文本行列表。首行为前导 queued: 表头；
+    后续行为每个可见排队输入，当条目数超出 visible_limit 时，
+    在末尾追加一条省略摘要行。
 
-    An empty / ``None`` input returns an empty list so callers can
-    simply ``extend`` the body without conditional branching.
+    输入为空或 None 时返回空列表，以便调用方无需条件分支即可直接 extend 正文。
 
-    The function never raises. It is also pure — it only reads
-    the iterable's contents and does not mutate any state.
+    本函数绝不抛出异常，也是纯函数：仅读取可迭代对象内容，不修改任何状态。
     """
 
     if queue_items is None:
         return []
-    # Materialise the snapshot so the iterable can be re-iterated
-    # safely (e.g. tests that pass a generator).
+    # 将快照实例化，以便可迭代对象可被安全重复迭代（例如测试传入的生成器）。
     items = tuple(item for item in queue_items if item.visible)
     if not items:
         return []
@@ -135,38 +121,26 @@ def render_stream_body_ansi(
     active_tool_limit: int = VISIBLE_ACTIVE_TOOL_LIMIT,
     queued_inputs: Iterable[QueuedInput] | None = None,
 ) -> ANSI:
-    """Render the in-flight turn state to bounded ANSI for the dynamic region.
+    """将正在进行的轮次状态渲染为用于动态区域的受限 ANSI。
 
-    Layout (top to bottom):
+    布局（自上而下）：
 
-    1. The last :data:`ASSISTANT_TAIL_MAX_LINES` lines of the
-       accumulated assistant text (markdown-rendered when possible).
-       The assistant segment is separated from the tool panel by a
-       single blank line so the user can tell where the body ends
-       and the tool list begins — even on narrow terminals.
-    2. Up to ``active_tool_limit`` active tools, each on its own line.
-    3. A ``…  N more tools running`` line if there are more.
-    4. Queued preview (when ``queued_inputs`` is non-empty): a
-       ``queued:`` header, one line per visible entry, and an
-       overflow summary if more entries exist than the preview
-       limit. The queued preview is purely a dynamic-region
-       signal — :class:`TerminalOutputCoordinator` is the only
-       component allowed to write to the static scrollback, and
-       this function never invokes it.
-    5. Errors (``state.error_text``) are rendered as a single
-       red-tinted line at the bottom of the body so the user never
-       loses the last error message when the dynamic region is
-       erased.
+    1. 累积 assistant 文本的最后 ASSISTANT_TAIL_MAX_LINES 行（尽可能通过 Markdown 渲染）。
+       assistant 片段与工具面板用单个空行隔开，以便用户清晰辨识正文结束和工具列表开始的位置（即便在窄终端上也是如此）。
+    2. 最多 active_tool_limit 个活跃工具，每个独占一行。
+    3. 若有更多工具，追加一条折叠摘要行。
+    4. 排队预览（当 queued_inputs 非空时）：包含 queued: 表头、每个可见条目一行，
+       以及超出预览上限时的溢出摘要。排队预览纯粹是动态区域信号，
+       仅允许 TerminalOutputCoordinator 写入静态回滚历史，本函数绝不调用它。
+    5. 错误信息（state.error_text）在正文底部渲染为单行红调文本，
+       确保动态区域被擦除时用户绝不会丢失最后一条错误消息。
 
-    The function never raises. Markdown render failures fall back
-    to plain text through the existing
-    :func:`render_cached_markdown` helper.
+    本函数绝不抛出异常。Markdown 渲染失败时通过现有的 render_cached_markdown 辅助函数回退为纯文本。
     """
 
     out_lines: list[str] = []
 
-    # 1) Assistant tail — render the full text through the cache so
-    # unchanged prefix lines are not re-lexed.
+    # 1) Assistant 尾部：通过缓存全量渲染文本，避免重复解析未改变的前缀行。
     if state.streaming_text:
         all_lines = render_cached_markdown(state.streaming_text, width=max(width, 20))
         if len(all_lines) > ASSISTANT_TAIL_MAX_LINES:
@@ -175,15 +149,11 @@ def render_stream_body_ansi(
         else:
             out_lines.extend(all_lines)
 
-    # 2) Active tools. Insert a blank separator so the tool panel
-    # never visually fuses with the assistant text tail — that was
-    # the layout bug the ExecPlan targets.
+    # 2) 活跃工具。插入空行分隔符，使工具面板在视觉上绝不与 assistant 文本尾部粘连。
     visible_tools = state.visible_active_tools(limit=active_tool_limit)
     if visible_tools:
         if out_lines:
-            # The assistant segment is present; insert a blank line
-            # to create a stable visual boundary. We only need one
-            # blank line; the next section starts cleanly below.
+            # assistant 片段存在，插入空行建立稳定的视觉边界。只需一个空行，后续段落干净地从下方开始。
             out_lines.append("")
         for tool in visible_tools:
             out_lines.append(_format_active_tool_line(tool))
@@ -191,19 +161,14 @@ def render_stream_body_ansi(
         if overflow > 0:
             out_lines.append(f"  …  {overflow} more tools running")
 
-    # 3) Queued preview (running-turn input box). Inserted only
-    # when there is at least one queued input, so an idle turn
-    # shows no extra noise. The header ``queued:`` plus the
-    # bullet lines come from :func:`render_queued_inputs`.
+    # 3) 排队预览（运行中输入框）。仅在存在至少一个排队输入时插入，使空闲轮次不显示多余杂音。表头加上条目行来自 render_queued_inputs。
     queued_lines = render_queued_inputs(queued_inputs)
     if queued_lines:
         if out_lines:
             out_lines.append("")
         out_lines.extend(queued_lines)
 
-    # 4) Error tail (if any). The error line is its own short
-    # paragraph so it stays visible when the rest of the body is
-    # cleared at turn end.
+    # 4) 错误尾部（如有）。错误行独立成简短段落，在轮次结束正文其余部分被清空时依然可见。
     if state.error_text:
         if out_lines:
             out_lines.append("")
@@ -215,14 +180,11 @@ def render_stream_body_ansi(
 
 
 def render_status_fragments(state: "CliStreamUiState") -> FormattedText:
-    """Render the bottom status line for the dynamic region.
+    """为动态区域渲染底部状态行。
 
-    The status text is derived from ``state.stream_mode`` and the
-    active tool bucket. Crucially, the legacy "bare thinking… when
-    tools are running" bug is gone — if any tool is queued or
-    running, the status line shows ``tool: <name>`` (or
-    ``tools: <count>`` when more than one is visible) instead of
-    the misleading idle indicator.
+    状态文本由 state.stream_mode 与活跃工具池推导。
+    关键在于移除了工具运行时的空闲提示问题：若任意工具处于排队或运行中，
+    状态行显示工具运行状态，而不是误导性的空闲指示符。
     """
 
     active_count = state.active_tool_count()
@@ -257,10 +219,7 @@ def render_status_fragments(state: "CliStreamUiState") -> FormattedText:
         label = "responding…"
         style = "class:stream-status"
     else:
-        # ``REQUESTING`` and any residual modes fall back to the
-        # original idle indicator — the user sees a familiar
-        # "thinking…" prompt while we wait for the model's first
-        # token.
+        # REQUESTING 及其他残留模式回退为原始空闲指示符，在等待模型首个 token 时向用户展示熟悉的 thinking 提示。
         label = "thinking…"
         style = "class:stream-status"
 

@@ -1,9 +1,7 @@
-"""Provider-neutral running facts for the current foreground turn.
+"""当前前台轮次运行事实的中立表示。
 
-The agent loop keeps these facts live while a turn is in flight so an
-interrupt can be finalized from what really happened, not from the last
-UI buffer or the last yielded event. The store consumes a frozen copy to
-rewrite the transcript.
+Agent 循环在轮次执行期间实时维护这些事实，以便中断时能基于真实发生的操作完成定稿，
+而非基于最后的 UI 缓冲区或最后产出的事件。消息存储使用其冻结副本重写 transcript。
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ class ToolCallFact:
 
 @dataclass(frozen=True)
 class InterruptedRunFacts:
-    """Frozen truth about one interrupted foreground turn."""
+    """关于单个被中断前台轮次的冻结事实。"""
 
     session_id: str
     user_prompt_uuid: str | None = None
@@ -52,7 +50,7 @@ class InterruptedRunFacts:
 
 @dataclass
 class RunFactsAccumulator:
-    """Mutable accumulator the loop mutates as events arrive."""
+    """随着事件到达供循环修改的可变累加器。"""
 
     session_id: str
     user_prompt_uuid: str | None = None

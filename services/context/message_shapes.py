@@ -1,8 +1,7 @@
-"""Shared, provider-neutral helpers for tool-call message shapes.
+"""工具调用消息形态的共享中立辅助函数。
 
-OneCode stores assistant tool declarations in two internal forms: the
-top-level ``tool_calls`` list and ``content`` blocks with ``type ==
-"tool_use"``. Cleanup and recovery must treat both the same way.
+OneCode 在内部以两种形式存储 assistant 工具声明：顶层 tool_calls 列表，
+以及 type == "tool_use" 的 content 块。清理和恢复逻辑必须以相同方式处理这两种形式。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 
 
 def assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    """Return ``(call_id, tool_name)`` for both declaration representations."""
+    """针对两种声明表示形式，均返回 (call_id, tool_name)。"""
 
     return tuple(
         (call_id, name)
@@ -25,11 +24,10 @@ def assistant_tool_call_ids(message: dict[str, Any]) -> tuple[tuple[str, str], .
 def assistant_tool_declarations(
     message: dict[str, Any],
 ) -> tuple[tuple[str, str, dict[str, Any]], ...]:
-    """Return ``(call_id, tool_name, input)`` for both declaration forms.
+    """针对两种声明形式，均返回 (call_id, tool_name, input)。
 
-    Tool input is parsed from the provider-neutral stored shapes so history
-    browsing can show the same argument summary as the live stream without
-    reading files or re-parsing user text.
+    工具输入从存储的中立形态中解析，以便历史浏览能够展示与实时流相同的参数摘要，
+    而无需读取文件或重新解析用户文本。
     """
 
     declarations: list[tuple[str, str, dict[str, Any]]] = []
@@ -117,7 +115,7 @@ def prune_assistant_declarations(
     message: dict[str, Any],
     keep_ids: frozenset[str] | set[str],
 ) -> dict[str, Any]:
-    """Drop declarations whose call IDs are not in ``keep_ids``."""
+    """丢弃调用 ID 不在 keep_ids 中的声明。"""
 
     pruned = deepcopy(message)
     raw_calls = pruned.get("tool_calls")

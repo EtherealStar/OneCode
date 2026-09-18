@@ -1,4 +1,4 @@
-"""Runtime permission service."""
+"""运行时权限服务。"""
 
 from services.permissions.policy import PermissionPolicy
 from services.permissions.prompter import PermissionPrompter

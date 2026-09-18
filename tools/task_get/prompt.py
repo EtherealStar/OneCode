@@ -1,3 +1,4 @@
+"""task_get 工具的提示词文本。"""
 PROMPT = """Purpose:
 Inspect the full details for one durable task.
 

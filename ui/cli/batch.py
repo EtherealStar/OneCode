@@ -1,9 +1,8 @@
-"""Non-interactive batch adapter for the SessionController.
+"""SessionController 的非交互式批处理适配器。
 
-stdin line in, streamed plain text out. The batch path shares the same
-session contract as the TUI: it submits intent and consumes ordered updates.
-It never imports Textual, never starts the interactive REPL, and never enters
-an alternate screen.
+从 stdin 读取单行输入，向 stdout 流式输出纯文本。批处理路径与 TUI
+共享相同的会话契约：提交意图并消费有序更新。
+它绝不导入 Textual，绝不启动交互式 REPL，也绝不进入备用屏幕。
 """
 
 from __future__ import annotations
@@ -33,11 +32,10 @@ from ui.cli.types import CliRuntime
 
 
 class BatchPermissionPrompter:
-    """Line-based fallback for non-TTY permission requests.
+    """非 TTY 权限请求的行输入回退实现。
 
-    The controller normally routes permission requests through the batch
-    watcher, which answers them with this same protocol. This class remains
-    for runtimes assembled without an interaction coordinator.
+    控制器通常会通过批处理观察器路由权限请求，并使用相同协议进行回答。
+    本类保留用于未装配交互协调器的运行时。
     """
 
     async def request_permission(self, request):
@@ -71,7 +69,7 @@ class BatchPermissionPrompter:
 
 
 class BatchUserQuestionPrompter:
-    """Auto-accept the first option for each question (CI/batch fallback)."""
+    """自动接受每个问题的第一个选项（CI/批处理回退）。"""
 
     async def ask_questions(self, questions) -> QuestionResponse:
         answers: list[AnswerRecord] = []
@@ -147,10 +145,9 @@ async def _consume_updates(
     stream: Any,
     runtime: CliRuntime,
 ) -> bool:
-    """Print updates until the turn reaches a terminal state.
+    """持续打印更新，直到轮次达到终止状态。
 
-    Returns ``True`` when the batch turn failed and the process should exit
-    non-zero.
+    当批处理轮次失败且进程应当以非零状态码退出时返回 True。
     """
 
     saw_delta = False
@@ -208,7 +205,7 @@ async def _answer_interaction(controller: SessionController, request: Any) -> No
         choice = await _read_trust_choice()
         await controller.respond(request.request_id, kind, choice)
         return
-    # Unknown/unhandled interaction: cancel it so the turn is not blocked.
+    # 未知或未处理的交互：予以取消以避免轮次被阻塞。
     await controller.respond(request.request_id, kind, None)
 
 

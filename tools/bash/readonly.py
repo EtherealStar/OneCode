@@ -1,4 +1,4 @@
-"""Read-only classification for parsed Bash commands."""
+"""已解析 Bash 命令的只读性分类。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Prompt-facing skill catalog provider."""
+"""面向提示词的技能目录提供者。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class SkillCatalogProvider(Protocol):
 
 class LoaderSkillCatalogProvider:
     def find_skill(self, name: str, cwd: Path) -> SkillCommand | None:
-        """Find one loaded skill by name for the skill tool."""
+        """根据名称查找单个已加载技能，供 skill 工具使用。"""
 
         return loader_find_command(name, cwd)
 
@@ -34,7 +34,7 @@ class LoaderSkillCatalogProvider:
         state: RuntimeState,
         cwd: Path,
     ) -> tuple[SkillCommand, ...]:
-        """Return skills the model may invoke from the current prompt catalog."""
+        """从当前提示词目录中返回模型可调用的技能。"""
 
         denied = _names(state.metadata.get("denied_skills"))
         disabled = _names(state.metadata.get("disabled_skills"))

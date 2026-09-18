@@ -1,4 +1,4 @@
-"""Small JSON HTTP transport for OpenAI-compatible providers."""
+"""面向 OpenAI 兼容供应商的轻量 JSON HTTP 传输层。"""
 
 from __future__ import annotations
 

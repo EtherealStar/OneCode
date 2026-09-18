@@ -1,4 +1,4 @@
-"""Workspace-local long-term memory services."""
+"""工作区局部的长期记忆服务。"""
 
 from services.memory.auto_store import LongTermMemoryStore
 from services.memory.context_preparer import RelevantMemoryContextPreparer

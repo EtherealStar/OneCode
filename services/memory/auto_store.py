@@ -1,4 +1,4 @@
-"""Workspace-local long-term memory store."""
+"""工作区局部的长期记忆存储。"""
 
 from __future__ import annotations
 

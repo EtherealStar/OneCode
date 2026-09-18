@@ -1,4 +1,4 @@
-"""Context compaction preparer used before model calls."""
+"""在模型调用前使用的上下文压缩准备器。"""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ class ContextCompactionService:
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
     ) -> CompactionResult:
-        """Run cheap model-visible projection without rewriting MessageStore."""
+        """运行对模型可见的轻量投影，而不重写 MessageStore。"""
 
         token_before = estimate_messages_tokens(messages)
         projected = self._apply_tool_result_budget(messages)

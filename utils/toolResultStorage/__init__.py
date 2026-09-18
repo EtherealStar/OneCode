@@ -1,4 +1,4 @@
-"""Shared storage for durable tool result artifacts."""
+"""持久化工具结果产物的共享存储。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class StoredToolResultRef:
 
 
 class ToolResultStorage:
-    """Persist complete tool results under one session artifact directory."""
+    """在会话产物目录下持久化保存完整的工具结果。"""
 
     def __init__(self, session_dir: Path | str) -> None:
         self._session_dir = Path(session_dir)
@@ -38,7 +38,7 @@ class ToolResultStorage:
         content: str,
         tool_name: str = "",
     ) -> StoredToolResultRef:
-        """Write a complete tool result and return its stable durable reference."""
+        """写入完整的工具结果并返回其稳定的持久化引用。"""
 
         self._results_dir.mkdir(parents=True, exist_ok=True)
         normalized_tool_call_id = tool_call_id if isinstance(tool_call_id, str) else ""
@@ -65,7 +65,7 @@ class ToolResultStorage:
         )
 
     def read_result(self, relative_path: str) -> str:
-        """Read a stored result by a session-relative path."""
+        """通过会话相对路径读取已存储的结果。"""
 
         path = self._session_dir / relative_path
         return path.read_text(encoding="utf-8")
@@ -76,7 +76,7 @@ class ToolResultStorage:
         *,
         preview: str,
     ) -> str:
-        """Create the compact text shown to the model for a stored result."""
+        """为已存储的结果创建向模型展示的紧凑文本。"""
 
         return (
             "[Tool result stored]\n"
@@ -97,7 +97,7 @@ class ToolResultStorage:
         *,
         preview: str,
     ) -> str:
-        """Create the text persisted in JSONL when the full result is externalized."""
+        """当完整结果被外置存储时，创建持久化到 JSONL 中的文本。"""
 
         return f"[tool result externalized: {ref.relative_path}]\n{preview}"
 
@@ -107,7 +107,7 @@ class ToolResultStorage:
         *,
         preview_chars: int,
     ) -> dict[str, object]:
-        """Return metadata used by transcript restore for an externalized result."""
+        """返回记录恢复外置结果所需的元数据。"""
 
         return {
             "tool_result_externalized": True,
@@ -125,7 +125,7 @@ class ToolResultStorage:
         *,
         max_result_size_chars: int | float,
     ) -> dict[str, object]:
-        """Return metadata used by model-visible tool result references."""
+        """返回模型可见工具结果引用所使用的元数据。"""
 
         return {
             "result_truncated": True,

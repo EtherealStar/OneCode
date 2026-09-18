@@ -1,4 +1,4 @@
-"""Context compaction helpers and service types."""
+"""上下文压缩辅助函数与服务类型。"""
 
 from services.compaction.service import ContextCompactionService
 from services.compaction.session_memory import (

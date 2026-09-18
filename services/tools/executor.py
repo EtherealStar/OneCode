@@ -1,4 +1,4 @@
-"""Tool executor protocol and registry-backed implementation."""
+"""工具执行器协议与基于注册表的实现。"""
 
 from __future__ import annotations
 
@@ -199,7 +199,7 @@ class RegistryToolExecutor:
         *,
         parent_span_id: str | None = None,
     ) -> _ReadyToolCall | ToolExecutionResult:
-        """Run all handler-before checks serially for one tool call."""
+        """对单个工具调用串行运行所有处理器前检查。"""
         with self._trace_recorder.span(
             "tool_preflight",
             {
@@ -359,7 +359,7 @@ class RegistryToolExecutor:
         return await asyncio.to_thread(self._run_handler, ready)
 
     def _run_handler(self, ready: _ReadyToolCall) -> _HandlerOutcome:
-        """Execute only the concrete handler so it can safely run in a worker."""
+        """仅执行具体处理器，以便其可以在工作线程中安全运行。"""
         with self._trace_recorder.span(
             "tool_execution",
             {
@@ -387,7 +387,7 @@ class RegistryToolExecutor:
         outcome: _HandlerOutcome,
         state: RuntimeState,
     ) -> ToolExecutionResult:
-        """Normalize a handler outcome and apply hooks, budgets, and state effects."""
+        """归一化处理器执行结果，并应用钩子、结果预算与状态副作用。"""
         ready = outcome.ready
         if outcome.exception is not None:
             result = await self._tool_error(
@@ -455,7 +455,7 @@ class RegistryToolExecutor:
         tool_call: ToolCall,
         state: RuntimeState,
     ) -> bool:
-        """Conservatively classify raw input for initial batch planning."""
+        """保守地对原始输入进行分类，以进行初始批次规划。"""
         descriptor = self._registry.get(tool_call.name)
         if descriptor is None:
             return False
@@ -480,14 +480,12 @@ class RegistryToolExecutor:
         *,
         parent_span_id: str | None = None,
     ) -> AsyncIterator[ToolExecutionUpdate]:
-        """Preflight a safe-looking run, then execute handlers in conflict
-        batches.
-
-        The original single-boolean ``concurrency_safe`` flag is no longer the
-        sole authority: after preflight we additionally partition ready calls
-        by target conflict so two explore agents reading different files can
-        still run in parallel while writes serialize across overlapping
-        targets.
+        """预检看似安全的运行序列，然后按冲突批次执行处理器。
+        
+        原始的单一布尔标志 concurrency_safe 不再是唯一的裁决依据：
+        预检之后，我们额外按目标冲突对就绪调用进行分区，
+        使得读取不同文件的两个探索 agent 仍能并行运行，
+        而写入操作则在重叠目标之间保持串行化。
         """
         prepared: list[_ReadyToolCall | ToolExecutionResult] = [
             await self._preflight_one(tool_call, state, parent_span_id=parent_span_id)
@@ -521,8 +519,8 @@ class RegistryToolExecutor:
         ready_calls = [
             item for item in prepared if isinstance(item, _ReadyToolCall)
         ]
-        # ``build_conflict_batches`` returns indices into ``ready_calls``;
-        # we run each batch concurrently and serialize between batches.
+        # build_conflict_batches 返回 ready_calls 的索引列表；
+        # 我们并发运行每个批次，批次之间则串行执行。
         batches = build_conflict_batches(
             [
                 (ready_calls[index].classification, index)
@@ -537,10 +535,9 @@ class RegistryToolExecutor:
                 )
                 continue
             batch_ready = [ready_calls[index] for index in batch]
-            # Detect edges within the batch as a safety net: ``build_conflict_batches``
-            # already partitioned them, but if two calls share a target via
-            # different normalized forms (e.g. one is the child of the other),
-            # we serialize rather than risk a race.
+            # 作为安全兜底检测批次内部的边界：build_conflict_batches
+            # 已经完成了分区，但如果两个调用通过不同的规范化形式共享目标
+            # （例如一个是另一个的子路径），我们选择串行化以避免竞态风险。
             if _batch_has_internal_conflict(batch_ready):
                 for ready in batch_ready:
                     outcomes_by_id[id(ready)] = await self._run_handler_async(ready)
@@ -560,8 +557,8 @@ class RegistryToolExecutor:
                 )
                 continue
             if id(item) not in outcomes_by_id:
-                # Defensive: the ready call fell out of the batch pipeline
-                # (e.g. an empty classification). Run it serially.
+                # 防御性处理：就绪调用脱离了批处理管线
+                # （例如空的分类）。将其串行运行。
                 outcomes_by_id[id(item)] = await self._run_handler_async(item)
                 yield _started_update(item)
             result = await self._finalize_outcome(outcomes_by_id[id(item)], state)
@@ -589,9 +586,8 @@ class RegistryToolExecutor:
         try:
             return list(await asyncio.gather(*tasks))
         except BaseException:
-            # Cancellation (or a handler failure) must not return before the
-            # foreground handlers have observed it, otherwise a writer could
-            # still be mutating state after the caller believes the turn ended.
+            # 取消（或处理器失败）绝不能在前台处理器观察到之前返回，
+            # 否则当调用方认为当前轮次已结束时，写入者可能仍在修改状态。
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -650,8 +646,8 @@ class RegistryToolExecutor:
             return decision_result
         approved_guard_policies = ()
         if decision_result.action == "allow":
-            # If allow came from a session grant after guard returned ask, pass
-            # those guard policies to handlers so their repeat guard checks agree.
+            # 如果 allow 来自防护返回 ask 后的会话授权，
+            # 则将这些防护策略传递给处理器，以便其重复防护检查保持一致。
             approved_guard_policies = guard_policies
         return _PreparedInput(
             classification=classification,
@@ -1002,15 +998,15 @@ class RegistryToolExecutor:
         *,
         tool_input: dict[str, Any],
     ) -> None:
-        """Apply executor-owned session state updates after successful results."""
+        """在执行成功后应用由执行器自有的会话状态更新。"""
         if result.tool_name not in FILE_STATE_TOOL_NAMES:
             return
         path = result.metadata.get("path")
         if not isinstance(path, str) or not path:
             return
 
-        # files_read is consumed by edit_file to enforce "read before edit".
-        # The executor updates it serially so read handlers can remain parallel.
+        # files_read 供 edit_file 消费以强制执行“编辑前先读取”。
+        # 执行器串行更新它，以便读操作处理器可以保持并行。
         files_read = state.metadata.setdefault("files_read", set())
         if not isinstance(files_read, set):
             files_read = set(files_read)
@@ -1034,8 +1030,8 @@ class RegistryToolExecutor:
                     }
                 )
 
-        # The mtime cache lives in the tool service because file tools are the
-        # durable source of observed file content, not attachment collection.
+        # mtime 缓存位于工具服务中，因为文件工具是观察到的文件内容
+        # 的持久事实来源，而非附件收集。
         self._file_state_cache.snapshot_path(
             Path(path),
             offset=_int_or_none(tool_input.get("offset")),
@@ -1080,15 +1076,13 @@ class RegistryToolExecutor:
 def _batch_has_internal_conflict(
     ready_calls: list[_ReadyToolCall],
 ) -> bool:
-    """Return True if any pair of calls in the batch conflicts.
+    """当批次中的任意一对调用冲突时返回 True。
 
-    ``build_conflict_batches`` already partitioned ready calls by target
-    conflict, but we re-check here as a defense-in-depth measure. Two
-    classifications that are both ``concurrency_safe`` but write to the
-    same normalized path must still serialize, and the partitioner relies
-    on the targets it sees at scheduling time — if a tool's classifier
-    augments targets after preflight (e.g. via dynamic resolution), this
-    guard catches the regression.
+    build_conflict_batches 已经按目标冲突对就绪调用进行了分区，
+    但我们在此作为纵深防御措施重新进行检查。即使两个分类都是
+    concurrency_safe，如果它们写入相同的规范化路径，仍然必须串行化；
+    且分区器依赖于调度时看到的目标——如果某个工具的分类器
+    在预检后扩充了目标（例如通过动态解析），此处的防护能够捕获该回退。
     """
 
     for index, left_ready in enumerate(ready_calls):
@@ -1289,7 +1283,7 @@ def _error_result(
 
 
 def _resolve_max_tool_concurrency(value: int | None = None) -> int:
-    """Resolve the handler worker limit from constructor input or environment."""
+    """从构造函数输入或环境变量解析处理器工作并发上限。"""
     if value is not None:
         return value if value >= 1 else DEFAULT_MAX_TOOL_CONCURRENCY
 

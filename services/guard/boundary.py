@@ -1,4 +1,4 @@
-"""Sandbox boundary types and path classification."""
+"""沙箱边界类型与路径分类。"""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def classify_path(
     operation: Operation = "read",
     kind: TargetKind = "file",
 ) -> SandboxDecision:
-    """Classify a path against the sandbox boundary."""
+    """根据沙箱边界对路径进行分类。"""
 
     # write/delete 目标可能尚不存在，因此通过最近的已存在父目录解析，
     # 而不是要求最终路径已经存在。

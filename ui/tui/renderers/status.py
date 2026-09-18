@@ -1,4 +1,4 @@
-"""Status bar rendering: product/workspace/model on the left, run state right."""
+"""状态栏渲染：左侧显示产品/工作区/模型，右侧显示运行状态。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 @dataclass(frozen=True, slots=True)
 class RunState:
-    """Right-side run state. ``kind`` is ``running`` / ``queued`` / ``error``."""
+    """右侧运行状态。``kind`` 取值为 ``running`` / ``queued`` / ``error``。"""
 
     kind: str
     count: int = 0

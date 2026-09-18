@@ -1,29 +1,23 @@
-"""Inline terminal REPL for the TTY CLI path.
+"""面向 TTY CLI 路径的内联终端 REPL。
 
-This package implements the "Static + dynamic" rendering model used by
-Claude Code / Ink:
+本包实现了类似 Claude Code / Ink 的静态加动态分层渲染模型：
 
-- **Static region**: committed conversation, tool banners, errors and
-  assistant Markdown are printed once with :class:`rich.console.Console`
-  bound to ``sys.stdout`` and *without* a background style, so the
-  terminal host provides the background and the output remains in the
-  terminal scrollback after the application exits.
+- 静态区域：定稿对话、工具横幅、错误和助手的 Markdown 输出使用绑定到 sys.stdout
+  且不带背景样式的 rich.console.Console 打印一次，使终端宿主提供背景色，
+  且输出在应用程序退出后保留在终端回滚历史中。
 
-- **Dynamic region**: a non-full-screen :class:`prompt_toolkit.Application`
-  with ``erase_when_done=True`` owns the bottom input prompt, completion
-  menu and live streaming preview. The application erases its own
-  region when it returns, leaving scrollback untouched.
+- 动态区域：带有 erase_when_done=True 的非全屏 prompt_toolkit.Application
+  负责底部输入提示符、补全菜单和实时流式预览。该应用退出时自行擦除所属区域，
+  不污染回滚历史。
 
-- **Alternate screen**: full-screen temporary surfaces (``/status``,
-  ``/resume`` selector, permission prompts, MCP trust, ``/connect``
-  wizard) enter DEC 1049 before the first frame and exit on ``finally``,
-  so their contents never leak into the main scrollback.
+- 备用屏幕：全屏临时界面（/status、/resume 选择器、权限提示、MCP 信任确认、
+  /connect 向导）在首帧前进入 DEC 1049 并在 finally 块中退出，
+  因此其内容绝不会泄漏到主回滚历史中。
 
-The package is built up across the milestones in
-``docs/exec-plans/active/cli-inline-terminal-ui-refactor-execplan.md``:
+本包根据 docs/exec-plans/active/cli-inline-terminal-ui-refactor-execplan.md 中的里程碑构建：
 
-- M0 exposes :mod:`ui.cli.terminal.detect` and the spike module.
-- M1 adds :class:`InlineRepl` and the rest of the package.
+- M0 导出 ui.cli.terminal.detect 与 spike 模块。
+- M1 添加 InlineRepl 及本包其余模块。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Provider-neutral model response types."""
+"""供应商中立的模型响应类型。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from services.tools.types import ToolCall
 
 
 class ProviderError(OneCodeError):
-    """Provider-neutral model error raised by infrastructure adapters."""
+    """基础设施适配器抛出的供应商中立模型错误。"""
 
     def __init__(
         self,

@@ -1,4 +1,4 @@
-"""Stable hook event names."""
+"""稳定的钩子事件名称。"""
 
 from __future__ import annotations
 

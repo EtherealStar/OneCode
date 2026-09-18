@@ -1,8 +1,7 @@
-"""Completion overlay for the OneCode TUI.
+"""OneCode TUI 补全浮层。
 
-The overlay owns only candidate layout, highlight, scrolling, and selection.
-It never scores or fetches candidates: the App computes them from the OneCode
-command registry and the workspace attachment resolver.
+该浮层仅负责候选列表布局、高亮、滚动与选中。
+绝不进行打分或拉取候选项目：由 App 从 OneCode 命令注册表和工作区附件解析器中计算生成。
 """
 
 from __future__ import annotations
@@ -26,12 +25,12 @@ class CompletionItem:
     identity: str
     primary: str
     description: str = ""
-    #: Text substituted for the active query when the item is accepted.
+    #: 当该候选条目被采纳时，替换当前输入查询词的文本。
     replacement: str = ""
 
 
 class CompletionOverlay(OptionList):
-    """Selectable candidate list shared by slash and ``@`` completion."""
+    """斜杠命令与 ``@`` 文件补全共用的可选候选列表。"""
 
     DEFAULT_CSS = """
     CompletionOverlay {
@@ -104,7 +103,7 @@ class CompletionOverlay(OptionList):
         self.highlighted = 0 if items else None
 
     def set_pending(self) -> None:
-        """Keep the last frame visible while revoking its accept eligibility."""
+        """保持最后一帧内容可见，同时撤销其可采纳资格。"""
 
         if self.display:
             self._pending = True
@@ -143,11 +142,10 @@ class CompletionOverlay(OptionList):
             return True
         if key in {"tab", "enter"}:
             if self._pending:
-                # Never accept a stale frame; let the App wait for the
-                # current generation to arrive.
+                # 绝不采纳过期的补全帧；让 App 等待当前世代的结果就绪。
                 return False
             if not self._items:
-                # Empty slash result: Enter falls through to submit, Tab no-ops.
+                # 空的斜杠命令匹配结果：回车穿透至提交，Tab 键不做任何操作。
                 return key == "tab"
             self.action_select()
             return True

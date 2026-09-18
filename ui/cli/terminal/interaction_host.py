@@ -1,4 +1,4 @@
-"""Shared transient interaction host for the inline terminal UI."""
+"""内联终端界面的共享临时交互宿主。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from ui.cli.terminal.permission_modal import (
 
 
 class TerminalInteractionHost:
-    """Owns transient modals that must disappear after a user decision."""
+    """管理在用户决策后必须彻底消失的临时模态框。"""
 
     def __init__(self) -> None:
         self.active_permission: PermissionModal | None = None

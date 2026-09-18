@@ -1,19 +1,18 @@
-"""`/connect`` wizard — multi-step provider configuration.
+"""/connect 向导：多步骤模型提供商配置。
 
-The wizard lives entirely on the alternate screen so the user can
-type their API key without polluting the inline scrollback.
+向导完全运行在备用屏幕上，用户输入 API 密钥时不会污染内联回滚历史。
 
-Flow::
+流程：
 
-    1. Pick a provider (TransientSelector)
-    2. Custom → input base URL
-    3. Check .env for existing key → K/R/C (Keep/Replace/Cancel)
-       No key + api_key_required → input API key
-       No key + not api_key_required (Ollama) → skip
-    4. Fetch model list from provider (endpoint auto-detection)
-       Failure → fallback to manual model name + connection test
-    5. Model selector (TransientSelector)
-    6. write_provider_env → with_model_config → return new runtime
+    1. 选择提供商 (TransientSelector)
+    2. 自定义提供商 -> 输入 Base URL
+    3. 检查 .env 中的现有密钥 -> 保留/替换/取消 (Keep/Replace/Cancel)
+       无密钥且需要密钥 -> 输入 API 密钥
+       无密钥且不需要密钥（如 Ollama）-> 跳过
+    4. 从提供商拉取模型列表（端点自动探测）
+       失败 -> 回退到手动输入模型名并进行连接测试
+    5. 模型选择器 (TransientSelector)
+    6. write_provider_env -> with_model_config -> 返回新运行时
 """
 
 from __future__ import annotations
@@ -60,7 +59,7 @@ async def run_connect_flow(
     *,
     stdout: TextIO | None = None,
 ) -> ConnectFlowResult:
-    """Multi-step wizard: provider → key → model list → save."""
+    """多步骤向导：提供商 -> 密钥 -> 模型列表 -> 保存。"""
 
     from infrastructure.providers.catalog import ProviderDefinition
     from infrastructure.providers.model_catalog import (
@@ -93,7 +92,7 @@ async def run_connect_flow(
         )
 
     # ------------------------------------------------------------------
-    # Step 1: Pick a provider.
+    # 步骤 1：选择提供商。
     # ------------------------------------------------------------------
     selector: TransientSelector = TransientSelector(
         "选择供应商",
@@ -107,13 +106,13 @@ async def run_connect_flow(
         return ConnectFlowResult(cancelled=True)
     option = chosen.value
 
-    # Resolve the ProviderDefinition from the catalog.
+    # 从目录中解析 ProviderDefinition。
     from infrastructure.providers.catalog import get_provider_definition
 
     provider: ProviderDefinition = get_provider_definition(option.provider_id)
 
     # ------------------------------------------------------------------
-    # Step 2a: Custom provider → input base URL first.
+    # 步骤 2a：自定义提供商 -> 首先输入 Base URL。
     # ------------------------------------------------------------------
     base_url: str | None = None
     if provider.requires_base_url:
@@ -124,7 +123,7 @@ async def run_connect_flow(
         base_url = provider.base_url or None
 
     # ------------------------------------------------------------------
-    # Step 2b: API key handling — detect existing, K/R/C, or input new.
+    # 步骤 2b：API 密钥处理：检测现有密钥、保留/替换/取消或输入新密钥。
     # ------------------------------------------------------------------
     api_key: str = ""
     env_path = runtime.workspace / ".env"
@@ -133,7 +132,7 @@ async def run_connect_flow(
         existing_key = existing_key_for_provider(env_path, provider.id)
 
         if existing_key:
-            # Show K/R/C options.
+            # 展示保留/替换/取消选项。
             masked = _mask_key(existing_key)
             krc_selector: TransientSelector[str] = TransientSelector(
                 f"已检测到 {provider.display_name} 的 API Key",
@@ -149,23 +148,23 @@ async def run_connect_flow(
             if krc_result.value == "keep":
                 api_key = existing_key
             else:
-                # Replace: ask for new key.
+                # 替换：询问新密钥。
                 new_key = await _prompt_text("请输入新的 API Key", out=out, secret=True)
                 if not new_key:
                     return ConnectFlowResult(cancelled=True)
                 api_key = new_key
         else:
-            # No existing key for this provider → ask for one.
+            # 该提供商暂无现有密钥 -> 提示输入。
             new_key = await _prompt_text(
                 f"请输入 {provider.display_name} 的 API Key", out=out, secret=True,
             )
             if not new_key:
                 return ConnectFlowResult(cancelled=True)
             api_key = new_key
-    # else: Ollama — no key needed, api_key stays "".
+    # 其余情况：Ollama 无需密钥，api_key 保持为空。
 
     # ------------------------------------------------------------------
-    # Step 3 & 4: Fetch model list → model selector (or manual fallback).
+    # 步骤 3 与 4：拉取模型列表 -> 模型选择器（或手动回退）。
     # ------------------------------------------------------------------
     model: str | None = None
 
@@ -180,7 +179,7 @@ async def run_connect_flow(
         model = await _prompt_model_selection(models, provider.display_name)
     
     if model is None:
-        # Fallback: manual model name input + connection test.
+        # 回退逻辑：手动输入模型名称并进行连接测试。
         model = await _prompt_manual_model(
             provider, api_key, base_url, out=out,
         )
@@ -188,7 +187,7 @@ async def run_connect_flow(
             return ConnectFlowResult(cancelled=True)
 
     # ------------------------------------------------------------------
-    # Step 5: Save to .env and reload runtime.
+    # 步骤 5：保存至 .env 并重新加载运行时。
     # ------------------------------------------------------------------
     write_provider_env(
         env_path,
@@ -214,7 +213,7 @@ async def _prompt_model_selection(
     models: tuple,
     provider_name: str,
 ) -> str | None:
-    """Show an interactive model picker on the alternate screen."""
+    """在备用屏幕上展示交互式模型选择器。"""
 
     from ui.cli.terminal.selector import SelectorItem, TransientSelector
 
@@ -241,7 +240,7 @@ async def _prompt_manual_model(
     *,
     out: TextIO,
 ) -> str | None:
-    """Fallback: type a model name, then verify the connection."""
+    """回退：键入模型名称并验证连接。"""
 
     from infrastructure.providers.model_catalog import test_model_connection
 
@@ -251,10 +250,10 @@ async def _prompt_manual_model(
     if not model:
         return None
 
-    # Test connection with the manually entered model.
+    # 使用手动输入的模型测试连接。
     error = test_model_connection(provider, api_key, model, base_url)
     if error is not None:
-        # Show error and ask to retry or cancel.
+        # 展示错误并询问是否重试或取消。
         retry = await _prompt_confirm(
             f"连接测试失败: {error}\n是否重新输入模型名称？",
             out=out,
@@ -266,7 +265,7 @@ async def _prompt_manual_model(
 
 
 def _mask_key(key: str) -> str:
-    """Return a masked version showing only the last 4 characters."""
+    """返回仅展示末尾 4 位字符的脱敏密钥。"""
     if len(key) <= 4:
         return "****"
     return f"****{key[-4:]}"
@@ -277,7 +276,7 @@ async def _prompt_confirm(
     *,
     out: TextIO,
 ) -> bool:
-    """Simple yes/no confirmation on the alternate screen."""
+    """在备用屏幕上进行简单的确认。"""
 
     result: list[bool] = [False]
     bindings = KeyBindings()
@@ -396,8 +395,8 @@ def _build_text_prompt_application(
     )
     footer = Window(content=FormattedTextControl(footer_text))
 
-    # ``full_screen`` manages the alternate screen (DEC 1049) itself,
-    # so the credential entry never leaks into the static scrollback.
+    # full_screen 自行管理备用屏幕（DEC 1049），
+    # 确保凭据输入过程绝不泄漏到静态回滚历史中。
     app: Application[None] = Application(
         layout=Layout(HSplit([header, input_window, footer]), focused_element=input_window),
         full_screen=True,

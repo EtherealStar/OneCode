@@ -1,4 +1,4 @@
-"""Non-interactive and fallback CLI input helpers."""
+"""非交互式与回退命令行输入辅助函数。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 
 def read_batch_line(prompt: str = "") -> str:
-    """Read one submitted line from stdin without interactive editing."""
+    """从 stdin 读取单行提交输入，不进行交互式编辑。"""
 
     if prompt:
         sys.stdout.write(prompt)
@@ -26,7 +26,7 @@ class ConfirmOption:
 
 
 def read_confirm_sync(title: str, options: tuple[ConfirmOption, ...]) -> str:
-    """Read a single confirm choice from stdin (batch / fallback path)."""
+    """从 stdin 读取单次确认选项（批处理/回退路径）。"""
 
     print(title)
     for option in options:

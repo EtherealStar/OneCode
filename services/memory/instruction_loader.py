@@ -1,4 +1,4 @@
-"""Load layered OneCode instruction memory files."""
+"""加载分层的 OneCode 指令记忆文件。"""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class _LoadRoot:
 
 
 class InstructionMemoryLoader:
-    """Load ONECODE.md, rules, local overrides, and @include references."""
+    """加载 ONECODE.md、规则文件、本地覆盖项以及 @include 引用。"""
 
     def __init__(
         self,

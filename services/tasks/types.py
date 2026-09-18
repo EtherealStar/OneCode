@@ -1,4 +1,4 @@
-"""Task record model and JSON projection."""
+"""任务记录模型与 JSON 映射。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class TaskRecord:
 
 
 def task_from_json(data: Mapping[str, Any]) -> TaskRecord:
-    """Parse the durable camelCase task JSON shape into the Python model."""
+    """将持久化的小驼峰命名（camelCase）任务 JSON 结构解析为 Python 模型。"""
 
     task_id = _required_string(data, "id")
     status = _required_string(data, "status")

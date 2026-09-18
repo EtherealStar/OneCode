@@ -1,9 +1,8 @@
-"""Static-region printers for the inline REPL.
+"""行内 REPL 的静态区域打印器。
 
-The static region is the terminal scrollback. Everything printed here
-goes through :func:`print_static`, which uses a Rich console bound to
-``sys.stdout`` with *no* background style — letting the host terminal
-provide the background. Once printed, lines are never redrawn.
+静态区域即终端的回滚历史。此处打印的所有内容均通过
+print_static 输出，它使用绑定到 sys.stdout 的 Rich 控制台，
+且不设置背景样式，由宿主终端提供背景。内容一旦打印便绝不重绘。
 """
 
 from __future__ import annotations
@@ -23,17 +22,15 @@ from ui.cli.theme import RICH_THEME
 from ui.cli.types import CliRuntime
 
 
-# Module-level console reused by every static printer. Sharing it
-# avoids the cost of building a new Rich Console per print, which
-# would matter once a long session replays hundreds of tool banners.
+# 所有静态打印器共享的模块级控制台。共享该实例可避免
+# 每次打印都构建新 Rich Console 的开销，这在长会话重放数百个工具横幅时尤为重要。
 _STATIC_CONSOLE: Console | None = None
 
 
 def static_console() -> Console:
-    """Return the process-wide static-region console.
+    """返回进程级的静态区域控制台。
 
-    The theme only defines foreground styles. The actual background
-    always comes from the terminal host.
+    主题仅定义前景色样式。实际背景色始终由终端宿主决定。
     """
 
     global _STATIC_CONSOLE
@@ -43,11 +40,10 @@ def static_console() -> Console:
 
 
 def reset_static_console() -> None:
-    """Drop the cached console.
+    """丢弃缓存的控制台实例。
 
-    Tests that capture stdout by redirecting ``sys.stdout`` need a
-    fresh console pointing at the new stream, so they call this and
-    then trigger a rebuild by calling :func:`static_console`.
+    通过重定向 sys.stdout 捕获标准输出的测试需要指向新流的全新控制台，
+    因此测试会先调用本函数，然后通过调用 static_console 触发重建。
     """
 
     global _STATIC_CONSOLE
@@ -55,22 +51,21 @@ def reset_static_console() -> None:
 
 
 def print_static(renderable: Any) -> None:
-    """Print a renderable to the static region (terminal scrollback)."""
+    """向静态区域（终端回滚历史）打印可渲染对象。"""
 
     static_console().print(renderable)
 
 
-# --- reverse-video user prompt --------------------------------------------
+# --- 反色用户提示词 ---
 
 
 def user_reverse_style(brightness: str) -> str:
-    """Pick a reverse-video style for the user prompt.
+    """选取用于用户提示词的反色样式。
 
-    On dark hosts (default) we use ``white on black``; on light hosts
-    we use ``black on white``. We avoid Rich's ``reverse`` keyword
-    because the resulting colors depend on the active foreground
-    style, which is theme-dependent and would render inconsistently
-    when the same line is rendered against a light or dark host.
+    在深色宿主环境中（默认）使用 white on black；在浅色宿主环境中
+    使用 black on white。我们避免使用 Rich 的 reverse 关键字，
+    因为其产生的颜色取决于当前前景色样式，该样式依赖主题，
+    在不同深浅宿主环境中渲染同一行时会导致显示不一致。
     """
 
     if brightness == "light":
@@ -79,36 +74,32 @@ def user_reverse_style(brightness: str) -> str:
 
 
 def print_user_submitted(line: str, *, brightness: str) -> None:
-    """Print a committed user line in reverse video.
+    """以反色高亮打印已提交的用户输入行。
 
-    ``line`` is the raw user input. We strip trailing newlines so the
-    reverse-video band stays on a single terminal row.
+    line 为原始用户输入。我们剥离尾随换行符，使反色高亮条带保持在单个终端行上。
     """
 
     text = Text(f"> {line.rstrip()}", style=user_reverse_style(brightness))
     print_static(text)
 
 
-# --- assistant prefix + Markdown commit -----------------------------------
+# --- assistant 前缀与 Markdown 提交 ---
 
 
 def assistant_prefix_style() -> str:
-    """The ``onecode>`` prefix color.
+    """onecode> 前缀的颜色。
 
-    Uses the same accent as section titles so the prefix reads as
-    part of the assistant identity, not a tool bullet.
+    使用与章节标题相同的强调色，使前缀看起来像是 assistant 身份标识的一部分，而不是工具项标记。
     """
 
     return "onecode.title"
 
 
 def print_assistant_start() -> None:
-    """Print the ``onecode>`` prefix in line with the upcoming reply.
+    """在即将输出的回复前打印 onecode> 前缀。
 
-    The Markdown body that follows will start on the same row when
-    Rich honors ``end=""``. We commit this prefix before streaming
-    so a power outage mid-stream still leaves a visible assistant
-    marker.
+    当 Rich 遵循 end="" 时，随后的 Markdown 正文将从同一行开始输出。
+    我们在流式传输前先提交此前缀，这样即使流式中途发生中断，也能留下可见的 assistant 标识。
     """
 
     static_console().print(
@@ -117,18 +108,15 @@ def print_assistant_start() -> None:
 
 
 def print_assistant_markdown(text: str) -> None:
-    """Commit a complete assistant reply as Markdown.
+    """将完整的 assistant 回复作为 Markdown 提交。
 
-    Called once when streaming finishes. The function prints the
-    ``onecode>`` prefix on a fresh row, then the Markdown body. We
-    print the prefix here (rather than relying on a separate
-    :func:`print_assistant_start` call) so callers cannot forget the
-    prefix and leave the committed assistant text without an
-    identity marker.
+    流式传输完成时调用一次。该函数在新行打印 onecode> 前缀，
+    然后输出 Markdown 正文。我们在本函数内部打印前缀（而非依赖
+    单独调用 print_assistant_start），以防止调用方遗漏前缀导致提交的
+    assistant 文本缺少身份标识。
 
-    The body is rendered through :func:`render_cached_markdown` so
-    replays of the same assistant message (e.g. after ``/clear`` or
-    session resume) hit the text cache instead of re-lexing.
+    正文通过 render_cached_markdown 进行渲染，因此重放相同 assistant 消息
+    （例如 /clear 或会话恢复后）将命中文本缓存而无需重新进行词法解析。
     """
 
     if not text:
@@ -139,18 +127,16 @@ def print_assistant_markdown(text: str) -> None:
     width = static_console().width or 80
     cached_lines = render_cached_markdown(text, width=width)
     if cached_lines:
-        # Print the rendered lines verbatim; this preserves any
-        # colour / table layout we already computed. An empty result
-        # (e.g. whitespace-only input) prints nothing.
+        # 逐字打印已渲染的行；保留之前计算好的所有颜色和表格布局。
+        # 渲染结果为空时（例如仅包含空白字符的输入）不输出任何内容。
         body = "\n".join(cached_lines)
         print_static(Text(body))
 
 
 def print_assistant_inline(text: str) -> None:
-    """Print a small inline assistant fragment (e.g. error message).
+    """打印简短的行内 assistant 片段（例如错误消息）。
 
-    Used by command results and error paths that should look like
-    assistant output but do not need Markdown rendering.
+    用于需要具有 assistant 输出外观但无需 Markdown 渲染的命令结果和错误路径。
     """
 
     static_console().print(
@@ -159,15 +145,14 @@ def print_assistant_inline(text: str) -> None:
     )
 
 
-# --- tool banners ---------------------------------------------------------
+# --- 工具横幅 ---
 
 
 def print_tool_banner_start(tool_name: str, call_id: str, arguments: dict[str, Any] | None = None) -> None:
-    """Print the opening line of a tool invocation.
+    """打印工具调用的起始行。
 
-    The static region only needs a compact one-line summary, so we
-    format the call name and a bounded argument preview directly
-    rather than reusing any heavier banner widget.
+    静态区域仅需紧凑的单行摘要，因此我们直接格式化调用名称与受限的参数预览，
+    而无需复用重量级的横幅组件。
     """
 
     label = Text("● ", style="onecode.info") + Text(
@@ -183,12 +168,10 @@ def print_tool_banner_start(tool_name: str, call_id: str, arguments: dict[str, A
 
 
 def print_tool_banner_running(call_id: str) -> None:
-    """Print a progress marker for a tool still in flight.
+    """为正在执行的工具打印进度标记。
 
-    A new spinner line per call would clutter scrollback, so we
-    quietly update via a *result line* once the tool finishes. This
-    function is kept as a hook for future per-tool progress that
-    needs to land in the static region.
+    每次调用都输出新的旋转动画行会污染回滚历史，因此工具执行完成后
+    我们通过结果行静默更新。该函数保留作为未来需要在静态区域输出工具进度的钩子。
     """
 
     _ = call_id
@@ -200,13 +183,11 @@ def print_tool_result(
     call_id: str,
     workspace: Path | None = None,
 ) -> None:
-    """Print the result line for a finished tool call.
+    """为执行完毕的工具调用打印结果行。
 
-    The line is wrapped in the unified ``⎿`` container used by every
-    tool result in the static region. Specific tool renderers in
-    :mod:`ui.cli.tool_renderers` must not embed the container
-    themselves; the framework owns it so nesting and styling stay
-    consistent across tools.
+    该行包装在静态区域所有工具结果通用的 ⎿ 容器中。
+    ui.cli.tool_renderers 中的具体工具渲染器不得自行内嵌容器字符；
+    由框架统一持有以保证各个工具之间的嵌套和样式保持一致。
     """
 
     if hasattr(result, "tool_call_id"):
@@ -217,7 +198,7 @@ def print_tool_result(
 
 
 def print_untrusted_mcp_notice(name: str, detail: str) -> None:
-    """Print a one-liner warning for skipped untrusted MCP servers."""
+    """为跳过的非受信任 MCP 服务器打印单行警告。"""
 
     suffix = f" ({detail})" if detail else ""
     print_static(
@@ -230,10 +211,9 @@ def print_untrusted_mcp_notice(name: str, detail: str) -> None:
 
 
 def _summarize_arguments(arguments: dict[str, Any], *, limit: int = 120) -> str:
-    """Format a tool call's input as a one-line preview.
+    """将工具调用的输入参数格式化为单行预览。
 
-    The tool banners are visual aids; we never want to dump a full
-    multi-kilobyte argument dict into the scrollback.
+    工具横幅属于视觉辅助；我们绝不希望将完整的数千字节参数字典转储到回滚历史中。
     """
 
     parts: list[str] = []
@@ -261,14 +241,13 @@ def _render_argument_value(value: Any, *, inner_limit: int = 40) -> str:
     return str(value)
 
 
-# --- explicit init (so callers can rebuild the console) ------------------
+# --- 显式初始化（供调用方重建控制台） ---
 
 
 def rebind_static_console() -> Console:
-    """Force a rebuild of the static console.
+    """强制重建静态控制台。
 
-    Tests use this to make the module-level console point at a
-    captured stdout.
+    测试借助此方法使模块级控制台指向捕获的标准输出。
     """
 
     reset_static_console()
@@ -276,9 +255,8 @@ def rebind_static_console() -> Console:
 
 
 def runtime_is_attached(runtime: CliRuntime | None) -> bool:
-    """Tiny helper used by other terminal modules to short-circuit
-    when the REPL is running without a fully wired runtime (e.g. the
-    M0 spike and the test harness).
+    """供其他终端模块使用的轻量辅助函数，用于在 REPL 未完全装配 runtime
+    （如 M0 探索阶段和测试桩）时进行短路判断。
     """
 
     return runtime is not None

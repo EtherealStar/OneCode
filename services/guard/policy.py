@@ -1,4 +1,4 @@
-"""Guard service entry points and structured policy results."""
+"""防护服务入口与结构化策略结果。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class GuardPolicy:
     pattern: str | None = None
 
     def to_tool_error(self) -> dict[str, object]:
-        """Return a structured tool result payload for blocked paths."""
+        """返回被阻断路径的结构化工具结果负载。"""
 
         return {
             "error": "path_guard_denied",
@@ -45,7 +45,7 @@ class GuardPolicy:
 
 
 class SandboxGuard:
-    """Unified sandbox guard for filesystem tools."""
+    """文件系统工具的统一沙箱防护器。"""
 
     def __init__(self, boundary: SandboxBoundary) -> None:
         self.boundary = boundary

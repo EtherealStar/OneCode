@@ -1,4 +1,4 @@
-"""Conservative local token estimation for compaction decisions."""
+"""用于压缩决策的保守本地 token 估算。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ UNKNOWN_BLOCK_TOKENS = 256
 
 
 def estimate_message_tokens(message: dict[str, Any]) -> int:
-    """Estimate tokens for one provider-neutral internal message."""
+    """估算单条 provider 中立内部消息的 token 数。"""
 
     total = MESSAGE_OVERHEAD_TOKENS
     total += _estimate_content_tokens(message.get("content"))
@@ -29,13 +29,13 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
 
 
 def estimate_messages_tokens(messages: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> int:
-    """Estimate tokens for an ordered message chain."""
+    """估算有序消息链的 token 数。"""
 
     return sum(estimate_message_tokens(message) for message in messages)
 
 
 def estimate_snapshot_tokens(snapshot: ContextSnapshot) -> int:
-    """Estimate all model-visible input tokens in a context snapshot."""
+    """估算上下文快照中所有模型可见的输入 token 数。"""
 
     return (
         _estimate_text_tokens(snapshot.system_prompt)
@@ -86,5 +86,5 @@ def _estimate_json_field_tokens(value: Any) -> int:
 def _estimate_text_tokens(text: str) -> int:
     if not text:
         return 0
-    # Character count divided by 4, multiplied by a 4/3 safety factor.
+    # 字符数除以 4，再乘以 4/3 安全系数（即 ceil(len/3)）。
     return ceil(len(text) / 3)

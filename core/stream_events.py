@@ -1,16 +1,16 @@
-"""Runtime event types emitted by the async agent loop.
+"""异步 Agent 循环发出的运行时事件类型。
 
 事件 metadata 约定 (execplan §M1):
 
-所有归属于某次模型调用或其工具执行的事件,在 ``AgentEvent.metadata``
-中必须携带 ``model_turn_index`` 和 ``assistant_call_id``。这两个字段是
-``ui.cli.terminal`` checkpoint 渲染的事实来源,不是 provider 私有协议。
+所有归属于某次模型调用或其工具执行的事件，在 AgentEvent.metadata
+中必须携带 model_turn_index 和 assistant_call_id。这两个字段是
+ui.cli.terminal checkpoint 渲染的事实来源，不是 provider 私有协议。
 
-- ``model_turn_index``: 整个 session 内从 1 开始的递增整数,标识事件
-  归属的第几次模型调用。多次模型调用共享同一 ``turn_count`` 周期内
-  的 ``model_turn_index`` 严格递增。
-- ``assistant_call_id``: 当前 session 内稳定唯一的字符串,由
-  ``session_id``、``turn_count`` 和 ``model_turn_index`` 组合生成,
+- model_turn_index: 整个 session 内从 1 开始的递增整数，标识事件
+  归属的第几次模型调用。多次模型调用共享同一 turn_count 周期内
+  的 model_turn_index 严格递增。
+- assistant_call_id: 当前 session 内稳定唯一的字符串，由
+  session_id、turn_count 和 model_turn_index 组合生成，
   在 assistant 文本、工具声明、工具结果和工具 progress 之间共享。
 """
 
@@ -46,9 +46,9 @@ class AgentEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-#: 哪些 AgentEvent 类型必须携带 ``model_turn_index`` / ``assistant_call_id``。
-#: Reducer 在收到不在这两个集合内的事件时,既不要求稳定 ID 也不会报
-#: 错;只有列表中的事件缺失 ID 才会被诊断为实现错误 (recoverable)。
+#: 哪些 AgentEvent 类型必须携带 model_turn_index / assistant_call_id。
+#: Reducer 在收到不在这两个集合内的事件时，既不要求稳定 ID 也不会报
+#: 错；只有列表中的事件缺失 ID 才会被诊断为实现错误 (recoverable)。
 _ATTRIBUTED_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "assistant_delta",
@@ -63,20 +63,19 @@ _ATTRIBUTED_EVENT_TYPES: frozenset[str] = frozenset(
 
 
 def event_requires_attribution(event: "AgentEvent") -> bool:
-    """Return True when the event must carry stable attribution IDs."""
+    """当事件必须携带稳定归属 ID 时返回 True。"""
 
     return event.type in _ATTRIBUTED_EVENT_TYPES
 
 
 def mint_assistant_call_id(session_id: str, turn_count: int, model_turn_index: int) -> str:
-    """Generate a stable, session-unique id for one model invocation.
+    """为单次模型调用生成会话内稳定唯一的 ID。
 
-    The id is a short human-readable string composed of the session id's
-    first 8 hex chars, the runtime ``turn_count`` and the
-    ``model_turn_index`` within that turn. It is stable across retries
-    and re-runs of the same model call, so checkpoint renderers can
-    match assistant text, tool declarations, and tool results to the
-    same invocation without depending on provider-specific message ids.
+    该 ID 是由 session_id 的前 8 位十六进制字符、运行时 turn_count
+    以及该轮内的 model_turn_index 组成的简短可读字符串。
+    它在同一次模型调用的重试和重跑中保持稳定，使得 checkpoint 渲染器
+    能够将 assistant 文本、工具声明和工具结果关联到同一次调用，
+    而不依赖特定 provider 的消息 ID。
     """
 
     short = (session_id or "0").replace("-", "")[:8] or "0"

@@ -1,13 +1,10 @@
-"""ConversationProjection: history and live updates into one message tree.
+"""ConversationProjection: 将历史快照与实时更新聚合为单一消息树。
 
-The projection is a synchronous, deterministic, in-memory Module. ``replace``
-rebuilds from the controller's authoritative snapshot; ``apply`` consumes the
-ordered updates for the same session generation. Both share one ingestion path
-so the live tree converges to the same identities, order, bodies, and tool
-attribution as a later snapshot.
+该投影是一个同步、确定性的内存模块。``replace`` 从控制器的权威快照进行全量重建；
+``apply`` 消费同一会话世代的有序增量更新。两者共享同一条摄取路径，
+确保实时消息树能够收敛到与后续快照完全一致的标识、顺序、正文内容及工具归属。
 
-It does not read files, write transcripts, execute tools, or decide whether a
-run is cancelled.
+它不读取文件、不写入调用记录、不执行工具，也不判定运行是否已被取消。
 """
 
 from __future__ import annotations
@@ -60,7 +57,7 @@ _COMPLETED_TOOL_STATUSES = {"completed", "error"}
 
 @dataclass
 class _MessageState:
-    """Mutable internal state; frozen ``UiMessage`` values are derived."""
+    """内部可变状态；不可变的冻结 ``UiMessage`` 值均由此派生。"""
 
     message_id: str
     role: str
@@ -92,7 +89,7 @@ class ConversationProjection:
         if snapshot is not None:
             self.replace(snapshot)
 
-    # --- public reads -----------------------------------------------------
+    # --- 公共读取属性 ---------------------------------------------------
 
     @property
     def session_id(self) -> str:
@@ -150,7 +147,7 @@ class ConversationProjection:
     def resync_required(self) -> bool:
         return self._resync_required
 
-    # --- entry points -----------------------------------------------------
+    # --- 入口方法 ---------------------------------------------------------
 
     def replace(self, snapshot: SessionSnapshot) -> ViewChange:
         previous = {state.message_id: self._message_view(state) for state in self._messages}
@@ -219,7 +216,7 @@ class ConversationProjection:
             self._sequence = sequence
         return self._dispatch(update)
 
-    # --- dispatch ---------------------------------------------------------
+    # --- 分发处理 ---------------------------------------------------------
 
     def _dispatch(self, update: SessionUpdate) -> ViewChange:
         if isinstance(update, UserMessageCommitted):
@@ -286,7 +283,7 @@ class ConversationProjection:
             return self._on_detail_loaded(update)
         return ViewChange.none()
 
-    # --- message updates --------------------------------------------------
+    # --- 消息更新处理 -----------------------------------------------------
 
     def _on_user_committed(self, update: UserMessageCommitted) -> ViewChange:
         message_id = update.message_uuid or f"input:{update.input_id}"
@@ -338,7 +335,7 @@ class ConversationProjection:
             state.lifecycle = LIFECYCLE_COMPLETED
             if update.message_uuid and state.message_id != update.message_uuid:
                 self._relink(state, update.message_uuid)
-        # Finalization replaces the body; it never appends to the deltas.
+        # 最终提交会替换消息正文，绝不在增量 delta 之上重复追加。
         if update.text:
             state.text = update.text
         return ViewChange(
@@ -349,9 +346,8 @@ class ConversationProjection:
 
     def _on_tool_update(self, update: ToolUpdate) -> ViewChange:
         if update.assistant_call_id is None and update.model_turn_index is None:
-            # Without explicit attribution we cannot give the tool a stable
-            # home; do not invent a "most recent assistant" or a permanent
-            # orphan message.
+            # 缺少明确的归属信息时，无法为工具调用指定稳定的宿主消息；
+            # 切勿凭空捏造“最近的 assistant”或创建永久的孤儿消息。
             existing = self._find_unique_tool(update.tool_call_id)
             if existing is None or existing.group_key is None:
                 return ViewChange.none()
@@ -405,7 +401,7 @@ class ConversationProjection:
                 matched.append(state.message_id)
         return ViewChange(updated_ids=tuple(dict.fromkeys(matched)))
 
-    # --- history ingestion ------------------------------------------------
+    # --- 历史记录摄取 -----------------------------------------------------
 
     def _ingest_history(self, record: HistoryRecord) -> None:
         role = record.role
@@ -453,7 +449,7 @@ class ConversationProjection:
             state = self._find_declared_tool(record.tool_call_id)
             part = state.tools.get(record.tool_call_id) if state is not None else None
         if state is None or part is None:
-            # Unpaired results never become a permanent chat message.
+            # 无法配对的工具结果绝不会演化为永久的对话消息。
             return
         detail_ref = None
         if record.externalized and record.external_result_path:
@@ -494,7 +490,7 @@ class ConversationProjection:
                 metadata=tool.metadata,
             )
 
-    # --- shared tool application ------------------------------------------
+    # --- 共享工具应用处理 -------------------------------------------------
 
     def _apply_tool(
         self,
@@ -553,7 +549,7 @@ class ConversationProjection:
             relative_path=relative_path,
         )
 
-    # --- state helpers ----------------------------------------------------
+    # --- 状态辅助方法 -----------------------------------------------------
 
     def _ensure_message(
         self, message_id: str, role: str, lifecycle: str

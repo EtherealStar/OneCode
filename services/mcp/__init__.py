@@ -1,4 +1,4 @@
-"""MCP integration entry points."""
+"""MCP 集成入口。"""
 
 from services.mcp.config import McpConfigError, load_project_mcp_config
 from services.mcp.manager import McpConnectionManager

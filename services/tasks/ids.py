@@ -1,4 +1,4 @@
-"""Task list id resolution."""
+"""任务列表 ID 解析。"""
 
 from __future__ import annotations
 
@@ -19,11 +19,10 @@ def resolve_task_list_id(
     *,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    """Resolve and memoize the task list id for this runtime.
+    """解析并记忆此运行时的任务列表 ID。
 
-    The environment variable is first so separate runtimes can explicitly share
-    one task graph. Runtime metadata is second so subagents can inherit the
-    parent's task graph without relying on process-wide environment.
+    环境变量优先级最高，以便独立的运行时可以显式共享同一个任务图。
+    运行时元数据次之，使子 agent 无需依赖进程级环境变量即可继承父级的任务图。
     """
 
     source = os.environ if env is None else env

@@ -1,4 +1,4 @@
-"""Read one durable task record."""
+"""读取单条持久化任务记录。"""
 
 from __future__ import annotations
 

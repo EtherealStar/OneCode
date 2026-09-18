@@ -1,4 +1,4 @@
-"""Prompt text for the read_file tool."""
+"""read_file 工具的提示词文本。"""
 
 PROMPT = """Purpose:
 Read a UTF-8 text file and return line-numbered content from a requested line range.

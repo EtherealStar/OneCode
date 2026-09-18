@@ -1,29 +1,15 @@
-"""Process-wide cache of rendered assistant markdown.
+"""已渲染 assistant markdown 的进程级缓存。
 
-The CLI commits a complete assistant reply to the static scrollback
-once at the end of each turn. Re-rendering the same reply — for
-example after ``/clear`` or session resume — would otherwise redo
-the full Rich Markdown lex on every replay. This cache memoises the
-ANSI lines so a second commit with identical content is free.
+CLI 在每轮结束时向静态回滚历史提交一次完整的 assistant 回复。
+若不使用缓存，重放相同的回复（例如 /clear 或会话恢复后）将在每次重放时重复执行完整的 Rich Markdown 词法分析。
+该缓存记忆化 ANSI 行列表，使内容相同的二次提交开销为零。
 
-Design notes (mirroring ``docs/references/ui/components/Markdown.tsx``):
+设计说明：
 
-- **Keyed by hash, not by content.** The original Markdown text is
-  never retained in the cache; only its 16-byte blake2b digest.
-  This is intentional: OneCode can be asked to replay thousands of
-  assistant messages across a long session, and storing every
-  message verbatim would balloon RSS. The reference implementation
-  does the same.
-- **Width is part of the key.** A 200-column table wraps very
-  differently from a 60-column one. We never serve stale lines for
-  a terminal whose width has changed.
-- **FIFO eviction.** A simple FIFO list of insertion order is used
-  to pick the entry to drop when the cache exceeds ``max_size``.
-  Full LRU bookkeeping is unnecessary at this scale and would just
-  add constant overhead to every call.
-- **Thread-safe.** The CLI is single-threaded async, but tests and
-  some background helpers may call from multiple tasks. A single
-  lock protects both the dict and the FIFO order.
+- 按哈希而非内容索引：原始 Markdown 文本绝不保存在缓存中，仅保留其 16 字节 blake2b 摘要。这是有意为之的：OneCode 在长会话中可能需要重放数千条 assistant 消息，逐字存储每条消息会导致 RSS 内存膨胀。
+- 宽度是缓存键的一部分：200 列表格与 60 列格式差异巨大。我们绝不向宽度发生变化的终端提供过期的行。
+- FIFO 淘汰策略：当缓存超出 max_size 时，按插入顺序使用简单的先进先出策略挑选要丢弃的条目。在此规模下完整的 LRU 记账没有必要，只会给每次调用带来固定开销。
+- 线程安全：CLI 为单线程异步，但测试和某些后台辅助程序可能会从多个任务中发起调用。单个锁同时保护字典和 FIFO 顺序。
 """
 
 from __future__ import annotations
@@ -35,15 +21,10 @@ from collections.abc import Callable
 
 
 class TextCache:
-    """Memoise ``render_fn(text, width) -> list[str]`` results.
+    """记忆化 render_fn(text, width) -> list[str] 的计算结果。
 
-    Parameters
-    ----------
-    max_size:
-        Maximum number of (text, width) entries to retain. Once the
-        cache is full, the oldest insertion is dropped (FIFO). The
-        default ``500`` matches ``TOKEN_CACHE_MAX`` in the reference
-        ``Markdown.tsx``.
+    参数：
+        max_size：保留的 (text, width) 条目最大数量。缓存满后丢弃最早插入的条目（FIFO）。默认值 500。
     """
 
     def __init__(self, max_size: int = 500) -> None:
@@ -62,11 +43,10 @@ class TextCache:
         width: int,
         render_fn: Callable[[str, int], list[str]],
     ) -> list[str]:
-        """Return cached lines for ``text`` at ``width``, or compute + cache.
+        """返回 text 在 width 下的已缓存行列表，或计算并缓存。
 
-        ``render_fn`` is invoked at most once per ``(text, width)``
-        pair. The returned list is always a fresh list (the caller
-        may mutate it without affecting the cached entry).
+        针对每个 (text, width) 二元组，render_fn 至多调用一次。
+        返回的列表始终为全新列表（调用方可在不影响缓存条目的情况下对其进行修改）。
         """
 
         if not text:
@@ -76,14 +56,10 @@ class TextCache:
             cached = self._entries.get(key)
             if cached is not None:
                 self._hits += 1
-                # Refresh insertion order so the entry is the most
-                # recently used — this turns the FIFO list into an
-                # approximate LRU without per-entry bookkeeping.
+                # 刷新插入顺序使其成为最近使用的条目，将 FIFO 转换为近似 LRU 而无需每个条目的记账开销。
                 self._entries.move_to_end(key)
                 return list(cached)
-        # Render outside the lock so a slow renderer doesn't block
-        # other callers; double-check after acquiring the lock to
-        # avoid duplicate work when two callers race.
+        # 在锁外部执行渲染，防止较慢的渲染器阻塞其他调用方；获取锁后二次检查，避免两个调用方竞争时产生重复工作。
         rendered = render_fn(text, width)
         with self._lock:
             existing = self._entries.get(key)
@@ -98,7 +74,7 @@ class TextCache:
             return list(rendered)
 
     def clear(self) -> None:
-        """Drop every cached entry."""
+        """丢弃所有已缓存的条目。"""
 
         with self._lock:
             self._entries.clear()
@@ -106,7 +82,7 @@ class TextCache:
             self._misses = 0
 
     def stats(self) -> dict[str, int]:
-        """Return a snapshot of cache statistics for diagnostics."""
+        """返回缓存统计信息的快照以供诊断。"""
 
         with self._lock:
             return {
@@ -118,9 +94,7 @@ class TextCache:
 
     @staticmethod
     def _make_key(text: str, width: int) -> tuple[str, int]:
-        # 16 bytes = 128 bits of blake2b digest. Collision odds for a
-        # long-running CLI are negligible; the cache lookup is O(1)
-        # either way.
+        # 16 字节 = 128 位 blake2b 摘要。对于长期运行的 CLI，哈希碰撞概率微乎其微；无论何种情况缓存查找均为 O(1)。
         digest = hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
         return (digest, width)
 

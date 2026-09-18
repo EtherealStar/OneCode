@@ -1,4 +1,4 @@
-"""Stable OneCode-side MCP data types."""
+"""OneCode 侧稳定的 MCP 数据类型。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Path resolver facade used by guard callers."""
+"""供防护调用方使用的路径解析器外观。"""
 
 from __future__ import annotations
 

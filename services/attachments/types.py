@@ -1,4 +1,4 @@
-"""Stable attachment message types."""
+"""稳定的附件消息类型定义。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class AttachmentMessage:
     source: str = "user_input"
 
     def to_message(self) -> dict[str, Any]:
-        """Wrap one attachment as a durable internal message."""
+        """将单个附件包装为持久化的内部消息。"""
 
         attachment = deepcopy(self.attachment)
         attachment.setdefault("id", self.attachment_id)

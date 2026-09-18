@@ -1,4 +1,4 @@
-"""Shared text decoding helpers for tools and local process output."""
+"""用于工具和本地进程输出的共享文本解码辅助函数。"""
 
 from __future__ import annotations
 

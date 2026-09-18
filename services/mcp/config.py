@@ -1,4 +1,4 @@
-"""Project-level .mcp.json loading."""
+"""项目级 .mcp.json 配置加载。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from services.mcp.types import McpConfigSet, McpServerConfig, McpTransport
 
 
 class McpConfigError(ValueError):
-    """Raised when project MCP configuration is present but invalid."""
+    """当项目 MCP 配置存在但无效时引发。"""
 
 
 def load_project_mcp_config(workspace: Path) -> McpConfigSet:

@@ -1,4 +1,4 @@
-"""Dynamic system prompt assembly for OneCode."""
+"""OneCode 动态系统提示词组装。"""
 
 from prompts.assembler import DynamicPromptAssembler
 from prompts.cache import PromptSectionCache

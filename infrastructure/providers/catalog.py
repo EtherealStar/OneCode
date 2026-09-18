@@ -1,4 +1,4 @@
-"""Built-in OpenAI-compatible provider catalog."""
+"""内置的 OpenAI 兼容供应商目录。"""
 
 from __future__ import annotations
 

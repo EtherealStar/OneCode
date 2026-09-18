@@ -1,4 +1,4 @@
-"""Shared helpers for Rich CLI views."""
+"""Rich CLI 视图的共享辅助函数。"""
 
 from __future__ import annotations
 

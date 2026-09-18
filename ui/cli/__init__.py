@@ -1,1 +1,1 @@
-"""Standard-library CLI for OneCode."""
+"""OneCode 命令行界面。"""

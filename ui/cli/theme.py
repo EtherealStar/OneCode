@@ -1,10 +1,8 @@
-"""Rich style names and text symbols for the CLI.
+"""CLI 的 Rich 样式名称与文本符号。
 
-The inline rendering model in :mod:`ui.cli.terminal` requires two
-separate Rich themes: one for dark hosts and one for light hosts. Both
-themes only define **foreground** styles — backgrounds are always
-left to the terminal host so the inline region inherits the user's
-white-on-black or black-on-white profile.
+ui.cli.terminal 中的内联渲染模型需要两套独立的 Rich 主题：
+一套用于暗色终端，另一套用于亮色终端。两套主题均仅定义前景色样式，
+背景色始终交由终端宿主控制，使内联区域能够继承用户的黑底白字或白底黑字配置。
 """
 
 from __future__ import annotations
@@ -36,11 +34,10 @@ MASCOT_CAT = r"""
 
 
 def _base_palette() -> dict[str, str]:
-    """Foreground-only color names shared by both themes.
+    """两套主题共享的纯前景色名称。
 
-    No ``"bg"`` or ``"background"`` keys — backgrounds stay under the
-    terminal host's control so the inline region is readable in both
-    light and dark profiles.
+    不包含 bg 或 background 键，背景色交由终端宿主控制，
+    确保内联区域在亮色和暗色配置下均清晰可读。
     """
 
     return {
@@ -59,9 +56,8 @@ def _base_palette() -> dict[str, str]:
         "onecode.model": "green",
         "onecode.session": "magenta",
         "onecode.metric": "bold",
-        # Rich Table / Markdown table renderables reference these
-        # default styles by name. Keep them foreground-only so CLI
-        # output still inherits the terminal host background.
+        # Rich 表格与 Markdown 表格渲染对象按名称引用这些默认样式。
+        # 保持纯前景色，确保命令行输出仍能继承终端宿主的背景色。
         "table.header": "bold",
         "table.footer": "",
         "table.cell": "",
@@ -88,11 +84,10 @@ RICH_THEME_LIGHT = Theme(_RICH_THEME_LIGHT_PALETTE, inherit=False)
 
 
 def rich_theme_for(brightness: str) -> Theme:
-    """Pick a foreground-only Rich theme for the detected brightness.
+    """根据探测到的亮度选择纯前景色的 Rich 主题。
 
-    The fallback (``"dark"``) preserves historical behavior so callers
-    that don't run :func:`ui.cli.terminal.detect.detect_terminal_brightness`
-    see no visual change.
+    回退选项（dark）保留既有行为，未运行
+    ui.cli.terminal.detect.detect_terminal_brightness 的调用方视觉不受影响。
     """
 
     if brightness == "light":

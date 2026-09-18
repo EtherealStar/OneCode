@@ -1,8 +1,8 @@
-"""Command outcome → Rich renderables for the TUI command views.
+"""命令输出结果 → 面向 TUI 命令视图的 Rich 可渲染对象。
 
-The application layer returns structured :class:`CommandOutcome` data; this
-module is the only place that turns it into user-visible text for the TUI. It
-does not mutate state, run commands, or read the runtime.
+应用层返回结构化的 :class:`CommandOutcome` 数据；
+本模块是将该数据转换为 TUI 用户可见文本的唯一入口。
+其不修改状态、不运行命令，也不读取运行时。
 """
 
 from __future__ import annotations
@@ -21,10 +21,9 @@ _MISSING = "—"
 def command_view(
     outcome: CommandOutcome,
 ) -> tuple[str, RenderableType] | None:
-    """Return ``(title, renderable)`` for view-style outcomes.
+    """针对视图类命令输出结果，返回 ``(title, renderable)``。
 
-    Lifecycle outcomes handled by the App (exit/clear/resume selector/connect)
-    and pure submits return ``None``.
+    由 App 处理的生命周期结果（exit/clear/resume selector/connect）以及纯文本提交均返回 ``None``。
     """
 
     if outcome.category == "lifecycle":

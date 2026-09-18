@@ -1,10 +1,8 @@
-"""Application-layer contracts for the session controller.
+"""会话控制器的应用层契约。
 
-These are the values the Interface exchanges: snapshots, ordered updates,
-command/input receipts, interaction requests, and detail results. They carry
-running facts and provider-neutral data, never Rich renderables or Textual
-widgets. Field types are immutable values or copies so a subscriber cannot
-mutate the runtime through a snapshot.
+这些是接口交换的值：快照、有序更新、命令与输入回执、交互请求以及详情结果。
+它们承载运行事实和供应商中立的数据，绝不携带 Rich renderable 或 Textual 小部件。
+字段类型为不可变值或副本，因此订阅者无法通过快照修改运行时状态。
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ ToolStatus = Literal["declared", "started", "progress", "completed", "error"]
 
 @dataclass(frozen=True)
 class QueueItem:
-    """One accepted-but-not-yet-run input. Not a committed user message."""
+    """已接收但尚未运行的单条输入。非已持久化的用户消息。"""
 
     input_id: str
     text: str
@@ -53,7 +51,7 @@ class ToolRunState:
 
 @dataclass(frozen=True)
 class RunState:
-    """The current foreground turn as the runtime really has it."""
+    """运行时实际持有的当前前台轮次状态。"""
 
     active: bool = False
     input_id: str | None = None

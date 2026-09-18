@@ -1,4 +1,4 @@
-"""Read-only MCP status view."""
+"""只读 MCP 状态视图。"""
 
 from __future__ import annotations
 

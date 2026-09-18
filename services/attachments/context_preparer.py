@@ -1,4 +1,4 @@
-"""Context preparer wrapper that applies attachment projection."""
+"""应用附件投影的上下文准备器包装类。"""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class AttachmentContextPreparer:
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
     ) -> PreparedContext:
-        """Run optional inner preparation, then hide raw attachment messages."""
+        """运行可选的内层准备逻辑，随后隐藏原始附件消息。"""
 
         prepared: Iterable[dict[str, Any]] | PreparedContext
         if self.inner is None:

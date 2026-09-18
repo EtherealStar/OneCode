@@ -1,4 +1,4 @@
-"""Skill loading services."""
+"""技能加载服务。"""
 
 from services.skills.catalog import LoaderSkillCatalogProvider, SkillCatalogProvider
 from services.skills.loader import (

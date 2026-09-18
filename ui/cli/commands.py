@@ -1,4 +1,4 @@
-"""Slash command registry and dispatch for the CLI."""
+"""CLI 的斜杠命令注册表与分发器。"""
 
 from __future__ import annotations
 
@@ -227,15 +227,15 @@ def _mcp(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
 
 
 def _plan(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
-    """Enter plan mode, display the plan, open the plan file, or approve/reject.
+    """进入计划模式、显示计划、打开计划文件或执行审批/拒绝。
 
-    Subcommands:
-        /plan                 → show current plan + path (enters plan mode if not yet)
-        /plan <description>   → enter plan mode and seed the agent with the description
-        /plan show            → show current plan content
-        /plan open            → print the plan file path (caller can open it)
-        /plan approve         → approve exit_plan_mode from the CLI
-        /plan reject          → reject the pending plan approval
+    子命令：
+        /plan                 -> 显示当前计划与路径（若未进入则进入计划模式）
+        /plan <description>   -> 进入计划模式并以该描述初始化智能体
+        /plan show            -> 显示当前计划内容
+        /plan open            -> 打印计划文件路径（调用方可自行打开）
+        /plan approve         -> 从命令行界面批准 exit_plan_mode
+        /plan reject          -> 拒绝待处理的计划审批
     """
 
     if runtime.plan_store is None:
@@ -256,10 +256,9 @@ def _plan(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     if subcommand == "show":
         return _plan_show(runtime, plan_store)
 
-    # Default behavior: enter plan mode and return to the normal prompt. The
-    # command itself is a mode switch, not a transient page. If the user typed a
-    # description after ``/plan``, surface that text as the next user prompt so
-    # the agent starts planning inside the newly active mode.
+    # 默认行为：进入计划模式并返回常规提示符。该命令本身为模式切换，
+    # 而非临时页面。若用户在 /plan 后输入了描述，则将该文本作为下一条用户提示词呈现，
+    # 以便智能体在新激活的模式中开始规划。
     if not runtime.state.is_plan_mode():
         enter_plan_mode(runtime.state, plan_store)
     queued_prompt = remaining.strip()
@@ -329,8 +328,7 @@ def _plan_approve(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
             )
         )
     exit_plan_mode(runtime.state, plan_store, approved=True)
-    # Inject the post-exit attachment immediately so the user-visible turn
-    # also carries the "approved" message in the transcript.
+    # 立即注入退出后的附件，使用户可见轮次在 transcript 中同样携带 approved 消息。
     attachments = build_plan_attachments_for_state(runtime.state, plan_store)
     return CommandResult(
         renderable=renderer.render_text(

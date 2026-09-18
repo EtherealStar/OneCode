@@ -1,4 +1,4 @@
-"""Guarded filesystem glob search tool."""
+"""受防护的文件系统 glob 搜索工具。"""
 
 from __future__ import annotations
 

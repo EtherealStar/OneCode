@@ -1,4 +1,4 @@
-"""Prompt text for the write_file tool."""
+"""write_file 工具的提示词文本。"""
 
 PROMPT = """Purpose:
 Create a new UTF-8 text file or replace the complete contents of an existing text file.

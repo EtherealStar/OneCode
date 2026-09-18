@@ -1,10 +1,9 @@
-"""Plan-mode attachment injection helpers.
+"""计划模式附件注入辅助函数。
 
-These helpers live in ``services/plans`` because they are part of the
-plan-mode lifecycle, not the generic attachment pipeline. They build the
-durable attachment payloads that ``ui.cli`` and other callers pass to
-``AgentLoop.stream(prompt, attachments=...)`` so the plan message enters the
-transcript like any other attachment.
+这些辅助函数位于 services/plans 中，因为它们属于计划模式生命周期的一部分，
+而非通用附件流水线。它们用于构建持久附件载荷，供 ui.cli 及其他调用方传递给
+AgentLoop.stream(prompt, attachments=...)，从而使计划消息像其他附件一样进入
+运行记录。
 """
 
 from __future__ import annotations
@@ -29,11 +28,10 @@ def build_plan_attachments_for_state(
     state: RuntimeState,
     plan_store: PlanStore,
 ) -> list[dict[str, Any]]:
-    """Return the durable attachment messages to inject before a model turn.
+    """返回在模型轮次开始前需要注入的持久附件消息。
 
-    This is called by the CLI/repl right before invoking the agent loop. The
-    flags on ``state.plan`` are atomically consumed, so a single ``/plan``
-    command only injects the attachment once per turn.
+    该函数由 CLI 或 REPL 在调用 agent 循环前调用。state.plan 上的标志位会被
+    原子性消费，因此单次 /plan 命令每轮仅注入一次附件。
     """
 
     attachments: list[dict[str, Any]] = []
@@ -54,13 +52,11 @@ def _intro_or_reentry(
 ) -> tuple[dict[str, Any] | None, PlanState]:
     plan_state = state.plan
     if plan_state.plan_slug is None:
-        # No plan file allocated yet — caller should have done this via
-        # ``enter_plan_mode`` already; treat this as a no-op.
+        # 尚未分配计划文件。调用方应已通过 enter_plan_mode 完成分配，此处视为无操作。
         return None, plan_state
     plan_file = plan_store.read_plan(state)
     content = plan_file.read() if plan_file.exists() else ""
-    # If there is existing plan content, use the reentry variant so the
-    # model understands it's editing a known plan rather than starting fresh.
+    # 若存在已有计划内容，则使用 reentry 变体，以便模型感知当前是在编辑已有计划而非重新开始。
     if content.strip() and plan_state.has_exited_plan_mode is False:
         return (
             build_plan_mode_reentry_attachment(Path(plan_file.path), content),

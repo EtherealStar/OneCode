@@ -1,8 +1,7 @@
-"""MCP trust prompt for the TTY startup path.
+"""TTY 启动路径的 MCP 信任提示。
 
-The TTY startup prompts for MCP trust per untrusted stdio server
-(the batch path still defaults to skipping). Each prompt is a one-line
-y/n question read directly from stdin before the REPL starts.
+TTY 启动时会针对每个未信任的 stdio 服务器提示确认 MCP 信任
+（批处理路径仍默认跳过）。每个提示是在 REPL 启动前直接从 stdin 读取的单行 y/n 问题。
 """
 
 from __future__ import annotations
@@ -20,10 +19,9 @@ def default_trust_prompt(
     input_func: Callable[[str], str] | None = None,
     output_func: Callable[[str], None] | None = None,
 ) -> str:
-    """Block on stdin until the user trusts or skips an MCP server.
+    """阻塞等待 stdin，直到用户信任或跳过 MCP 服务器。
 
-    Mirrors the stdout panel that the legacy ``build_runtime`` helper
-    printed before delegating to :func:`read_confirm_sync`.
+    与旧版 build_runtime 辅助函数在委托给 read_confirm_sync 之前打印的 stdout 面板对应。
     """
 
     out = output_func or print

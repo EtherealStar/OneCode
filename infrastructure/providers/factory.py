@@ -1,4 +1,4 @@
-"""Factories for provider clients and discovery services."""
+"""供应商客户端与发现服务的工厂函数。"""
 
 from __future__ import annotations
 

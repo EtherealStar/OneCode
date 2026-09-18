@@ -1,30 +1,19 @@
-"""Alternate-screen (DEC 1049) lifecycle for transient TTY surfaces.
+"""瞬态 TTY 界面的备用屏幕（DEC 1049）生命周期管理。
 
-The contract follows the completed
-``docs/exec-plans/completed/cli-transient-alternate-screen-plan.md``:
+生命周期约定：
 
-1. ``enter_alternate_screen()`` writes ``\\x1b[?1049h`` to stdout
-   *before* the first frame is drawn. The terminal swaps to its
-   secondary buffer; the primary buffer (the static scrollback) is
-   frozen until exit.
+1. enter_alternate_screen() 在绘制第一帧之前向 stdout 写入 \x1b[?1049h。
+   终端切换至次级缓冲区；主缓冲区（静态回滚历史）在退出前被冻结保持不变。
 
-2. The caller renders its full-screen page into the alternate screen
-   using a Rich :class:`rich.console.Console` bound to the same
-   stdout.
+2. 调用方使用绑定到相同 stdout 的 Rich Console 将其全屏页面渲染到备用屏幕中。
 
-3. ``exit_alternate_screen()`` writes ``\\x1b[?1049l``. The terminal
-   restores the primary buffer unchanged, so the user sees their
-   scrollback exactly as it was when the page opened.
+3. exit_alternate_screen() 写入 \x1b[?1049l。终端无损恢复主缓冲区，
+   用户看到的回滚历史与其打开页面之前完全一致。
 
-4. Both operations are no-ops when stdout is not a TTY. The caller
-   is expected to detect this case and refuse to launch a transient
-   surface (see :func:`can_enter_alternate_screen` and the M5 page /
-   selector / connect flow).
+4. 当 stdout 不是 TTY 时，两项操作均为空操作。调用方应检测此情况并拒绝启动瞬态界面。
 
-The :class:`transient_terminal_scope` context manager guarantees
-that ``exit_alternate_screen`` runs in a ``finally`` even when the
-page raises mid-render — preventing a stuck alternate screen, which
-is a real failure mode on legacy terminals.
+transient_terminal_scope 上下文管理器确保即便页面在渲染中途抛出异常，
+exit_alternate_screen 也会在 finally 中执行，防止终端停留在备用屏幕中。
 """
 
 from __future__ import annotations
@@ -48,22 +37,19 @@ _STATE = _AlternateScreenState()
 
 
 def is_alternate_screen_active() -> bool:
-    """Return ``True`` if we are currently inside an alternate screen.
+    """若当前正处于备用屏幕中则返回 True。
 
-    Exposed mainly for tests that want to assert the lifecycle ran
-    exactly once across nested entries.
+    主要暴露给用于断言生命周期在嵌套进入时仅执行一次的测试。
     """
 
     return _STATE.is_alternate
 
 
 def can_enter_alternate_screen(stdout: TextIO | None = None) -> bool:
-    """Return whether the host stdout supports DEC 1049.
+    """返回宿主 stdout 是否支持 DEC 1049。
 
-    When stdout is redirected to a file or piped into another process,
-    alternate-screen entry would corrupt the destination stream, so
-    we refuse to enter and callers must degrade gracefully (e.g. by
-    rendering the page inline into the static region instead).
+    当 stdout 被重定向到文件或通过管道传递给其他进程时，进入备用屏幕会损坏目标数据流，
+    因此我们拒绝进入，调用方必须适度降级（例如改为将页面行内打印到静态区域）。
     """
 
     stream = stdout if stdout is not None else sys.stdout
@@ -71,11 +57,9 @@ def can_enter_alternate_screen(stdout: TextIO | None = None) -> bool:
 
 
 def enter_alternate_screen(stdout: TextIO | None = None) -> None:
-    """Switch the host terminal to its alternate buffer.
+    """将宿主终端切换至其备用缓冲区。
 
-    Idempotent: a second call while already inside the alternate
-    screen is a silent no-op so nested page launches (for example a
-    page opening a selector) don't confuse the terminal.
+    幂等：在已处于备用屏幕时二次调用为静默空操作，因此嵌套的页面启动不会引起终端混乱。
     """
 
     global _STATE
@@ -90,9 +74,9 @@ def enter_alternate_screen(stdout: TextIO | None = None) -> None:
 
 
 def exit_alternate_screen(stdout: TextIO | None = None) -> None:
-    """Restore the host terminal's primary buffer.
+    """恢复宿主终端的主缓冲区。
 
-    Always safe to call: it is a no-op when we never entered.
+    始终可以安全调用：若未曾进入备用屏幕则为空操作。
     """
 
     global _STATE
@@ -108,17 +92,15 @@ def exit_alternate_screen(stdout: TextIO | None = None) -> None:
 
 @contextlib.contextmanager
 def transient_terminal_scope(stdout: TextIO | None = None) -> Iterator[None]:
-    """Run a block inside the alternate screen, exiting on exit/exception.
+    """在备用屏幕内执行代码块，退出或发生异常时均会自动退出备用屏幕。
 
-    Usage::
+    用法：
 
         with transient_terminal_scope():
             page.show(renderable)
 
-    The block runs only when the host supports alternate screen; on
-    non-TTY streams the context still runs the body so callers don't
-    need a second branch — but they should detect this case earlier
-    and decline to launch the page in the first place.
+    仅当宿主支持备用屏幕时代码块才在备用屏幕中运行；在非 TTY 数据流中该上下文仍会运行代码块，
+    但调用方应在此之前检测该情况并放弃启动全屏页面。
     """
 
     enter_alternate_screen(stdout)
@@ -129,8 +111,7 @@ def transient_terminal_scope(stdout: TextIO | None = None) -> Iterator[None]:
 
 
 def reset_for_tests() -> None:
-    """Reset module state. Tests call this in fixtures so each case
-    starts with a known alternate-screen flag."""
+    """重置模块状态。测试在夹具中调用此函数，使每个测试用例以已知的备用屏幕标志开始。"""
 
     global _STATE
     _STATE = _AlternateScreenState()

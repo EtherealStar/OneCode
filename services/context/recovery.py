@@ -1,4 +1,4 @@
-"""Provider-neutral transcript recovery for resumable active message chains."""
+"""用于可恢复活动消息链的中立 transcript 恢复服务。"""
 
 from __future__ import annotations
 
@@ -26,13 +26,12 @@ class RestoredTranscript:
 def restore_transcript_active_chain(
     transcript_store: JsonlTranscriptStore,
 ) -> RestoredTranscript:
-    """Restore the latest active chain from an append-only transcript.
+    """从仅追加的 transcript 中恢复最新的活动链。
 
-    The transcript stores every historical branch append-only. Resume must feed
-    the model only the current chain, then repair tool-call pairing so provider
-    adapters do not receive orphaned or interrupted tool sequences. Unpaired
-    declarations are dropped; orphan results are removed from memory and from
-    the real transcript instead of being replaced by a synthetic result.
+    transcript 以仅追加方式存储每一个历史分支。恢复时必须仅向模型提供当前链，
+    随后修复工具调用配对，避免 provider adapter 接收到孤立或中断的工具序列。
+    未配对的声明会被丢弃；孤立的结果会从内存以及真实的 transcript 中移除，
+    而不是替换为合成结果。
     """
 
     loaded = transcript_store.load_messages()

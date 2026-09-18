@@ -1,4 +1,4 @@
-"""Session and long-term memory views."""
+"""会话与长期记忆视图。"""
 
 from __future__ import annotations
 

@@ -1,12 +1,10 @@
-"""ConversationView: the TUI conversation display module.
+"""ConversationView: TUI 会话显示模块。
 
-The view receives a read-only projection and a semantic change set. It hides
-virtual layout, scroll anchoring, Markdown caching, detail expansion, and the
-refresh scheduler. It does not run the agent, read transcripts, or bind keys.
+该视图接收只读的会话投影与语义变更集。封装了虚拟布局、滚动锚定、
+Markdown 缓存、详情展开以及刷新调度机制。它不运行 Agent、不读取记录文件，也不绑定按键。
 
-``update`` only schedules a refresh; the projection is already authoritative.
-Auxiliary state changes with an empty dirty set (queue/status/usage/run) still
-flush, so they cannot be swallowed by the scheduler.
+``update`` 仅安排刷新计划；会话投影本身已经是权威状态。
+携带空脏标记集合的附属状态变更（队列/状态/用量/运行）仍会被正常刷出，不会被调度器吞没。
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ from ui.tui.renderers.tool import ToolPresentationRegistry
 
 
 class ConversationView(Container):
-    """Full-screen conversation module: virtual viewport + refresh scheduling."""
+    """全屏会话模块：虚拟视口与刷新调度。"""
 
     DEFAULT_CSS = """
     ConversationView {
@@ -103,7 +101,7 @@ class ConversationView(Container):
         )
 
     def refresh_now(self) -> None:
-        """Flush any pending refresh immediately (tests, App callbacks)."""
+        """立即刷出所有待处理的刷新任务（供测试与 App 回调使用）。"""
 
         self._scheduler.flush_now()
 

@@ -1,7 +1,7 @@
-"""Cross-platform path normalization helpers.
+"""跨平台路径规范化辅助函数。
 
-These helpers are intentionally small and deterministic enough to unit test.
-Higher-level sandbox decisions belong in ``services.guard``.
+这些辅助函数保持精简且具备确定性，便于进行单元测试。
+更高层级的沙箱策略决策归属于 services.guard。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _WINDOWS_DRIVE_REWRITES = (
 
 @dataclass(frozen=True)
 class WriteTargetResolution:
-    """Resolved details for a path that may not exist yet."""
+    """可能尚不存在的路径的已解析详情。"""
 
     target: Path
     parent_dir: Path
@@ -36,13 +36,13 @@ def _is_windows(platform: str | None = None) -> bool:
 
 
 def windows_path(input_path: str | Path, *, platform: str | None = None) -> str:
-    """Normalize common Unix-looking Windows paths to a drive path.
+    """将常见的类 Unix 格式 Windows 路径规范化为盘符路径。
 
-    Examples on Windows:
-    - ``/C:/repo`` -> ``C:/repo``
-    - ``/c/repo`` -> ``C:/repo``
-    - ``/cygdrive/c/repo`` -> ``C:/repo``
-    - ``/mnt/c/repo`` -> ``C:/repo``
+    Windows 上的示例：
+    - /C:/repo -> C:/repo
+    - /c/repo -> C:/repo
+    - /cygdrive/c/repo -> C:/repo
+    - /mnt/c/repo -> C:/repo
     """
 
     path = os.fspath(input_path)
@@ -61,10 +61,10 @@ def windows_path(input_path: str | Path, *, platform: str | None = None) -> str:
 
 
 def resolve_path(input_path: str | Path, *, base_dir: str | Path | None = None) -> Path:
-    """Resolve input to an absolute path.
+    """将输入解析为绝对路径。
 
-    Existing paths use strict realpath resolution. Missing paths use a stable
-    absolute path without hiding non-ENOENT errors from existing parents.
+    已存在的路径使用严格的 realpath 解析。缺失的路径使用稳定的绝对路径，
+    且不会掩盖来自现有父目录的非 ENOENT 错误。
     """
 
     candidate = Path(windows_path(input_path))
@@ -83,7 +83,7 @@ def resolve_write_target(
     *,
     base_dir: str | Path | None = None,
 ) -> WriteTargetResolution:
-    """Resolve a write target while preserving missing final path segments."""
+    """解析写入目标路径，同时保留缺失的末尾路径分段。"""
 
     candidate = Path(windows_path(input_path))
     if not candidate.is_absolute():
@@ -127,7 +127,7 @@ def resolve_write_target(
 
 
 def normalize_path_pattern(pattern: str | Path) -> str:
-    """Normalize permission/glob path patterns into stable string form."""
+    """将权限或 glob 路径模式规范化为稳定的字符串形式。"""
 
     raw = os.fspath(pattern)
     if raw == "*":
@@ -148,7 +148,7 @@ def normalize_path_pattern(pattern: str | Path) -> str:
 
 
 def contains_path(parent: str | Path, child: str | Path) -> bool:
-    """Return True when child is equal to or nested under parent."""
+    """当 child 等于 parent 或位于 parent 之下时返回 True。"""
 
     parent_path = resolve_path(parent)
     child_path = resolve_path(child)
@@ -162,6 +162,6 @@ def contains_path(parent: str | Path, child: str | Path) -> bool:
 
 
 def overlaps_path(a: str | Path, b: str | Path) -> bool:
-    """Return True when either path boundary contains the other."""
+    """当任一路径边界包含另一方时返回 True。"""
 
     return contains_path(a, b) or contains_path(b, a)

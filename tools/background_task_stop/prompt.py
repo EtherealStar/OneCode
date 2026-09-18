@@ -1,3 +1,4 @@
+"""background_task_stop 工具的提示词文本。"""
 PROMPT = """Purpose:
 Stop a running background execution task by id.
 

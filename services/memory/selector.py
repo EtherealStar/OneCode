@@ -1,4 +1,4 @@
-"""LLM side-query selector for relevant long-term memories."""
+"""用于筛选相关长期记忆的 LLM 旁路查询选择器。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Dynamic system prompt assembler."""
+"""动态系统提示词组装器。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class DynamicPromptAssembler:
-    """Assemble system prompt text from current runtime state."""
+    """根据当前运行时状态组装系统提示词文本。"""
 
     def __init__(
         self,

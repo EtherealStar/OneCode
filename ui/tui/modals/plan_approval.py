@@ -1,8 +1,8 @@
-"""Plan approval modal.
+"""计划审批确认模态弹窗。
 
-Rendered when the ``exit_plan_mode`` tool reports ``awaiting_approval``. The
-decision is returned to the App, which drives the existing ``/plan approve`` or
-``/plan reject`` business so plan-mode transitions stay owned by OneCode.
+当 ``exit_plan_mode`` 工具上报 ``awaiting_approval`` 时弹出渲染。
+用户决定返回给 App，由 App 驱动已有的 ``/plan approve`` 或 ``/plan reject`` 业务逻辑，
+以确保计划模式的状态转换始终由 OneCode 统一管理。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Guarded exact string edit tool."""
+"""受防护的精确字符串编辑工具。"""
 
 from __future__ import annotations
 

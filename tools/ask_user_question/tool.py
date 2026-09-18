@@ -1,8 +1,7 @@
-"""Tool descriptor for ``ask_user_question``.
+"""ask_user_question 的工具描述符。
 
-The handler delegates to a ``UserQuestionPrompter`` provided by the runtime
-(CLI TTY, batch harness, or test fake). The tool never prompts the user
-itself; it just shapes the structured request and serializes the response.
+handler 委派给运行时提供的 UserQuestionPrompter（CLI TTY、批处理环境或测试桩）。
+该工具自身从不直接提示用户；它只负责构建结构化请求并序列化响应。
 """
 
 from __future__ import annotations
@@ -262,9 +261,8 @@ def _classify_input(
     runtime: ToolRuntime,
 ) -> ToolCallClassification:
     return ToolCallClassification(
-        # Asking the user is a read-only request that requires user
-        # interaction; we mark it as not concurrency_safe so the executor
-        # serializes it.
+        # 询问用户是需要用户交互的只读请求；
+        # 我们将其标记为 concurrency_safe=False，以便执行器对其串行化。
         read_only=True,
         modifies_filesystem=False,
         concurrency_safe=False,

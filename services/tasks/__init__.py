@@ -1,4 +1,4 @@
-"""Workspace-local task tracking services."""
+"""工作区本地的任务跟踪服务。"""
 
 from services.tasks.ids import resolve_task_list_id
 from services.tasks.store import TaskClaimResult, TaskStore, TaskStoreError, TaskUpdate

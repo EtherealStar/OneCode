@@ -1,4 +1,4 @@
-"""Prompt text for the edit_file tool."""
+"""edit_file 工具的提示词文本。"""
 
 PROMPT = """Purpose:
 Edit a UTF-8 text file by replacing an exact string with another string.

@@ -1,4 +1,4 @@
-"""File-system backed skill discovery with deterministic precedence."""
+"""基于文件系统且具备确定性优先级的技能发现。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _CACHE: dict[str, tuple[SkillCommand, ...]] = {}
 
 
 def init_bundled_skills(commands: Iterable[SkillCommand] = ()) -> None:
-    """Register process-level bundled skills and clear cached merged catalogs."""
+    """注册进程级内置技能并清空缓存的合并目录。"""
 
     global _BUNDLED_SKILLS
     _BUNDLED_SKILLS = tuple(sorted(commands, key=lambda command: command.name))
@@ -22,7 +22,7 @@ def init_bundled_skills(commands: Iterable[SkillCommand] = ()) -> None:
 
 
 def get_commands(cwd: Path | str) -> tuple[SkillCommand, ...]:
-    """Return cached merged commands for a workspace directory."""
+    """返回工作区目录缓存的合并命令。"""
 
     key = str(Path(cwd).resolve())
     cached = _CACHE.get(key)
@@ -34,7 +34,7 @@ def get_commands(cwd: Path | str) -> tuple[SkillCommand, ...]:
 
 
 def load_all_commands(cwd: Path | str) -> tuple[SkillCommand, ...]:
-    """Load bundled, user, then project skills so later sources override earlier."""
+    """按内置、用户、项目的顺序加载技能，后加载的来源覆盖前者。"""
 
     workspace = Path(cwd).resolve()
     merged: dict[str, SkillCommand] = {}
@@ -48,7 +48,7 @@ def load_all_commands(cwd: Path | str) -> tuple[SkillCommand, ...]:
 
 
 def find_command(name: str, cwd: Path | str) -> SkillCommand | None:
-    """Find one command by normalized name, accepting a leading slash."""
+    """按规范化名称查找单个命令，允许前导斜杠。"""
 
     normalized = name.strip().lstrip("/")
     if not normalized:
@@ -60,7 +60,7 @@ def find_command(name: str, cwd: Path | str) -> SkillCommand | None:
 
 
 def clear_skill_caches() -> None:
-    """Clear memoized file-system skill catalogs."""
+    """清空已缓存的文件系统技能目录。"""
 
     _CACHE.clear()
 

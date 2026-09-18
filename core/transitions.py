@@ -1,4 +1,4 @@
-"""Runtime transition reasons used by the agent loop."""
+"""Agent 循环使用的运行时流转原因枚举。"""
 
 from enum import StrEnum
 

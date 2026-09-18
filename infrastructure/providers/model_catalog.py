@@ -1,4 +1,4 @@
-"""Provider model discovery over OpenAI-compatible /models."""
+"""基于 OpenAI 兼容 /models 端点的供应商模型发现服务。"""
 
 from __future__ import annotations
 
@@ -87,14 +87,12 @@ def fetch_models_for_connect(
     *,
     transport: HttpTransport | None = None,
 ) -> tuple[ProviderModel, ...]:
-    """Fetch models for the ``/connect`` wizard without a full config.
+    """在没有完整配置的情况下为 /connect 向导拉取模型列表。
 
-    For Ollama (``models_path == "/api/tags"``), hits the Ollama-specific
-    endpoint and parses its response format.
+    对于 Ollama（models_path == "/api/tags"），请求 Ollama 专用端点并解析其响应格式。
 
-    For other providers, auto-detects the models endpoint by trying
-    ``{base_url}/v1/models`` first (unless base_url already ends in
-    ``/v1``), then ``{base_url}/models``.
+    对于其他供应商，首先尝试 {base_url}/v1/models（除非 base_url 已以 /v1 结尾），
+    随后尝试 {base_url}/models，以此自动探测模型端点。
     """
 
     from infrastructure.providers.catalog import ProviderDefinition  # noqa: F811
@@ -127,7 +125,7 @@ def _fetch_ollama_models(
     headers: dict[str, str],
     transport: HttpTransport,
 ) -> tuple[ProviderModel, ...]:
-    """Fetch models from an Ollama ``/api/tags`` endpoint."""
+    """从 Ollama /api/tags 端点拉取模型列表。"""
 
     url = f"{base_url}/api/tags"
     response = transport.get_json(url, headers, 30.0)
@@ -135,9 +133,9 @@ def _fetch_ollama_models(
 
 
 def _parse_ollama_models(response: dict[str, Any]) -> tuple[ProviderModel, ...]:
-    """Parse the Ollama ``/api/tags`` response format.
+    """解析 Ollama /api/tags 响应格式。
 
-    Ollama returns ``{"models": [{"name": "...", "model": "...", ...}]}``.
+    Ollama 返回 {"models": [{"name": "...", "model": "...", ...}]}。
     """
 
     raw_models = response.get("models")
@@ -148,7 +146,7 @@ def _parse_ollama_models(response: dict[str, Any]) -> tuple[ProviderModel, ...]:
     for item in raw_models:
         if not isinstance(item, dict):
             continue
-        # Ollama uses "model" as the canonical ID and "name" as display.
+        # Ollama 使用 model 作为规范 ID，name 作为显示名称。
         model_id = item.get("model") or item.get("name")
         if not isinstance(model_id, str) or not model_id:
             continue
@@ -170,10 +168,10 @@ def _fetch_openai_models_with_probe(
     *,
     provider_id: str,
 ) -> tuple[ProviderModel, ...]:
-    """Try ``/v1/models`` first, then ``/models``.
+    """优先尝试 /v1/models，失败后尝试 /models。
 
-    If ``base_url`` already ends in ``/v1``, only tries ``/models``
-    relative to that base, avoiding a redundant ``/v1/v1/models`` probe.
+    若 base_url 已以 /v1 结尾，则仅尝试该 base 下的 /models，
+    以避免冗余探测 /v1/v1/models。
     """
 
     urls_to_try: list[str] = []
@@ -207,9 +205,9 @@ def test_model_connection(
     *,
     transport: HttpTransport | None = None,
 ) -> str | None:
-    """Send a minimal chat completion to verify the model is reachable.
+    """发送极简的聊天补全请求以验证模型是否可连通。
 
-    Returns ``None`` on success or an error message string on failure.
+    成功时返回 None，失败时返回错误信息字符串。
     """
 
     effective_base_url = (base_url or provider.base_url).rstrip("/")
@@ -221,9 +219,9 @@ def test_model_connection(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    # Determine chat completions endpoint.
+    # 确定 chat completions 端点。
     chat_path = provider.chat_completions_path or "/chat/completions"
-    # For Ollama, the chat endpoint is /api/chat.
+    # 对于 Ollama，聊天端点为 /api/chat。
     if provider.models_path == "/api/tags":
         chat_path = "/api/chat"
 

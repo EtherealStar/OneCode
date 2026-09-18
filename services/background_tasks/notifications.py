@@ -1,4 +1,4 @@
-"""Queued attachment source for background task notifications."""
+"""后台任务通知的排队附件源。"""
 
 from __future__ import annotations
 

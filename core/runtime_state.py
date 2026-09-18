@@ -1,4 +1,4 @@
-"""Mutable state for a single agent runtime session."""
+"""单个 Agent 运行时会话的可变状态。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,11 @@ from services.model.types import ModelUsage
 
 
 class PermissionMode(StrEnum):
-    """The active permission mode of the runtime.
+    """运行时的当前权限模式。
 
-    Plan mode is a first-class mode that hard-restricts tool visibility and
-    execution. It is intentionally not encoded via ``RuntimeState.metadata`` so
-    that permissions, the registry, the attachment projector, and the CLI all
-    share a single structured source of truth.
+    计划模式是一等公民模式，硬性限制工具的可见性与执行。
+    故意不通过 RuntimeState.metadata 编码，以便权限系统、注册表、
+    附件投影器和 CLI 共享单一的结构化事实来源。
     """
 
     DEFAULT = "default"
@@ -26,12 +25,11 @@ class PermissionMode(StrEnum):
 
 @dataclass
 class PlanState:
-    """Structured state for the plan-mode lifecycle.
+    """计划模式生命周期的结构化状态。
 
-    This object replaces the previous ad-hoc ``metadata["plan_file_path"]``,
-    ``metadata["permission_mode"]`` style flags. It carries everything the
-    runtime needs to (re)enter, transition between, and exit plan mode without
-    consulting the metadata dict.
+    此对象替代了之前临时的 metadata["plan_file_path"]、
+    metadata["permission_mode"] 风格标志。它承载了运行时重新进入、
+    在不同模式间流转以及退出计划模式所需的全部信息，无需查询 metadata 字典。
     """
 
     pre_plan_mode: PermissionMode | None = None
@@ -42,7 +40,7 @@ class PlanState:
     parent_session_id: str | None = None
 
     def reset(self) -> None:
-        """Clear all plan-mode state without losing session-level config."""
+        """清空所有计划模式状态，同时保留会话级配置。"""
 
         self.pre_plan_mode = None
         self.has_exited_plan_mode = False
@@ -62,11 +60,9 @@ class RuntimeState:
     max_output_recovery_count: int = 0
     last_transition: TransitionReason | None = None
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    # First-class permission mode. Plan mode replaces the previous
-    # ``metadata["permission_mode"]`` implicit protocol.
+    # 一等权限模式。计划模式替代了之前 metadata["permission_mode"] 的隐式协议。
     permission_mode: PermissionMode = PermissionMode.DEFAULT
-    # Structured plan-mode state. Tools, permissions, and the attachment
-    # projector all read this object instead of poking at ``metadata``.
+    # 结构化计划模式状态。工具、权限和附件投影器均读取此对象，而非直接操作 metadata。
     plan: PlanState = field(default_factory=PlanState)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -77,16 +73,16 @@ class RuntimeState:
         self.last_transition = transition
 
     def is_plan_mode(self) -> bool:
-        """Return whether the runtime is currently in plan mode."""
+        """返回运行时当前是否处于计划模式。"""
 
         return self.permission_mode == PermissionMode.PLAN
 
     def start_new_session(self) -> str:
         """开启新的运行时会话。
 
-        用于未来 `/clear` 这类清空当前对话的入口。该方法会生成新的
+        用于未来 /clear 这类清空当前对话的入口。该方法会生成新的
         session UUID，并重置和当前消息链相关的运行时计数、恢复状态与
-        metadata；`max_turns` 代表运行时配置，因此不会被重置。`None`
+        metadata；max_turns 代表运行时配置，因此不会被重置。None
         表示当前 runtime 不设置轮数上限。
         """
 
@@ -100,8 +96,8 @@ class RuntimeState:
         self.permission_mode = PermissionMode.DEFAULT
         self.plan.reset()
         self.metadata.clear()
-        # ``model_turn_counter`` 由 ``core/loop.py`` 在每次模型调用
-        # 时自增,这里不需要清零 — 它本来就在 metadata 里,会被
-        # ``metadata.clear()`` 一起清掉,确保新 session 的 checkpoint
+        # model_turn_counter 由 core/loop.py 在每次模型调用
+        # 时自增，这里不需要清零：它原本就在 metadata 里，会被
+        # metadata.clear() 一并清除，确保新 session 的 checkpoint
         # 归属 id 从 1 重新开始。
         return self.session_id

@@ -1,10 +1,8 @@
-"""User-visible conversation history derived from the session transcript.
+"""基于会话 transcript 派生的用户可见对话历史。
 
-The model active chain and the chat history are read differently. The active
-chain is what the next model call receives; chat history keeps pre-compaction
-messages, filters compaction copies and internal attachment roles, and never
-restores external tool-result bodies. Each history record keeps the stable
-transcript identity it came from.
+模型活动链与聊天历史的读取方式不同。活动链是下次模型调用所接收的内容；
+聊天历史则保留压缩前的消息，过滤压缩副本和内部 attachment 角色，
+且绝不恢复外部化的工具结果正文。每条历史记录都保留其来源的稳定 transcript 标识。
 """
 
 from __future__ import annotations
@@ -47,8 +45,7 @@ class HistoryRecord:
     is_error: bool = False
     tool_calls: tuple[HistoryToolCall, ...] = ()
     attachments: tuple[HistoryAttachmentSummary, ...] = ()
-    #: Stable model-call attribution; the projection groups assistant and
-    #: tool-result records by it. None for legacy records without it.
+    #: 稳定的模型调用归属；投影依此对 assistant 和 tool-result 记录进行分组。对于没有该字段的旧记录为 None。
     assistant_call_id: str | None = None
     model_turn_index: int | None = None
     source_uuid: str | None = None
@@ -69,7 +66,7 @@ class ConversationHistory:
 def load_conversation_history(
     transcript_store: JsonlTranscriptStore | InMemoryTranscriptStore,
 ) -> ConversationHistory:
-    """Read chat history without touching external tool-result bodies."""
+    """读取聊天历史，不触碰外部工具结果正文。"""
 
     loaded = transcript_store.load_messages(restore_external_results=False)
     if not loaded:
@@ -150,9 +147,8 @@ def _display_sequence(
             ):
                 add(item)
             continue
-        # Legacy compaction copies have no source_uuid: the boundary fallback
-        # above already emitted their originals, so skip the copies by their
-        # compaction metadata rather than by text comparison.
+        # 旧版压缩副本没有 source_uuid：上方的边界回退逻辑已经产出了它们的原始消息，
+        # 因此通过压缩元数据跳过这些副本，而不是依赖文本内容比对。
         if _is_compaction_product(record):
             continue
         add(record)

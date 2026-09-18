@@ -1,9 +1,8 @@
-"""Types for the structured user-question prompter.
+"""结构化用户提问提示器所使用的类型定义。
 
-The prompter protocol is intentionally narrow: it takes a list of questions
-with options and returns either a list of ``AnswerRecord`` entries or a single
-``declined=True`` response. The model never sees raw exception text; tools
-translate the response into a normal ``ToolExecutionResult``.
+该提示器协议保持严谨精简：接收带有选项的问题列表，并返回 AnswerRecord 条目列表或单项
+declined=True 的响应。模型从不直接接收原始异常文本；工具会将响应转换为常规的
+ToolExecutionResult。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class QuestionOption:
-    """One selectable option for a question."""
+    """问题的一个可选选项。"""
 
     label: str
     description: str = ""
@@ -23,7 +22,7 @@ class QuestionOption:
 
 @dataclass(frozen=True)
 class QuestionRequest:
-    """A single structured question for the user."""
+    """面向用户的单条结构化问题。"""
 
     question: str
     header: str
@@ -33,7 +32,7 @@ class QuestionRequest:
 
 @dataclass(frozen=True)
 class AnswerRecord:
-    """The user's answer to a single question."""
+    """用户针对单条问题的回答。"""
 
     question: str
     answer: str | tuple[str, ...]
@@ -41,7 +40,7 @@ class AnswerRecord:
 
 @dataclass(frozen=True)
 class QuestionResponse:
-    """Aggregate response from the user-question prompter."""
+    """用户提问提示器的聚合响应。"""
 
     answers: tuple[AnswerRecord, ...] = ()
     declined: bool = False
@@ -49,7 +48,7 @@ class QuestionResponse:
 
 
 class UserQuestionError(RuntimeError):
-    """Raised when the prompter cannot complete a structured question round."""
+    """当提示器无法完成一轮结构化提问时引发的异常。"""
 
 
 __all__ = [

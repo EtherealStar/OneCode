@@ -1,4 +1,4 @@
-"""Session-local Markdown memory for compaction continuity."""
+"""用于压缩连续性的会话局部 Markdown 记忆。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class SessionMemorySubagentRunner(Protocol):
 
 
 class SessionMemoryStore:
-    """Read and write `.onecode/sessions/<session_id>/session-memory.md` only."""
+    """仅读写 `.onecode/sessions/<session_id>/session-memory.md`。"""
 
     def __init__(self, session_dir: Path | str) -> None:
         self._session_dir = Path(session_dir)
@@ -89,7 +89,7 @@ class SessionMemoryStore:
 
 
 class SessionMemoryUpdater:
-    """Rule-based first version of per-turn session memory updates."""
+    """基于规则的每轮会话记忆更新初始版本。"""
 
     def __init__(
         self,
@@ -137,7 +137,7 @@ class SessionMemoryUpdater:
 
 
 class SessionMemoryExtractionService:
-    """Use a restricted fork child to maintain session-local memory."""
+    """使用受限的 fork child 维护会话局部记忆。"""
 
     def __init__(
         self,
@@ -172,11 +172,10 @@ class SessionMemoryExtractionService:
         tool_calls: tuple[Any, ...],
         usage: Any | None = None,
     ) -> None:
-        """Evaluate extraction only.
+        """仅评估提取条件。
 
-        Production CLI wiring injects a background scheduler that calls
-        ``prepare_extraction_job`` and runs the returned job in a dream task.
-        This method intentionally does not run the fork child synchronously.
+        生产环境 CLI 装配会注入后台调度器，调度器调用 ``prepare_extraction_job``
+        并在 dream 任务中运行返回的作业。本方法特意不以同步方式运行 fork child。
         """
 
         job = self.prepare_extraction_job(
@@ -202,7 +201,7 @@ class SessionMemoryExtractionService:
         tool_calls: tuple[Any, ...],
         usage: Any | None = None,
     ) -> SessionMemoryExtractionJob | None:
-        """Return a background extraction job when thresholds are met."""
+        """在满足阈值条件时返回后台提取作业。"""
 
         _ = assistant_message, usage
         if state.metadata.get("query_source") == "compact":
@@ -282,7 +281,7 @@ class SessionMemoryExtractionService:
         job: SessionMemoryExtractionJob,
         state: RuntimeState,
     ) -> dict[str, Any]:
-        """Run a prepared extraction job in a background task."""
+        """在后台任务中运行已准备的提取作业。"""
 
         current_decision = job.decision
         async with self._lock:
@@ -381,7 +380,7 @@ class SessionMemoryExtractionService:
                 self._active_done.set()
 
     async def wait_for_current_extraction(self, state: RuntimeState) -> None:
-        """Wait for an in-flight extraction before compaction consumes memory."""
+        """在压缩消费记忆前，等待正在进行的提取完成。"""
 
         if self._active_done.is_set() and not self._lock.locked():
             return

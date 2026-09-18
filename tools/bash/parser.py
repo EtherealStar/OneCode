@@ -1,8 +1,7 @@
-"""Tree-sitter backed Bash parser.
+"""基于 Tree-sitter 的 Bash 解析器。
 
-The parser deliberately exposes only OneCode dataclasses. Raw tree-sitter
-nodes stay private so downstream code cannot start depending on grammar
-internals or accidentally bypass the fail-closed walker.
+解析器刻意仅对外暴露 OneCode 数据类。原始 tree-sitter 节点保持私有，
+以防止下游代码依赖文法内部实现或意外绕过 fail-closed 遍历器。
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ _PARSER: Parser | None = None
 
 
 def parse_bash(command: str) -> BashAnalysis | BashParseError:
-    """Parse a command into simple commands or return a conservative error."""
+    """将命令解析为简单命令列表，或返回保守错误。"""
 
     precheck = _precheck(command)
     if precheck is not None:
@@ -79,8 +78,8 @@ def _parser() -> Parser:
         return _PARSER
     parser = Parser()
     language_value = tree_sitter_bash.language()
-    # tree-sitter-bash returns a PyCapsule with current bindings; older
-    # bindings accepted Language directly. Wrapping keeps this code explicit.
+    # tree-sitter-bash 当前绑定返回 PyCapsule；较旧的
+    # 绑定直接接受 Language。显式包装以保持代码清晰。
     language = Language(language_value)
     if hasattr(parser, "set_language"):
         parser.set_language(language)

@@ -1,4 +1,4 @@
-"""Convert MCP tool results into OneCode tool result content."""
+"""将 MCP 工具结果转换为 OneCode 工具结果内容。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 
 def render_mcp_tool_result(result: Any) -> tuple[str, dict[str, Any], bool]:
-    """Return model-visible text, sanitized metadata and error state."""
+    """返回模型可见文本、净化后的元数据以及错误状态。"""
 
     is_error = bool(_field(result, "isError", False))
     metadata: dict[str, Any] = {"mcp_is_error": is_error}
@@ -63,6 +63,6 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 
 
 def _sanitize_meta(value: dict[str, Any]) -> dict[str, Any]:
-    # Keep MCP metadata structured but shallow-copy it so callers cannot mutate
-    # SDK-owned result objects through ToolExecutionResult.metadata.
+    # 保持 MCP 元数据的结构化，但对其进行浅拷贝，
+    # 避免调用方通过 ToolExecutionResult.metadata 修改 SDK 拥有的结果对象。
     return dict(value)

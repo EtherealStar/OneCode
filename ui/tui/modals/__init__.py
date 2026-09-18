@@ -1,4 +1,4 @@
-"""Textual modal panels for the OneCode TUI."""
+"""OneCode TUI 的 Textual 模态弹窗面板包。"""
 
 from __future__ import annotations
 

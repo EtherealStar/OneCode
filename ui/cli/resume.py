@@ -1,7 +1,7 @@
-"""Backwards-compatible CLI import path for session resume helpers.
+"""用于会话恢复辅助函数的向后兼容 CLI 导入路径。
 
-The implementation moved to :mod:`application.sessions` so the application
-layer owns the resume business. Existing CLI callers keep importing here.
+具体实现已移至 application.sessions 模块，由应用层负责会话恢复业务。
+现有的 CLI 调用方可继续在此导入。
 """
 
 from __future__ import annotations

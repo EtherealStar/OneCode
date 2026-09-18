@@ -1,22 +1,16 @@
-"""Event coalescer for the streaming CLI.
+"""流式 CLI 的事件合并器。
 
-The provider emits a flurry of high-frequency events while streaming
-text — for example hundreds of ``assistant_delta`` events in a single
-turn. Applying every event to the reducer individually and triggering
-a screen redraw after each one would burn CPU for no visible benefit:
-the user cannot read characters faster than ~16 ms per glyph.
+Provider 在流式传输文本期间会发出大量高频事件，例如单个轮次内产生数百个
+assistant_delta 事件。若将每个事件单独交由 reducer 处理并在每个事件后触发屏幕重绘，
+将白白消耗 CPU 且无任何肉眼可见的好处：人类阅读字符的速度无法快于每个字形约 16 毫秒。
 
-This module provides :class:`StreamingCoalescer` which buffers bursts
-of high-frequency events into a single 16 ms window. Within a window
-the deltas are concatenated and the per-event reducers are only
-invoked once. Low-frequency events (``tool_call_ready``,
-``tool_started``, ``tool_result``, ``transition``, ``completed``,
-``error``) are applied immediately and force a flush of any pending
-batch so the visible UI stays in sync with the reducer.
+本模块提供 StreamingCoalescer，将高频突发事件缓冲进单个 16 毫秒窗口内。
+在窗口内，增量会被拼接累加，对应的 reducer 仅被调用一次。
+低频事件（tool_call_ready、tool_started、tool_result、transition、completed、
+error）会立即生效，并强制刷新任何待处理批次，确保可见 UI 与 reducer 保持同步。
 
-The window size matches the 16 ms (~60 fps) cadence used by the
-reference implementation. It's also roughly the threshold at which a
-human perceives a redraw as "instant".
+窗口大小与参考实现所用的 16 毫秒（约 60 fps）节奏保持一致，
+这也大致是人类感知屏幕重绘为“即时”的阈值。
 """
 
 from __future__ import annotations
@@ -29,31 +23,19 @@ if TYPE_CHECKING:
     from core.stream_events import AgentEvent
 
 
-#: Event types that can be batched. ``assistant_delta`` accumulates
-#: text and ``tool_progress`` overwrites the per-call progress string,
-#: so multiple events for the same call id collapse to the final
-#: value. ``tool_call_delta`` carries the streaming tool-call name;
-#: the reducer only reads the first one, so coalescing is safe.
+# 可合并的事件类型。assistant_delta 累积文本，tool_progress 覆盖针对调用的进度字符串
+# （同一调用 ID 的多个事件折叠为最终值）。tool_call_delta 携带流式工具调用名称；
+# reducer 仅读取首个名称，因此合并是安全的。
 _COALESCED_EVENT_TYPES = frozenset({"assistant_delta", "tool_progress", "tool_call_delta"})
 
 
 class StreamingCoalescer:
-    """Fold high-frequency agent events into 16 ms windows.
+    """将高频 agent 事件合并进 16 毫秒窗口。
 
-    Parameters
-    ----------
-    apply:
-        Reducer entry point. Receives a single :class:`AgentEvent`
-        that aggregates every event buffered in the current window
-        (or the original event for low-frequency / single-shot
-        events).
-    window_seconds:
-        How long pending events may sit in the buffer before a flush
-        is required. The default ``0.016`` is 16 ms.
-    clock:
-        Monotonic clock used for window accounting. Defaults to
-        :func:`time.monotonic`. Tests can inject a fake clock to
-        drive deterministic flush behaviour.
+    参数：
+        apply：reducer 入口点。接收聚合了当前窗口内所缓冲事件的单个 AgentEvent（或对于低频/单次事件接收原始事件）。
+        window_seconds：挂起事件在缓冲区内滞留的最长时间，超时需执行刷新。默认为 0.016（16 毫秒）。
+        clock：用于窗口计时的单调时钟。默认为 time.monotonic。测试可注入虚拟时钟以驱动确定性的刷新行为。
     """
 
     def __init__(
@@ -66,11 +48,9 @@ class StreamingCoalescer:
         self._apply = apply
         self._window_seconds = window_seconds
         self._clock = clock
-        # Pending batch state. We track the merged event per
-        # coalescable type so that a single window can have at most
-        # one merged ``assistant_delta`` and one merged
-        # ``tool_progress`` (the reducer reads only the latest
-        # progress message anyway).
+        # 挂起批次状态。我们按可合并类型跟踪合并事件，使单个窗口至多包含
+        # 一个合并后的 assistant_delta 和一个合并后的 tool_progress
+        # （reducer 无论如何只读取最新的进度消息）。
         self._pending_assistant_text: str = ""
         self._pending_assistant_metadata: dict | None = None
         self._has_pending_assistant = False
@@ -83,12 +63,10 @@ class StreamingCoalescer:
         self._last_flush = clock()
 
     def push(self, event: "AgentEvent") -> bool:
-        """Buffer ``event`` and apply it if it's a low-frequency event.
+        """缓冲 event；若为低频事件则立即生效。
 
-        Returns ``True`` when the event was applied immediately
-        (caller should schedule a screen redraw); returns ``False``
-        when it was merged into the pending batch and the caller
-        should wait for the next window to redraw.
+        当事件立即生效时返回 True（调用方应安排屏幕重绘）；
+        当事件被合并进挂起批次时返回 False（调用方应等待下个窗口重绘）。
         """
 
         event_type = getattr(event, "type", None)
@@ -98,9 +76,7 @@ class StreamingCoalescer:
             if text:
                 self._pending_assistant_text += text
                 self._has_pending_assistant = True
-            # Keep the latest event's attribution so the synthesised
-            # ``assistant_delta`` at flush time still carries a stable
-            # ``assistant_call_id`` and ``model_turn_index``.
+            # 保留最新事件的归属信息，使刷新时合成的 assistant_delta 依然携带稳定的 assistant_call_id 和 model_turn_index。
             if self._pending_assistant_metadata is None:
                 self._pending_assistant_metadata = dict(metadata)
             else:
@@ -124,18 +100,16 @@ class StreamingCoalescer:
                 self._pending_tool_metadata.update(metadata)
             self._has_pending_tool_delta = True
             return False
-        # Low-frequency event: flush any pending batch first so the
-        # visible state reflects the full history, then apply.
+        # 低频事件：先刷新所有待处理批次，使可见状态反映完整历史，然后生效。
         if self._has_pending():
             self.flush()
         self._apply(event)
         return True
 
     def flush(self) -> bool:
-        """Apply every pending event and clear the batch.
+        """使所有挂起事件生效并清空批次。
 
-        Returns ``True`` when at least one event was flushed. The
-        function is a no-op when nothing is pending.
+        当至少有一个事件被刷新时返回 True。无挂起内容时为空操作。
         """
 
         flushed = False
@@ -190,7 +164,7 @@ class StreamingCoalescer:
         return flushed
 
     def should_flush(self, now: float | None = None) -> bool:
-        """Return ``True`` when the window has elapsed and pending events exist."""
+        """当窗口已超时且存在挂起事件时返回 True。"""
 
         if not self._has_pending():
             return False
