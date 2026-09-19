@@ -20,5 +20,28 @@ dev = [
     "pytest>=8.0.0",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+onecode = "ui.cli.app:main"
+
+[tool.setuptools.packages.find]
+include = [
+    "application*",
+    "core*",
+    "infrastructure*",
+    "prompts*",
+    "services*",
+    "tools*",
+    "ui*",
+    "utils*",
+]
+exclude = ["reference*", "tests*", "docs*", "lessons*", "assets*"]
+
+[tool.setuptools.package-data]
+"ui.tui" = ["*.tcss"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

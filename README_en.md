@@ -64,6 +64,22 @@ OneCode's model Provider configuration is read from `.env`. If you prefer not to
 
 ### 2. Launch Terminal
 
+The recommended way is to install OneCode as a global terminal command (installed into an isolated environment, so it does not affect your system Python). Run once from the repository root:
+
+```bash
+uv tool install .
+```
+
+Then run it from any working directory:
+
+```bash
+onecode
+```
+
+The current working directory determines the workspace: OneCode reads `.env` from that directory and keeps `.onecode/` there.
+
+For source development you can skip the install and run it from the repository root instead:
+
 ```bash
 # On Windows, please activate the virtual environment first
 .\.venv\Scripts\Activate.ps1
@@ -77,6 +93,9 @@ TUI keys: `Enter` submits (selects a completion candidate first when the menu is
 Batch mode is also supported: it automatically enters batch processing when standard input is not a TTY, for example:
 
 ```bash
+echo "List the files in the current directory for me" | onecode
+
+# The source-run equivalent is:
 echo "List the files in the current directory for me" | uv run python -m ui.cli.app
 ```
 
