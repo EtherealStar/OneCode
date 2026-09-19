@@ -4,7 +4,7 @@
 
 本文描述 `ui/cli/` 的架构。CLI 是 OneCode 当前的增强 REPL 界面，负责应用装配、交互输入、命令处理、附件收集、权限提示和终端渲染，但不实现 agent 主循环、工具执行、安全策略或 provider 协议。
 
-启动：`uv run python -m ui.cli.app`（TTY 时启动 Textual 全屏 TUI；stdin 非 TTY 时走 batch 路径）。
+启动：安装后命令 `onecode`（`[project.scripts] onecode = "ui.cli.app:main"`），源码内为 `uv run python -m ui.cli.app`；两者都进入同一 `ui/cli/app.py::main`，TTY 时启动 Textual 全屏 TUI，stdin 非 TTY 时走 batch 路径。
 
 TTY 路径采用 **内联终端渲染模型**（与 Claude Code / Ink 的 Static + dynamic 分层同类，基于 `prompt_toolkit` + Rich）：定稿内容打印进终端正常缓冲区（继承终端明暗背景、可向上滚动回看）；底部输入框、流式预览、斜杠补全画在可擦除的动态区；`/status`、`/resume` 等临时界面进入备用屏幕（DEC 1049），退出后主屏幕恢复且临时内容不进入 scrollback。
 

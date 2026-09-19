@@ -5,5 +5,7 @@ __pycache__/
 .claude/
 .onecode/
 *.egg-info/
+dist/
+build/
 .env
 references/

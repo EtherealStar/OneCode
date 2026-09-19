@@ -64,6 +64,22 @@ OneCode 的模型 Provider 配置从 `.env` 读取。如果暂时不想配置，
 
 ### 2. 启动终端
 
+推荐把 OneCode 安装为全局终端命令（在隔离环境中安装，不影响系统 Python）。在仓库根执行一次：
+
+```bash
+uv tool install .
+```
+
+之后在任意工作目录直接运行：
+
+```bash
+onecode
+```
+
+当前工作目录决定 workspace：OneCode 从该目录读取 `.env`，并在该目录下维护 `.onecode/`。
+
+源码开发时也可以不安装，直接在仓库根运行：
+
 ```bash
 # Windows 请先激活虚拟环境
 .\.venv\Scripts\Activate.ps1
@@ -77,6 +93,9 @@ TUI 常用按键：`Enter` 提交（补全候选打开时先选候选）、`Ctrl
 也支持 Batch 模式：当标准输入不是 TTY 时自动进入批处理，例如：
 
 ```bash
+echo "帮我列出当前目录的文件" | onecode
+
+# 源码内运行等价于：
 echo "帮我列出当前目录的文件" | uv run python -m ui.cli.app
 ```
 
