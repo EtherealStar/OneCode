@@ -4,9 +4,9 @@
 
 ## Current State
 
-- Status: Milestone 1 complete (blocked from commit by explicit user request); Milestones 2–3 not started
-- Current milestone: Milestone 1 — 建立可复现且全绿的质量基线
-- Last updated: 2026-09-24 CST
+- Status: Milestones 1–2 complete; Milestone 3 not started。Milestone 1 已随 `9627fd9` 提交，Milestone 2 的全部改动按用户要求**未提交**，保留在工作区审核。
+- Current milestone: Milestone 2 — 建立快速的本地开发、commit 和 push 门禁（已完成）
+- Last updated: 2026-09-24 13:36 CST
 
 ## Milestones And Batches
 
@@ -14,9 +14,9 @@
 - [x] Milestone 1: 建立可复现且全绿的质量基线
   - [x] Batch 1: 锁定工具依赖与扫描边界
   - [x] Batch 2: 清理 Ruff、格式、Pyright 和 pytest 基线
-- [ ] Milestone 2: 建立快速的本地开发、commit 和 push 门禁
-  - [ ] Batch 1: 建立并验证 testmon 增量测试数据库
-  - [ ] Batch 2: 配置 pre-commit 与 pre-push hooks
+- [x] Milestone 2: 建立快速的本地开发、commit 和 push 门禁
+  - [x] Batch 1: 建立并验证 testmon 增量测试数据库
+  - [x] Batch 2: 配置 pre-commit 与 pre-push hooks
 - [ ] Milestone 3: 建立远端全量 GitHub CI 和合并门禁
   - [ ] Batch 1: 添加只读、可复现的 GitHub Actions workflow
   - [ ] Batch 2: 验证失败路径并配置所需检查
@@ -52,6 +52,12 @@
 
 - Observation: `tests/test_conversation_view.py::test_unmounted_message_reenters_with_full_content` 依赖运行顺序与初始滚动位置，是既有不稳定测试，且 M1 的排序/格式改动曾短暂放大它。
   Evidence: 单独运行偶发失败；在同一进程先运行任意其他 `ConversationApp` 测试后必失败。诊断（临时 worktree 对比 HEAD）显示失败在“重新挂载”断言：`scroll_to(y=0)` 是异步的，初始滚动位置也可能已在底部，断言前必须等待滚动/挂载结算。现改为显式 `scroll_to(0)` + 轮询等待；full suite 连续两次 820 passed。
+
+- Observation: `ruff format`/`ruff check` 在请求显式文件时会忽略 `[tool.ruff].exclude`，因此 pre-commit 把 `reference/` 文件作为参数传给 hook 时仍会被改写。这会让本应排除的参考代码被格式化。
+  Evidence: 首次 `pre-commit run --all-files` 改写了 24 个 `reference/ui/*.py`；在 hook 上增加 `exclude: ^(docs|reference|lessons)/` 后同一命令不再触碰这些文件（`git status` 仅剩待新增配置）。
+
+- Observation: pytest-testmon 2.2.0 按 AST/方法指纹而非原始文本判断改动，纯注释/空白改动不会选择测试；语义改动才会。Python 3.14 下 coverage 使用 sysmon core 会给出 “dynamic contexts … incomplete” 警告，但实测依赖记录与选择仍然有效。
+  Evidence: 追加注释后 `--testmon` 报告 `changed files: 0`、`no tests ran`；修改 `PROTECTED_PROJECT_DIRS` 常量后报告 `changed files: 10` 并选择 33 个测试（含 `tests/test_permission_policy.py`）。
 
 ## Validation Evidence
 
@@ -112,6 +118,38 @@
 - Command: `git check-ignore .ruff_cache .testmondata .venv`
   Result: 三者均被忽略；`git status --short` 中无工具缓存产物。
 
+### Milestone 2 执行证据（2026-09-24，Windows，Python 3.14.5，pytest-testmon 2.2.0，pre-commit 4.6.2，Ruff 0.16.8）
+
+- Command: `uv run python -m pytest --testmon-noselect tests -q`
+  Result: `820 passed` in 63.90s（首次）与 57.64s（刷新）；生成 `.testmondata`（684KB，820 test_execution、1803 file fingerprint、2083 依赖边）。
+
+- Command: `uv run python -m pytest --testmon tests -q`（无代码变化）
+  Result: `no tests ran in 0.02s`，选择 0 个测试，明显少于全量。
+
+- Command: 修改 `services/permissions/policy.py` 的 `PROTECTED_PROJECT_DIRS` 常量后 `uv run python -m pytest --testmon tests`
+  Result: `changed files: 10, unchanged files: 265`；`collected 107 items / 74 deselected / 33 selected`，包含 `tests/test_permission_policy.py`；验证后已 `git checkout` 恢复。
+  注意：先前的纯注释改动被正确忽略（`changed files: 0`），说明 testmon 基于 AST 指纹而非文本。
+
+- Command: `uv run pre-commit run --all-files`（修复 hook exclude 后，干净基线）
+  Result: `ruff check --fix (staged)`、`ruff format (staged)`、`pytest affected tests (testmon)` 全部 Passed，退出码 0，工作区无额外改动。
+
+- Command: `uv run pre-commit run --hook-stage pre-push --all-files`（干净基线）
+  Result: `ruff check (all)`、`ruff format --check (all)`、`pyright`、`pytest full suite (testmon refresh)` 全部 Passed，退出码 0。
+
+- Command: `uv run pre-commit install --hook-type pre-commit --hook-type pre-push`
+  Result: 生成 `.git/hooks/pre-commit` 与 `.git/hooks/pre-push`。
+
+- 失败路径验证 1（格式）：暂存一个未格式化的 `_tmp_format_probe.py` 后 `uv run pre-commit run`
+  Result: `ruff check --fix` Passed，`ruff format` 改写文件并 `Failed`，退出码 1；确认 hooks 会阻止提交。验证后已 unstage 并删除临时文件。
+
+- 失败路径验证 2（测试）：临时新增 `tests/test_tmp_fail_probe.py`（`assert False`）后 `uv run pre-commit run --hook-stage pre-push --all-files`
+  Result: 前三个 hook Passed，`pytest full suite` Failed（`1 failed, 820 passed`），退出码 1；确认 pre-push 会阻止推送。验证后已删除临时文件并 `--testmon-noselect` 刷新数据库（`820 passed`）。
+
+- Command: 生产模块临时改动经 pre-commit commit 阶段
+  Result: 语义改动 `services/permissions/policy.py` 触发 `pytest affected tests (testmon)` 并 Passed（底层 `--testmon` 选择 33 个测试）；恢复后工作区干净。
+
+- 偏差：本里程碑仍在 Python 3.14.5 + Windows 上验证（与 Milestone 1 一致）；testmon 数据库只服务本地，pre-push 与后续 CI 仍以全量 `--testmon-noselect`/普通 pytest 为事实来源。
+
 ## Artifacts And Notes
 
 - 计划入口：[plan.md](./plan.md)
@@ -132,4 +170,12 @@ Milestone 1 已完成并全绿：Ruff 默认规则零诊断且格式检查无 di
 - 发现并修复了 TTY 信任提示的真实缺陷；更新了两处过时/不稳定的测试（search 工具 prompt 前缀、REPL 退出信号、conversation-view 挂载等待），没有删除任何测试。
 - 机械格式化（209 文件）与语义修复在同一工作树中；两批改动可通过 `git diff` 按类型区分，但仍共享一次未提交的变更集。
 
-后续：启用 hooks/workflow 前需先完成 Milestone 2 的 testmon 基线与 `.pre-commit-config.yaml`，以及 Milestone 3 的 GitHub Actions。
+Milestone 2 已完成并验证：`.testmondata` 已建立且未被跟踪，无代码变化时增量运行选择 0 个测试，语义改动能选择覆盖它的测试；`.pre-commit-config.yaml` 的 commit/pre-push 两层 hooks 在干净基线上均退出码 0，格式问题会被改写并阻止提交，失败测试会阻止 push；`README.md` 增补了三层门禁的同步、testmon 初始化、hook 安装、手动复现与 `--no-verify` 说明。
+
+Milestone 2 实施决策与偏差：
+
+- 按用户明确要求，Milestone 2 的改动**未提交**；`README.md`（已修改）与 `.pre-commit-config.yaml`（新增）保留在工作区审核。
+- hook 级 `exclude: ^(docs|reference|lessons)/` 是必需的：Ruff 的 `[tool.ruff].exclude` 不作用于显式传入的文件，详见 `decisions.md`。
+- 两个失败路径的临时文件与生产代码验证改动均已恢复，工作区除本计划交付物外保持干净。
+
+后续：只剩 Milestone 3 —— 新增并验证 `.github/workflows/ci.yml`，并（如有权限）配置主分支 required status checks。

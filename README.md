@@ -116,6 +116,47 @@ OneCode 是一个典型的 harness-style 工程：项目的目标架构、知识
   uv run python -m compileall core services infrastructure      # 编译检查
   ```
 
+### 质量门禁
+
+本仓库使用三层质量门禁：本地 commit 前、本地 push 前、GitHub CI。所有工具都通过 `uv` 锁定版本，请始终在仓库根目录执行以下命令。
+
+**1. 首次同步并安装 hooks**
+
+```bash
+uv sync --locked --dev                                  # 安装锁定版本的工具
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+**2. 初始化增量测试数据库**
+
+commit 前的测试选择依赖 `pytest-testmon` 的 `.testmondata`（本地缓存，不提交）。首次接入或缓存失效时先运行一次全量测试建立基线：
+
+```bash
+uv run python -m pytest --testmon-noselect tests -q     # 全量执行并记录依赖
+```
+
+**3. 三层验证命令**
+
+```bash
+# commit 阶段：只针对暂存文件做 Ruff 修正/格式化，并运行受影响的测试
+uv run pre-commit run
+
+# push 阶段：无条件运行全仓 Ruff、格式检查、Pyright 和全量测试（并刷新 testmon 数据库）
+uv run pre-commit run --hook-stage pre-push --all-files
+
+# 手动等价命令
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv run python -m pytest tests -q
+```
+
+`ruff check --fix` 和 `ruff format` 会直接修改暂存文件；一旦发生修改，pre-commit 会阻止本次提交，请检查改动并重新 `git add` 后再提交。
+
+**4. 紧急绕过**
+
+`git commit`/`git push` 时加 `--no-verify`（或 `git commit -n`）可临时跳过本地 hooks，但**不能绕过 GitHub CI**：push 后远端仍会在干净的 Python 3.11 环境执行同样的只读全量检查，不通过则无法合并。因此不要用绕过替代修复。
+
 ---
 
 ## 模块文档索引
