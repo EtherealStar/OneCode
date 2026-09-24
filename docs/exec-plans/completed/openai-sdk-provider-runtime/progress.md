@@ -4,8 +4,8 @@
 
 ## Current State
 
-- Status: Milestone 1, 2 and 3 complete; Milestone 4 not started.
-- Current milestone: Milestone 3, 标准模型 API 与客户端生命周期收口（已完成）。
+- Status: 全部里程碑完成；计划已归档到 `docs/exec-plans/completed/`。
+- Current milestone: Milestone 4, 跨模块验收与文档对齐（已完成）。
 - Last updated: 2026-09-24 Asia/Shanghai.
 - Working tree: 计划创建前已有大量已修改文件；不可将这些改动视为本计划成果，也不可重置。
 
@@ -20,9 +20,9 @@
 - [x] Milestone 3: 标准模型 API 与客户端生命周期收口。
   - [x] Batch 1: 模型发现和连接探测。
   - [x] Batch 2: 所有权、关闭和旧传输删除。
-- [ ] Milestone 4: 跨模块验收与文档对齐。
-  - [ ] Batch 1: 端到端本地协议演练。
-  - [ ] Batch 2: 文档和清理。
+- [x] Milestone 4: 跨模块验收与文档对齐。
+  - [x] Batch 1: 端到端本地协议演练。
+  - [x] Batch 2: 文档和清理。
 
 ## Surprises And Discoveries
 
@@ -30,8 +30,8 @@
   Evidence: `uv lock`/`uv sync --dev` 解析出 `httpx2==2.13.1`；契约测试用 `httpx.AsyncClient(transport=httpx.MockTransport(...))` 注入 SDK 并成功观察请求。
 - Observation: `AsyncStream.close()` 只关闭底层 response，不保证后续 `__anext__` 抛 `StopAsyncIteration`（MockTransport 下仍可能返回已缓冲 chunk）。关闭语义测试只断言 close 幂等与 client 关闭安全。
   Evidence: `openai/_streaming.py` 中 `close()` 调 `response.aclose()`；`test_sdk_stream_close_is_safe_after_partial_consumption`。
-- Observation: `services/model/retry.py` 立即转发每个事件；`docs/design-docs/model-provider-architecture.md` 仍记载先缓冲所有事件。
-  Evidence: `ModelRetryRunner.stream()` 中的 `async for event in operation(): yield event`。
+- Observation: `services/model/retry.py` 立即转发每个事件；M2 时 `docs/design-docs/model-provider-architecture.md` 已先改为非缓冲描述，但 `core-runtime-architecture.md` 的时序图仍写“缓冲后的事件”。M4 Batch 2 已改正时序图。
+  Evidence: `ModelRetryRunner.stream()` 中的 `async for event in operation(): yield event`；`core-runtime-architecture.md` 时序图现为“立即转发的事件 (部分输出保持可见)”。
 - Observation: `/connect` 的标准模型列表和模型连通性探测还用 `UrllibHttpTransport`；只替换 async 模型流无法达成“能由 SDK 接管的由 SDK 接管”。
   Evidence: `infrastructure/providers/model_catalog.py` 中的 `fetch_models_for_connect()` 与 `test_model_connection()`。
 - Observation: `application/runtime.py::with_model_config()` 会换掉 client，但当前没有关闭旧 client 的流程；`services/mcp/manager.py` 直接依赖 `httpx`，删除模型专用 httpx 传输后也不能移除项目的显式 httpx 依赖。
@@ -86,6 +86,19 @@
 - 完整套件 `uv run python -m pytest tests -q` → 815 passed, 3 failed（同上 3 个既有失败）。
 - 后续清理（用户要求）：移除 `test_openai_compatible_provider.py` 中遗留的 `claude-openai-compatible` catalog 期望。本项目不实现 Claude/Anthropic 协议或配置，`catalog.py` 从未定义该 provider。重跑 `uv run python -m pytest tests -q` → 816 passed, 2 failed（仅剩 `test_search_tools`、`test_conversation_view` 两个与本计划无关的既有失败）。
 
+### Milestone 4
+
+- Batch 1：`tests/test_runtime_integration.py` 新增两条端到端用例，均由 `httpx.MockTransport` 支撑真实 SDK 传输：
+  - `test_provider_loop_streams_answer_and_pairs_transcript`：第一次回复流式声明 `read_file` 工具调用，执行器实际读取文件，第二次回复分两段 `read "`/`complete` 输出最终答案。断言 UI 逐段收到 `assistant_delta`、`tool_result` 事件到达、`completed` 文本正确，且 transcript 中 assistant 工具声明与其 `tool_result` 按相同 `tool_call_id`、`assistant_call_id`、`model_turn_index` 配对。
+  - `test_provider_loop_retries_rate_limit_once_with_trace`：首次请求返回 429、第二次成功。断言仅发出两次 HTTP 请求、恰好一次 `rate_limit_retry` 流转事件、trace 中恰好一条 `model_retry`（`status_code=429`、`partial_output_visible=false`），最终文本为恢复后的回复。
+  - 命令：`uv run python -m pytest tests/test_runtime_integration.py -q` → 4 passed。
+- 完整套件：`uv run python -m pytest tests -q` → 818 passed, 2 failed（仅 `test_search_tools`、`test_conversation_view` 两个与本计划无关的既有失败）。
+- Batch 2：修正 `docs/design-docs/core-runtime-architecture.md` 时序图中残留的“缓冲后的事件 (失败attempt丢弃)”为“立即转发的事件 (部分输出保持可见)”；核对 `model-provider-architecture.md`、`architecture.md` 的 SDK 边界、`http.py` 职责与 `/models` 探测描述均与实际实现一致，无需再改。
+- `uv run python -m pytest tests/test_import_boundaries.py -q` → 8 passed。
+- `uv run python -m compileall core services infrastructure application -q` 通过。
+- `rg -n 'HttpxAsyncHttpTransport|parse_sse_json_line|AsyncHttpTransport' infrastructure application core services` → 无匹配（exit 1）。
+- `git diff --check` 无空白错误（仅 LF→CRLF 提示）。
+
 ## Artifacts And Notes
 
 - [计划入口](./plan.md)、[实施批次](./execution.md)、[执行决策](./decisions.md)。
@@ -105,4 +118,6 @@ Milestone 2（2026-09-24）完成：`chat_completions.py` 改为消费 SDK typed
 
 Milestone 3（2026-09-24）完成：`model_catalog.py` 的标准 `/models` 与 `/connect` 标准 Chat Completions 探测改由同步 SDK client 发出，保留候选 base URL 顺序与 Ollama 原生路径；应用拥有并复用 SDK client，`application/session.py` 在 worker/子任务/流结束后关闭它，热重载成功关闭旧 client、失败关闭新 client；`http.py` 删除无调用者的异步传输与 SSE parser，`httpx` 依赖因 MCP 直接导入而保留。剩余差距：端到端本地协议演练、完整文档对齐与计划归档（M4）。
 
-目标是在不引入 SDK 到 core/services 的前提下，删除自建标准 API 传输/SSE 代码，并保持实际 agent 交互行为。完成每个里程碑时记录可观察结果和剩余差距。
+Milestone 4（2026-09-24）完成：`tests/test_runtime_integration.py` 增加端到端本地协议演练，证明一次工具调用（声明→执行→结果回填→续轮）在 transcript 中正确配对，最终答案逐段流式到达 UI，且 429 重试恰好两次请求、trace 中一次 `model_retry`。文档对齐修正了 `core-runtime-architecture.md` 残留的缓冲式重试描述，并核对 `model-provider-architecture.md`、`architecture.md` 的 SDK 边界与文件职责与实现一致。依赖边界、编译、无生产引用与空白检查全部通过。计划归档到 `docs/exec-plans/completed/`。
+
+目标是在不引入 SDK 到 core/services 的前提下，删除自建标准 API 传输/SSE 代码，并保持实际 agent 交互行为。四个里程碑全部达成，剩余仅两个与本计划无关的工作树既有测试失败。

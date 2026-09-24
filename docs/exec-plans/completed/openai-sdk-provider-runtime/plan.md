@@ -64,3 +64,5 @@ SDK 管理 HTTP 连接、序列化、SSE 解析和标准 API 响应对象。OneC
 ## Change Note
 
 2026-09-23：首次建立计划。范围根据现有代码和 SDK 调研扩至标准模型发现与连通性探测，并纳入热重载时的客户端关闭。
+
+2026-09-24：Milestone 1–4 全部完成。端到端本地协议演练证明工具调用续轮、transcript 配对、逐段流式输出与 429 重试语义；文档对齐修正了 `core-runtime-architecture.md` 残留的缓冲式重试描述。计划归档到 `docs/exec-plans/completed/`。
