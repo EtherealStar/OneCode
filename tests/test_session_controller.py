@@ -76,12 +76,27 @@ class FakeLoop:
         return self.facts
 
 
+class FakeModelClient:
+    """统计异步关闭次数的模型客户端替身。"""
+
+    def __init__(self, name: str = "fake-client") -> None:
+        self.name = name
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+    def stream(self, snapshot: Any):
+        raise AssertionError("model should not be called by session lifecycle tests")
+
+
 def make_runtime(
     tmp_path: Path,
     loop: FakeLoop,
     *,
     configured: bool = True,
     store: MessageStore | None = None,
+    model_client: Any | None = None,
 ) -> SimpleNamespace:
     state = RuntimeState()
     message_store = store or MessageStore(
@@ -93,6 +108,7 @@ def make_runtime(
         message_store=message_store,
         configured=configured,
         loop=loop,
+        model_client=model_client,
         provider_label="Fake",
         model="fake-model",
         error_log_recorder=ErrorLogRecorder.noop(),
@@ -493,6 +509,103 @@ def test_close_is_idempotent_and_flushes(tmp_path: Path) -> None:
         # A submit after close is rejected rather than starting a turn.
         receipt = await controller.submit("late")
         assert receipt.status == "rejected"
+
+    asyncio.run(scenario())
+
+
+class ReloadableRuntime:
+    """支持 ``with_model_config`` 重绑定的最小运行时替身。"""
+
+    def __init__(self, workspace: Path, model_client: Any) -> None:
+        self.workspace = workspace
+        self.state = RuntimeState()
+        self.message_store = MessageStore(
+            transcript_store=InMemoryTranscriptStore(self.state.session_id)
+        )
+        self.configured = True
+        self.loop = FakeLoop()
+        self.model_client = model_client
+        self.provider_label = "old"
+        self.model = "old-model"
+        self.error_log_recorder = ErrorLogRecorder.noop()
+        self.trace_recorder = TraceRecorder.noop()
+        self.attachment_collector = None
+        self.plan_store = None
+        self.permission_prompter = None
+        self.user_question_prompter = None
+        self.mcp_manager = None
+
+    def with_model_config(self, *, model_client: Any | None = None) -> "ReloadableRuntime":
+        rebound = ReloadableRuntime(self.workspace, model_client)
+        rebound.provider_label = "new"
+        rebound.model = "new-model"
+        return rebound
+
+
+def test_close_closes_model_client_exactly_once(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        model = FakeModelClient()
+        controller = SessionController(
+            make_runtime(tmp_path, FakeLoop(), model_client=model)
+        )
+        await controller.start()
+        await controller.close()
+        await controller.close()
+
+        assert model.close_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_reload_model_config_closes_old_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        old_model = FakeModelClient("old")
+        new_model = FakeModelClient("new")
+        runtime = ReloadableRuntime(tmp_path, old_model)
+        monkeypatch.setattr(
+            "application.session.create_model_client",
+            lambda env_path: new_model,
+        )
+        controller = SessionController(runtime)
+
+        reloaded = await controller.reload_model_config()
+
+        assert reloaded is True
+        assert controller.runtime.model_client is new_model
+        assert old_model.close_count == 1
+        assert new_model.close_count == 0
+
+    asyncio.run(scenario())
+
+
+def test_reload_model_config_failure_keeps_old_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        old_model = FakeModelClient("old")
+        new_model = FakeModelClient("new")
+        runtime = ReloadableRuntime(tmp_path, old_model)
+        monkeypatch.setattr(
+            "application.session.create_model_client",
+            lambda env_path: new_model,
+        )
+
+        def fail(self: ReloadableRuntime, *, model_client: Any | None = None):
+            raise RuntimeError("assembly failed")
+
+        monkeypatch.setattr(ReloadableRuntime, "with_model_config", fail)
+        controller = SessionController(runtime)
+
+        reloaded = await controller.reload_model_config()
+
+        assert reloaded is False
+        assert controller.runtime is runtime
+        assert old_model.close_count == 0
+        assert new_model.close_count == 1
 
     asyncio.run(scenario())
 

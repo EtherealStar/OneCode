@@ -118,7 +118,7 @@ sequenceDiagram
 
 ### 错误恢复分层
 
-- HTTP/transport 把 429/5xx/网络错误标记为 `ProviderError(retryable=...)`。
+- provider adapter 把 SDK 的 HTTP 状态、连接与超时异常归一化为 `ProviderError(retryable=...)`；标准 API 的传输和 SSE 解码归 SDK。已实现，见 `model-provider-architecture.md`。
 - `ModelRetryRunner` 对 `retryable` 且非 `context_limit_exceeded` 的错误做指数退避，映射为 `rate_limit_retry`；耗尽后抛 `RetryExhaustedError`。
 - `AgentLoop` 处理 `context_limit_exceeded`（reactive compact）和 `output_interrupted`（escalate / recovery）。
 - 不可恢复错误经 `error_log_recorder` 记录后向上抛出。

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from core.context_engine import ContextEngine
 from core.loop import AgentLoop
@@ -12,6 +13,12 @@ from core.runtime_state import RuntimeState
 from infrastructure.config.env import ResolvedProviderConfig
 from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
 from infrastructure.providers.catalog import get_provider_definition
+from sdk_test_support import (
+    SSE_HEADERS,
+    async_sdk,
+    text_chunk,
+    tool_call_chunk,
+)
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
 from services.tools.executor import RegistryToolExecutor
@@ -20,45 +27,44 @@ from tools.edit_file import descriptor as edit_file_descriptor
 from tools.read_file import descriptor as read_file_descriptor
 
 
-@dataclass
-class SequencedTransport:
-    responses: list[dict[str, Any]]
-    post_calls: list[tuple[str, dict[str, str], dict[str, Any], float]] = field(
-        default_factory=list
-    )
+class SequencedSdkHandler:
+    """为每个请求返回一段 SSE 流，并记录出站请求体。"""
 
-    async def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        self.post_calls.append((url, headers, payload, timeout_seconds))
-        if not self.responses:
+    def __init__(self, turns: list[list[dict[str, Any]]]) -> None:
+        self._turns = list(turns)
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if not self._turns:
             raise AssertionError("Unexpected provider call")
-        return self.responses.pop(0)
+        chunks = self._turns.pop(0)
+        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        return httpx.Response(
+            200,
+            content=body + "data: [DONE]\n\n",
+            headers=SSE_HEADERS,
+        )
 
-    async def stream_json_lines(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-        timeout_seconds: float,
-    ) -> AsyncIterator[dict[str, Any]]:
-        response = await self.post_json(url, headers, payload, timeout_seconds)
-        message = response["choices"][0]["message"]
-        finish_reason = response["choices"][0].get("finish_reason")
-        delta: dict[str, Any] = {}
-        if message.get("content") is not None:
-            delta["content"] = message.get("content")
-        if message.get("tool_calls") is not None:
-            delta["tool_calls"] = [
-                {"index": index, **tool_call}
-                for index, tool_call in enumerate(message["tool_calls"])
-            ]
-            finish_reason = finish_reason or "tool_calls"
-        yield {"choices": [{"delta": delta, "finish_reason": finish_reason}]}
+    @property
+    def bodies(self) -> list[dict[str, Any]]:
+        return [json.loads(request.content) for request in self.requests]
+
+
+def tool_call_turn(call_id: str, name: str, arguments: str) -> list[dict[str, Any]]:
+    return [
+        tool_call_chunk(
+            0,
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            finish_reason="tool_calls",
+        )
+    ]
+
+
+def text_turn(content: str) -> list[dict[str, Any]]:
+    return [text_chunk(content, finish_reason="stop")]
 
 
 def make_config() -> ResolvedProviderConfig:
@@ -77,8 +83,8 @@ def make_config() -> ResolvedProviderConfig:
 
 def make_loop(
     workspace: Path,
-    transport: SequencedTransport,
-) -> tuple[AgentLoop, ToolRegistry]:
+    handler: SequencedSdkHandler,
+) -> tuple[AgentLoop, ToolRegistry, Any]:
     state = RuntimeState()
     message_store = MessageStore(
         transcript_root=workspace / ".onecode",
@@ -89,50 +95,19 @@ def make_loop(
     registry = ToolRegistry([read_file_descriptor(), edit_file_descriptor()])
     context_engine = ContextEngine(message_store, tool_schema_provider=registry)
     guard = SandboxGuard(SandboxBoundary(cwd=workspace))
+    config = make_config()
+    sdk = async_sdk(config, handler)
     loop = AgentLoop(
         state=state,
         message_store=message_store,
         context_engine=context_engine,
-        model_client=OpenAICompatibleChatCompletionsClient(
-            make_config(),
-            async_transport=transport,
-        ),
+        model_client=OpenAICompatibleChatCompletionsClient(config, sdk_client=sdk),
         tool_executor=RegistryToolExecutor(registry, guard=guard),
     )
-    return loop, registry
+    return loop, registry, sdk
 
 
-def tool_call_response(
-    call_id: str,
-    name: str,
-    arguments: str,
-) -> dict[str, Any]:
-    return {
-        "choices": [
-            {
-                "message": {
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": arguments,
-                            },
-                        }
-                    ],
-                }
-            }
-        ]
-    }
-
-
-def final_response(content: str) -> dict[str, Any]:
-    return {"choices": [{"message": {"content": content}}]}
-
-
-def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
+def run_to_final_text(loop: AgentLoop, prompt: str, sdk: Any | None = None) -> str:
     async def run() -> str:
         final_text = ""
         async for event in loop.stream(prompt):
@@ -140,7 +115,11 @@ def run_to_final_text(loop: AgentLoop, prompt: str) -> str:
                 final_text = event.text
         return final_text
 
-    return asyncio.run(run())
+    try:
+        return asyncio.run(run())
+    finally:
+        if sdk is not None:
+            asyncio.run(sdk.close())
 
 
 def test_provider_loop_can_read_file_with_registry_executor(
@@ -149,25 +128,21 @@ def test_provider_loop_can_read_file_with_registry_executor(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
-    transport = SequencedTransport(
+    handler = SequencedSdkHandler(
         [
-            tool_call_response(
-                "call_read",
-                "read_file",
-                '{"file_path":"a.txt"}',
-            ),
-            final_response("read complete"),
+            tool_call_turn("call_read", "read_file", '{"file_path":"a.txt"}'),
+            text_turn("read complete"),
         ]
     )
-    loop, registry = make_loop(workspace, transport)
+    loop, registry, sdk = make_loop(workspace, handler)
 
-    result = run_to_final_text(loop, "inspect a.txt")
+    result = run_to_final_text(loop, "inspect a.txt", sdk)
 
     assert result == "read complete"
-    assert len(transport.post_calls) == 2
-    first_payload = transport.post_calls[0][2]
+    assert len(handler.bodies) == 2
+    first_payload = handler.bodies[0]
     assert first_payload["tools"] == list(registry.tool_schemas(loop.state))
-    second_messages = transport.post_calls[1][2]["messages"]
+    second_messages = handler.bodies[1]["messages"]
     assert second_messages[-1] == {
         "role": "tool",
         "tool_call_id": "call_read",
@@ -182,14 +157,10 @@ def test_provider_loop_can_read_then_edit_file(
     workspace.mkdir()
     target = workspace / "a.txt"
     target.write_text("hello old world", encoding="utf-8")
-    transport = SequencedTransport(
+    handler = SequencedSdkHandler(
         [
-            tool_call_response(
-                "call_read",
-                "read_file",
-                '{"file_path":"a.txt"}',
-            ),
-            tool_call_response(
+            tool_call_turn("call_read", "read_file", '{"file_path":"a.txt"}'),
+            tool_call_turn(
                 "call_edit",
                 "edit_file",
                 (
@@ -197,17 +168,17 @@ def test_provider_loop_can_read_then_edit_file(
                     '"new_string":"new"}'
                 ),
             ),
-            final_response("edit complete"),
+            text_turn("edit complete"),
         ]
     )
-    loop, _registry = make_loop(workspace, transport)
+    loop, _registry, sdk = make_loop(workspace, handler)
 
-    result = run_to_final_text(loop, "change a.txt")
+    result = run_to_final_text(loop, "change a.txt", sdk)
 
     assert result == "edit complete"
     assert target.read_text(encoding="utf-8") == "hello new world"
-    assert len(transport.post_calls) == 3
-    edit_payload_messages = transport.post_calls[2][2]["messages"]
+    assert len(handler.bodies) == 3
+    edit_payload_messages = handler.bodies[2]["messages"]
     assert edit_payload_messages[-1]["role"] == "tool"
     assert edit_payload_messages[-1]["tool_call_id"] == "call_edit"
     assert "replacement(s)" in edit_payload_messages[-1]["content"]
