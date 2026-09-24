@@ -8,7 +8,6 @@ from typing import Any, Literal
 from services.model.types import ModelUsage
 from services.tools.types import ToolCall
 
-
 ModelStreamEventType = Literal[
     "content_delta",
     "tool_call_delta",
@@ -39,7 +38,7 @@ class ModelStreamEvent:
         *,
         block_index: int | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> "ModelStreamEvent":
+    ) -> ModelStreamEvent:
         return cls(
             type="content_delta",
             text=text,
@@ -52,7 +51,7 @@ class ModelStreamEvent:
         cls,
         *,
         metadata: dict[str, Any],
-    ) -> "ModelStreamEvent":
+    ) -> ModelStreamEvent:
         return cls(type="tool_call_delta", metadata=metadata)
 
     @classmethod
@@ -61,7 +60,7 @@ class ModelStreamEvent:
         tool_call: ToolCall,
         *,
         metadata: dict[str, Any] | None = None,
-    ) -> "ModelStreamEvent":
+    ) -> ModelStreamEvent:
         return cls(
             type="tool_call_completed",
             tool_call=tool_call,
@@ -79,7 +78,7 @@ class ModelStreamEvent:
         usage: ModelUsage | None = None,
         output_interrupted: bool = False,
         metadata: dict[str, Any] | None = None,
-    ) -> "ModelStreamEvent":
+    ) -> ModelStreamEvent:
         return cls(
             type="message_completed",
             assistant_message=assistant_message,
@@ -94,5 +93,5 @@ class ModelStreamEvent:
         )
 
     @classmethod
-    def usage_event(cls, usage: ModelUsage) -> "ModelStreamEvent":
+    def usage_event(cls, usage: ModelUsage) -> ModelStreamEvent:
         return cls(type="usage", usage=usage)

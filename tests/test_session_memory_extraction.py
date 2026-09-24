@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +40,7 @@ def message_chain(text: str, *, tool_calls: int = 0) -> tuple[dict[str, Any], ..
     assistant: dict[str, Any] = {"role": "assistant", "content": "response"}
     if tool_calls:
         assistant["tool_calls"] = [
-            {"id": f"call-{index}", "name": "read_file"}
-            for index in range(tool_calls)
+            {"id": f"call-{index}", "name": "read_file"} for index in range(tool_calls)
         ]
     return ({"role": "user", "content": text}, assistant)
 

@@ -120,7 +120,9 @@ def test_file_tool_descriptors_classify_input() -> None:
         assert classification.targets[0].kind == "file"
         assert classification.targets[0].operation == operation
         assert classification.targets[0].value == "a.txt"
-        assert classification.result_policy.max_result_size_chars == max_result_size_chars
+        assert (
+            classification.result_policy.max_result_size_chars == max_result_size_chars
+        )
         assert classification.permission_subject == permission_subject
 
 

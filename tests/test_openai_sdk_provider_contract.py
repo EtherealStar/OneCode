@@ -61,10 +61,15 @@ def resolved_config(
 
 
 def sse_text(chunks: list[dict[str, Any]]) -> str:
-    return "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+    return (
+        "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        + "data: [DONE]\n\n"
+    )
 
 
-def chat_chunk(*, content: str | None = None, finish_reason: str | None = None) -> dict[str, Any]:
+def chat_chunk(
+    *, content: str | None = None, finish_reason: str | None = None
+) -> dict[str, Any]:
     delta: dict[str, Any] = {}
     if content is not None:
         delta["content"] = content
@@ -91,7 +96,9 @@ class Recorder:
         return json.loads(self.requests[0].content)
 
 
-def async_sdk(config: ResolvedProviderConfig, handler: Callable[..., httpx.Response]) -> AsyncOpenAI:
+def async_sdk(
+    config: ResolvedProviderConfig, handler: Callable[..., httpx.Response]
+) -> AsyncOpenAI:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return AsyncOpenAI(
         api_key=config.api_key or "local-placeholder",
@@ -103,9 +110,13 @@ def async_sdk(config: ResolvedProviderConfig, handler: Callable[..., httpx.Respo
     )
 
 
-def run_stream_chunks(config: ResolvedProviderConfig, chunks: list[dict[str, Any]]) -> list[Any]:
+def run_stream_chunks(
+    config: ResolvedProviderConfig, chunks: list[dict[str, Any]]
+) -> list[Any]:
     recorder = Recorder(
-        lambda _request: httpx.Response(200, content=sse_text(chunks), headers=SSE_HEADERS)
+        lambda _request: httpx.Response(
+            200, content=sse_text(chunks), headers=SSE_HEADERS
+        )
     )
     sdk = async_sdk(config, recorder)
     collected: list[Any] = []
@@ -397,7 +408,9 @@ def test_sdk_status_and_connection_errors_are_typed() -> None:
         400: openai.BadRequestError,
     }
 
-    async def call_status(status: int, headers: dict[str, str] | None = None) -> BaseException:
+    async def call_status(
+        status: int, headers: dict[str, str] | None = None
+    ) -> BaseException:
         recorder = Recorder(
             lambda _request: httpx.Response(
                 status,

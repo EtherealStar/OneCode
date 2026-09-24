@@ -145,7 +145,9 @@ def test_queued_tool_shows_queued_marker_no_preview() -> None:
         state,
         _evt(
             "tool_call_ready",
-            metadata={"tool_call": _Call(id="c1", name="read_file", input={"path": "x.py"})},
+            metadata={
+                "tool_call": _Call(id="c1", name="read_file", input={"path": "x.py"})
+            },
         ),
     )
     body = render_stream_body_ansi(state, width=80)

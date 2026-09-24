@@ -9,14 +9,6 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.theme import Theme
 from textual.widgets import Static, TextArea
-
-from application.history import HistoryToolCall
-from application.types import ToolUpdate
-from ui.tui.conversation.viewport import MessageWidget
-from ui.tui.projection import ConversationProjection
-from ui.tui.renderers.message import render_message
-from ui.tui.theme import RICH_STYLES
-
 from tui_test_support import (
     ConversationApp,
     assistant_record,
@@ -24,6 +16,12 @@ from tui_test_support import (
     text_history,
     user_record,
 )
+
+from application.history import HistoryToolCall
+from application.types import ToolUpdate
+from ui.tui.projection import ConversationProjection
+from ui.tui.renderers.message import render_message
+from ui.tui.theme import RICH_STYLES
 
 
 def render_to_text(renderable, width: int = 200) -> str:
@@ -48,6 +46,17 @@ def _assert_bounded(app: ConversationApp) -> None:
     # At most ``viewport height`` messages can be visible; overscan adds <= 16.
     assert viewport.mounted_message_count <= viewport.size.height + 16
     assert viewport.mounted_message_count < 100
+
+
+async def _wait_until(
+    pilot, predicate, *, attempts: int = 40, delay: float = 0.05
+) -> None:
+    """轮询等待异步挂载/刷新完成，避免依赖固定 pause 时长的偶发失败。"""
+
+    for _ in range(attempts):
+        if predicate():
+            return
+        await pilot.pause(delay)
 
 
 def test_textual_core_api_surface_is_available() -> None:
@@ -94,9 +103,7 @@ def test_textual_core_api_surface_is_available() -> None:
 
 def test_mount_count_is_bounded_at_both_sizes() -> None:
     async def scenario() -> None:
-        projection = ConversationProjection(
-            make_snapshot(history=text_history(5000))
-        )
+        projection = ConversationProjection(make_snapshot(history=text_history(5000)))
         app = ConversationApp(projection)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
@@ -125,14 +132,19 @@ def test_unmounted_message_reenters_with_full_content() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             viewport = app.viewport
+            # 初始滚动位置可能是底部；显式回到顶部以确保 u0 可见。
+            viewport.scroll_to(y=0, animate=False)
+            await _wait_until(pilot, lambda: viewport.widget_for("u0") is not None)
             first = viewport.widget_for("u0")
             assert first is not None
             assert "first body" in render_to_text(render_message(first.message))
             viewport.jump_to_latest()
+            # 固定等待让 jump_to_latest 的内建滚动结算，否则其挂起的滚动
+            # 会覆盖随后的 scroll_to(0)，导致 u0 无法重新挂载。
             await pilot.pause(0.2)
             assert viewport.widget_for("u0") is None
             viewport.scroll_to(y=0, animate=False)
-            await pilot.pause(0.2)
+            await _wait_until(pilot, lambda: viewport.widget_for("u0") is not None)
             reentered = viewport.widget_for("u0")
             assert reentered is not None
             assert "first body" in render_to_text(render_message(reentered.message))
@@ -147,7 +159,13 @@ def test_tool_completion_order_does_not_move_cards() -> None:
             HistoryToolCall("t2", "read_file", {"path": "b.py"}),
         )
         history = (
-            assistant_record("a1", "working", assistant_call_id="c1", model_turn_index=0, tool_calls=calls),
+            assistant_record(
+                "a1",
+                "working",
+                assistant_call_id="c1",
+                model_turn_index=0,
+                tool_calls=calls,
+            ),
         )
         projection = ConversationProjection(make_snapshot(history=history))
         app = ConversationApp(projection)
@@ -172,9 +190,7 @@ def test_tool_completion_order_does_not_move_cards() -> None:
             assert widget is not None
             tool_ids = [p.tool_call_id for p in widget.message.parts if p.tool_name]
             assert tool_ids == ["t1", "t2"]
-            by_id = {
-                p.tool_call_id: p for p in widget.message.parts if p.tool_name
-            }
+            by_id = {p.tool_call_id: p for p in widget.message.parts if p.tool_name}
             assert by_id["t2"].result_preview == "b result"
             assert by_id["t1"].result_preview is None
 

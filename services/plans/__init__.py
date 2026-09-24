@@ -8,20 +8,20 @@ core.runtime_state.RuntimeState.plan 中；本包属于纯文件系统与提示�
 from services.plans.injection import build_plan_attachments_for_state
 from services.plans.store import PlanStore, PlanStoreError
 from services.plans.transitions import (
+    consume_plan_mode_attachment,
+    consume_plan_mode_exit_attachment,
     enter_plan_mode,
     exit_plan_mode,
     request_plan_mode_attachment,
-    consume_plan_mode_attachment,
-    consume_plan_mode_exit_attachment,
 )
 
 __all__ = [
     "PlanStore",
     "PlanStoreError",
     "build_plan_attachments_for_state",
+    "consume_plan_mode_attachment",
+    "consume_plan_mode_exit_attachment",
     "enter_plan_mode",
     "exit_plan_mode",
     "request_plan_mode_attachment",
-    "consume_plan_mode_attachment",
-    "consume_plan_mode_exit_attachment",
 ]

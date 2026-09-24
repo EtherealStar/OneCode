@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from services.subagents.types import AgentDefinition
 
-
 GENERAL_PURPOSE_PROMPT = """You are a general-purpose subagent for OneCode.
 
 Use the available tools to perform complex searches, multi-step research, and

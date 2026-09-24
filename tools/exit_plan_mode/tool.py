@@ -11,8 +11,7 @@ handler 本身并不直接向用户提示请求审批：该逻辑位于 CLI 的 
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.runtime_state import PermissionMode
 from services.tools.types import (
@@ -38,7 +37,7 @@ INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def descriptor(plan_store: "PlanStore") -> ToolDescriptor:
+def descriptor(plan_store: PlanStore) -> ToolDescriptor:
     return ToolDescriptor(
         name="exit_plan_mode",
         description=(
@@ -54,19 +53,16 @@ def descriptor(plan_store: "PlanStore") -> ToolDescriptor:
     )
 
 
-def _handle_for(plan_store: "PlanStore"):
+def _handle_for(plan_store: PlanStore):
     async def handle(
         tool_input: dict[str, Any],
         runtime: ToolRuntime,
     ) -> ToolExecutionResult:
-        from services.plans.transitions import exit_plan_mode
 
         if runtime.state.permission_mode != PermissionMode.PLAN:
             payload = {
                 "error": "not_in_plan_mode",
-                "message": (
-                    "exit_plan_mode requires the runtime to be in plan mode."
-                ),
+                "message": ("exit_plan_mode requires the runtime to be in plan mode."),
             }
             return ToolExecutionResult(
                 tool_call_id="",

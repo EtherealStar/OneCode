@@ -32,11 +32,15 @@ class CompactionConfig:
 
     @property
     def effective_context_window_tokens(self) -> int:
-        return max(0, self.default_context_window_tokens - self.summary_output_reserved_tokens)
+        return max(
+            0, self.default_context_window_tokens - self.summary_output_reserved_tokens
+        )
 
     @property
     def auto_compact_threshold_tokens(self) -> int:
-        return max(0, self.effective_context_window_tokens - self.auto_compact_buffer_tokens)
+        return max(
+            0, self.effective_context_window_tokens - self.auto_compact_buffer_tokens
+        )
 
 
 @dataclass(frozen=True)

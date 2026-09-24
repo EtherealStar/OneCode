@@ -85,4 +85,6 @@ def get_provider_definition(provider_id: str) -> ProviderDefinition:
 
 
 def list_provider_definitions() -> tuple[ProviderDefinition, ...]:
-    return tuple(BUILTIN_PROVIDERS[provider_id] for provider_id in CONNECT_PROVIDER_ORDER)
+    return tuple(
+        BUILTIN_PROVIDERS[provider_id] for provider_id in CONNECT_PROVIDER_ORDER
+    )

@@ -7,7 +7,10 @@ from services.mcp.results import render_mcp_tool_result
 
 def test_render_mcp_tool_result_concatenates_text_blocks() -> None:
     result = CallToolResult(
-        content=(TextContent(type="text", text="first"), TextContent(type="text", text="second")),
+        content=(
+            TextContent(type="text", text="first"),
+            TextContent(type="text", text="second"),
+        ),
         isError=False,
     )
 

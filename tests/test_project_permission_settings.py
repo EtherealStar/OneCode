@@ -30,7 +30,9 @@ def test_project_permission_settings_loads_rules(tmp_path: Path) -> None:
 
     rules = ProjectPermissionSettingsStore(settings_path).load_rules()
 
-    assert [(rule.behavior, rule.value.tool_name, rule.value.rule_content) for rule in rules] == [
+    assert [
+        (rule.behavior, rule.value.tool_name, rule.value.rule_content) for rule in rules
+    ] == [
         ("allow", "bash", "npm run:*"),
         ("deny", "edit_file", None),
         ("ask", "bash", None),

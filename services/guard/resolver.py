@@ -20,4 +20,3 @@ __all__ = [
     "resolve_write_target",
     "windows_path",
 ]
-

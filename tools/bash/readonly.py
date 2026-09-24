@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tools.bash.ast_model import BashAnalysis, SimpleCommand
-from tools.bash.semantics import check_semantics, effective_command_name, strip_safe_wrappers
-
+from tools.bash.semantics import (
+    check_semantics,
+    effective_command_name,
+    strip_safe_wrappers,
+)
 
 READONLY_COMMANDS = {
     "pwd",
@@ -66,11 +69,18 @@ def _command_readonly(command: SimpleCommand) -> bool:
     if name == "git":
         return len(stripped) >= 2 and stripped[1] in GIT_READONLY_SUBCOMMANDS
     if name == "find":
-        return not any(arg in {"-exec", "-execdir", "-delete", "-ok", "-okdir"} for arg in stripped[1:])
+        return not any(
+            arg in {"-exec", "-execdir", "-delete", "-ok", "-okdir"}
+            for arg in stripped[1:]
+        )
     if name == "sed":
         return not any(arg == "-i" or arg.startswith("-i") for arg in stripped[1:])
     if name == "jq":
-        return not any(arg in {"-f", "-L"} or arg.startswith(("--from-file", "--rawfile", "--slurpfile")) for arg in stripped[1:])
+        return not any(
+            arg in {"-f", "-L"}
+            or arg.startswith(("--from-file", "--rawfile", "--slurpfile"))
+            for arg in stripped[1:]
+        )
     if name in {"python", "python3"}:
         return stripped[1:] in (("--version",), ("-V",))
     if name == "node":
@@ -81,4 +91,6 @@ def _command_readonly(command: SimpleCommand) -> bool:
 
 
 def _has_write_redirect(command: SimpleCommand) -> bool:
-    return any(redirect.op in {">", ">>", ">|", "&>", "&>>"} for redirect in command.redirects)
+    return any(
+        redirect.op in {">", ">>", ">|", "&>", "&>>"} for redirect in command.redirects
+    )

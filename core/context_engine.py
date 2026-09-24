@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Awaitable, Iterable
 from pathlib import Path
-from typing import Any, Awaitable, Iterable, Protocol
+from typing import Any, Protocol
 
 from core.runtime_state import RuntimeState
 from prompts.assembler import DynamicPromptAssembler
@@ -21,18 +22,15 @@ class ContextPreparer(Protocol):
         Iterable[dict[str, Any]]
         | PreparedContext
         | Awaitable[Iterable[dict[str, Any]] | PreparedContext]
-    ):
-        ...
+    ): ...
 
 
 class PromptAssembler(Protocol):
-    def assemble(self, state: RuntimeState) -> str:
-        ...
+    def assemble(self, state: RuntimeState) -> str: ...
 
 
 class ToolSchemaProvider(Protocol):
-    def tool_schemas(self, state: RuntimeState) -> Iterable[dict[str, Any]]:
-        ...
+    def tool_schemas(self, state: RuntimeState) -> Iterable[dict[str, Any]]: ...
 
 
 class NoOpContextPreparer:
@@ -102,7 +100,9 @@ class ContextEngine:
             usage_hints=usage_hints,
             transcript_refs=transcript_refs,
             transition=(
-                state.last_transition.value if state.last_transition is not None else None
+                state.last_transition.value
+                if state.last_transition is not None
+                else None
             ),
         )
 

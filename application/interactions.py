@@ -216,7 +216,9 @@ class PermissionPromptAdapter:
     def __init__(self, coordinator: InteractionCoordinator) -> None:
         self._coordinator = coordinator
 
-    async def request_permission(self, request: PermissionRequest) -> PermissionResponse:
+    async def request_permission(
+        self, request: PermissionRequest
+    ) -> PermissionResponse:
         answer = await self._coordinator.request(
             "permission",
             payload=request,

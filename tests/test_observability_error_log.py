@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from infrastructure.filesystem.onecode_paths import session_dir, sessions_dir
-from services.errors import OneCodeError, ErrorCategory
+from services.errors import ErrorCategory, OneCodeError
 from services.observability.error_log import ErrorLogRecorder, JsonlErrorLogSink
 
 
@@ -22,7 +22,7 @@ def test_jsonl_error_log_writes_sanitized_records(tmp_path: Path) -> None:
         session_id=session_id,
         workspace=workspace,
         sink=sink,
-        clock=lambda: datetime(2026, 6, 7, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 6, 7, tzinfo=UTC),
     )
     error = OneCodeError(
         f"failed in {workspace}\\secret.py with Bearer abc.def and sk-testsecret123",
@@ -46,7 +46,10 @@ def test_jsonl_error_log_writes_sanitized_records(tmp_path: Path) -> None:
     assert record["session_id"] == session_id
     assert record["source"] == "unit_test"
     assert record["category"] == "internal"
-    assert record["message"] == "failed in .\\secret.py with Bearer [redacted] and [redacted]"
+    assert (
+        record["message"]
+        == "failed in .\\secret.py with Bearer [redacted] and [redacted]"
+    )
     assert "sk-testsecret123" not in json.dumps(record)
     assert record["attributes"]["file_path"] == "secret.py"
     assert record["attributes"]["prompt"] == "[redacted]"

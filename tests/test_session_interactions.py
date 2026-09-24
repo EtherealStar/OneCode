@@ -14,7 +14,6 @@ from application.session import SessionController
 from application.types import (
     InteractionRequested,
     InteractionResolved,
-    SnapshotUpdate,
 )
 from core.runtime_state import RuntimeState
 from core.stream_events import AgentEvent
@@ -177,7 +176,7 @@ def test_startup_trust_request_is_visible_in_snapshot(tmp_path: Path) -> None:
             while True:
                 try:
                     item = await asyncio.wait_for(stream.__anext__(), 0.2)
-                except (asyncio.TimeoutError, StopAsyncIteration):
+                except (TimeoutError, StopAsyncIteration):
                     break
                 if isinstance(item, InteractionRequested):
                     seen_request = True

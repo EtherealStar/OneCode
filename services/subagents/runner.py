@@ -5,24 +5,23 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
-from typing import Any
 
 from core.context_engine import ContextEngine, StaticPromptAssembler
 from core.loop import AgentLoop
 from core.runtime_state import PermissionMode, RuntimeState
-from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
+from services.context.message_store import MessageStore
 from services.guard import SandboxGuard
 from services.model.client import ModelClient
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
+from services.skills import SkillCommand
 from services.subagents.definitions import get_agent_definition
 from services.subagents.forking import build_forked_messages
 from services.subagents.types import AgentDefinition, SubagentRequest, SubagentResult
 from services.tools.executor import RegistryToolExecutor
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolDescriptor
-from services.skills import SkillCommand
 
 
 class SubagentRunner:
@@ -69,7 +68,9 @@ class SubagentRunner:
         is_fork = request.subagent_type is None
         is_compact = _is_compact_request(request)
         is_session_memory_extraction = _is_session_memory_extraction_request(request)
-        is_long_term_memory_extraction = _is_long_term_memory_extraction_request(request)
+        is_long_term_memory_extraction = _is_long_term_memory_extraction_request(
+            request
+        )
         is_background_agent = _is_background_agent_request(request)
         child_state = RuntimeState(
             max_turns=_request_max_turns(request) or definition.max_turns or 20
@@ -351,7 +352,7 @@ class SubagentRunner:
             async for event in loop.continue_stream():
                 if event.type == "completed":
                     final_text = event.text
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             child_store.flush_transcript()
             self._trace_recorder.event(
                 "subagent_error",
@@ -441,9 +442,7 @@ def _child_descriptors(
     if long_term_memory_extraction:
         allowed = {"read_file", "grep", "glob", "write_file", "edit_file"}
         return tuple(
-            descriptor
-            for descriptor in base_descriptors
-            if descriptor.name in allowed
+            descriptor for descriptor in base_descriptors if descriptor.name in allowed
         )
     allowed_names = set(definition.tools)
     disallowed = set(definition.disallowed_tools)
@@ -463,9 +462,10 @@ def _is_compact_request(request: SubagentRequest) -> bool:
 
 
 def _is_explore_request(request: SubagentRequest) -> bool:
-    return request.subagent_type == "explore" or request.metadata.get(
-        "purpose"
-    ) == "plan_explore"
+    return (
+        request.subagent_type == "explore"
+        or request.metadata.get("purpose") == "plan_explore"
+    )
 
 
 def _is_session_memory_extraction_request(request: SubagentRequest) -> bool:
@@ -518,9 +518,8 @@ def _skill_child_prompt(skill: SkillCommand, args: str) -> str:
     root = str(skill.root) if skill.root is not None else ""
     content = skill.content
     if root:
-        content = (
-            f"Base directory for this skill: {root}\n\n"
-            + content.replace("${ONECODE_SKILL_DIR}", root)
+        content = f"Base directory for this skill: {root}\n\n" + content.replace(
+            "${ONECODE_SKILL_DIR}", root
         )
     return (
         f"[skill loaded: {skill.name}]\n"

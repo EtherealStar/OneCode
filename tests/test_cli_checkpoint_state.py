@@ -24,7 +24,6 @@ from ui.cli.terminal.stream_state import (
     CliStreamUiState,
     CommitKind,
     StreamMode,
-    ToolStatus,
 )
 
 
@@ -165,9 +164,7 @@ def test_tool_results_are_released_in_declaration_order() -> None:
         state,
         _evt(
             "tool_result",
-            result=ToolExecutionResult(
-                tool_call_id="b", tool_name="bash", content="B"
-            ),
+            result=ToolExecutionResult(tool_call_id="b", tool_name="bash", content="B"),
             metadata=_attr(tool_call_id="b"),
         ),
     )
@@ -228,9 +225,7 @@ def test_tool_results_do_not_cross_assistant_call_id_boundaries() -> None:
         state,
         _evt(
             "tool_call_ready",
-            metadata=_attr(
-                call_id="ac2", turn=2, tool_call=_Call(id="b", name="bash")
-            ),
+            metadata=_attr(call_id="ac2", turn=2, tool_call=_Call(id="b", name="bash")),
         ),
     )
     # A's result arrives but is tagged with the current turn's id
@@ -252,9 +247,7 @@ def test_tool_results_do_not_cross_assistant_call_id_boundaries() -> None:
         state,
         _evt(
             "tool_result",
-            result=ToolExecutionResult(
-                tool_call_id="b", tool_name="bash", content="B"
-            ),
+            result=ToolExecutionResult(tool_call_id="b", tool_name="bash", content="B"),
             metadata=_attr(call_id="ac2", turn=2, tool_call_id="b"),
         ),
     )

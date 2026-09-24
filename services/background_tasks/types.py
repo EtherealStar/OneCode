@@ -25,7 +25,7 @@ class BackgroundTaskState:
     notified: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def with_updates(self, **updates: Any) -> "BackgroundTaskState":
+    def with_updates(self, **updates: Any) -> BackgroundTaskState:
         metadata = updates.pop("metadata", None)
         if metadata is not None:
             updates["metadata"] = {**self.metadata, **metadata}

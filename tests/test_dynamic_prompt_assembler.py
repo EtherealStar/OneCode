@@ -161,7 +161,9 @@ def test_registry_visible_descriptors_drive_schema_and_prompt_sections() -> None
 
     schemas = registry.tool_schemas(state)
     prompts = registry.tool_prompt_sections(state)
-    visible_names = [descriptor.name for descriptor in registry.visible_descriptors(state)]
+    visible_names = [
+        descriptor.name for descriptor in registry.visible_descriptors(state)
+    ]
 
     assert visible_names == ["allowed"]
     assert [schema["function"]["name"] for schema in schemas] == ["allowed"]

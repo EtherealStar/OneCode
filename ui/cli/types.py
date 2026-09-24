@@ -41,7 +41,7 @@ class CommandResult:
 
 __all__ = [
     "CliRuntime",
-    "CommandResult",
-    "CommandPresentation",
     "CommandInteraction",
+    "CommandPresentation",
+    "CommandResult",
 ]

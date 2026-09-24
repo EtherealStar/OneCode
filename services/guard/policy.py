@@ -14,7 +14,6 @@ from services.guard.boundary import (
     classify_path,
 )
 
-
 GuardAction = Literal["allow", "ask", "deny"]
 
 

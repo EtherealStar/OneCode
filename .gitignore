@@ -8,4 +8,6 @@ __pycache__/
 dist/
 build/
 .env
-references/
+/docs/references/
+.ruff_cache/
+.testmondata*

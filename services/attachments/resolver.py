@@ -12,7 +12,6 @@ from services.attachments.ignore import (
 )
 from services.attachments.parser import AtMention
 
-
 ResolutionErrorKind = Literal["not_found", "ambiguous", "outside_workspace"]
 
 
@@ -84,9 +83,10 @@ def _search_matches(path_text: str, workspace: Path) -> list[Path]:
                 continue
             if not _inside(resolved, workspace):
                 continue
-            if candidate.name.casefold() == Path(path_text).name.casefold():
-                matches.append(resolved)
-            elif relative == normalized:
+            if (
+                candidate.name.casefold() == Path(path_text).name.casefold()
+                or relative == normalized
+            ):
                 matches.append(resolved)
             if candidate.is_dir() and not candidate.is_symlink():
                 stack.append(resolved)

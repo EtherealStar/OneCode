@@ -91,11 +91,7 @@ def load_conversation_history(
         else:
             records.append(_to_history_record(record))
 
-    declared = {
-        call.tool_call_id
-        for record in records
-        for call in record.tool_calls
-    }
+    declared = {call.tool_call_id for record in records for call in record.tool_calls}
     for record in records:
         if record.role == "tool_result" and record.tool_call_id not in declared:
             diagnostics.append(f"unpaired_tool_result:{record.uuid}")
@@ -205,7 +201,8 @@ def _to_history_record(
     attachments: tuple[LoadedTranscriptMessage, ...] = (),
 ) -> HistoryRecord:
     message = record.message
-    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    raw_metadata = message.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     role = str(message.get("role", "unknown"))
     tool_calls = tuple(
         HistoryToolCall(tool_call_id=call_id, tool_name=name, input=tool_input)
@@ -236,7 +233,8 @@ def _attachment_summary(record: LoadedTranscriptMessage) -> HistoryAttachmentSum
     message = record.message
     attachment = message.get("attachment")
     attachment = attachment if isinstance(attachment, dict) else {}
-    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    raw_metadata = message.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     attachment_type = str(
         attachment.get("type") or metadata.get("attachment_type") or "unknown"
     )

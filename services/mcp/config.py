@@ -26,9 +26,7 @@ def load_project_mcp_config(workspace: Path) -> McpConfigSet:
     allowed_root_keys = {"mcpServers"}
     unknown_root_keys = set(payload) - allowed_root_keys
     if unknown_root_keys:
-        raise McpConfigError(
-            f"Unsupported .mcp.json field: {sorted(unknown_root_keys)[0]}"
-        )
+        raise McpConfigError(f"Unsupported .mcp.json field: {min(unknown_root_keys)}")
     raw_servers = payload.get("mcpServers", {})
     if not isinstance(raw_servers, dict):
         raise McpConfigError(".mcp.json field 'mcpServers' must be an object.")
@@ -53,7 +51,7 @@ def _parse_server_config(name: str, raw_config: dict[str, Any]) -> McpServerConf
         "headers",
     }
     if unsupported:
-        field = sorted(unsupported)[0]
+        field = min(unsupported)
         raise McpConfigError(
             f"MCP server '{name}' uses unsupported field '{field}'. "
             "OneCode MCP v1 supports static stdio, sse and http tools only."
@@ -94,7 +92,9 @@ def _parse_server_config(name: str, raw_config: dict[str, Any]) -> McpServerConf
 
 def _string_tuple(value: Any, server_name: str, field: str) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise McpConfigError(f"MCP server '{server_name}' field '{field}' must be a list.")
+        raise McpConfigError(
+            f"MCP server '{server_name}' field '{field}' must be a list."
+        )
     items: list[str] = []
     for item in value:
         if not isinstance(item, str):
@@ -107,7 +107,9 @@ def _string_tuple(value: Any, server_name: str, field: str) -> tuple[str, ...]:
 
 def _string_map(value: Any, server_name: str, field: str) -> dict[str, str]:
     if not isinstance(value, dict):
-        raise McpConfigError(f"MCP server '{server_name}' field '{field}' must be an object.")
+        raise McpConfigError(
+            f"MCP server '{server_name}' field '{field}' must be an object."
+        )
     result: dict[str, str] = {}
     for key, item in value.items():
         if not isinstance(key, str) or not isinstance(item, str):

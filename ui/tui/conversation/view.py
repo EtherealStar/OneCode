@@ -9,8 +9,6 @@ Markdown 缓存、详情展开以及刷新调度机制。它不运行 Agent、�
 
 from __future__ import annotations
 
-from typing import Any
-
 from textual.app import ComposeResult
 from textual.containers import Container
 
@@ -75,16 +73,12 @@ class ConversationView(Container):
             self._viewport = self.query_one(MessageViewport)
         return self._viewport
 
-    def update(
-        self, projection: ConversationProjection, change: ViewChange
-    ) -> None:
+    def update(self, projection: ConversationProjection, change: ViewChange) -> None:
         self._projection = projection
         if change.empty and not change.resync_required:
             return
         structural = (
-            change.reset
-            or change.structure_changed
-            or bool(change.deleted_ids)
+            change.reset or change.structure_changed or bool(change.deleted_ids)
         )
         auxiliary = (
             change.queue_changed

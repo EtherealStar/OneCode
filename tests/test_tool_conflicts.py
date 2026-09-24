@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Any
-
-import pytest
 
 from core.runtime_state import RuntimeState
 from services.tools.conflicts import (
     build_conflict_batches,
-    classifications_conflict,
     targets_conflict,
 )
 from services.tools.executor import RegistryToolExecutor
@@ -25,7 +23,6 @@ from services.tools.types import (
     ToolTarget,
     ValidationResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure conflict helpers
@@ -114,8 +111,12 @@ def test_build_conflict_batches_separates_overlapping_writes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_descriptor(name: str, started: list[str], lock: threading.Lock, sleep_for: float) -> ToolDescriptor:
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+def _make_descriptor(
+    name: str, started: list[str], lock: threading.Lock, sleep_for: float
+) -> ToolDescriptor:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         with lock:
             started.append(tool_input["call_id"])
         time.sleep(sleep_for)
@@ -125,7 +126,9 @@ def _make_descriptor(name: str, started: list[str], lock: threading.Lock, sleep_
             content=tool_input["call_id"],
         )
 
-    def classify(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolCallClassification:
+    def classify(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolCallClassification:
         return ToolCallClassification(
             read_only=True,
             modifies_filesystem=False,
@@ -159,6 +162,7 @@ def _execute(executor: RegistryToolExecutor, calls: tuple[ToolCall, ...]):
             if update.type == "result":
                 results.append(update.result)
         return results
+
     return asyncio.run(run())
 
 
@@ -170,6 +174,7 @@ def test_executor_runs_non_conflicting_calls_in_parallel() -> None:
         with lock:
             started.append(tool_input["call_id"])
         import time
+
         time.sleep(0.1)
         return ToolExecutionResult(
             tool_call_id=tool_input["call_id"],
@@ -208,6 +213,7 @@ def test_executor_runs_non_conflicting_calls_in_parallel() -> None:
         ToolCall(id="b", name="probe", input={"call_id": "b"}),
     )
     import time
+
     t0 = time.perf_counter()
     results = _execute(executor, calls)
     elapsed = time.perf_counter() - t0
@@ -232,6 +238,7 @@ def test_executor_serialises_conflicting_session_state_targets() -> None:
         with lock:
             started.append(tool_input["call_id"])
         import time
+
         time.sleep(0.05)
         return ToolExecutionResult(
             tool_call_id=tool_input["call_id"],
@@ -267,6 +274,7 @@ def test_executor_serialises_conflicting_session_state_targets() -> None:
         ToolCall(id="b", name="probe", input={"call_id": "b"}),
     )
     import time
+
     t0 = time.perf_counter()
     _execute(executor, calls)
     elapsed = time.perf_counter() - t0

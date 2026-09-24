@@ -98,7 +98,10 @@ def _handler_for(background_task_manager: BackgroundTaskManager):
                     ensure_ascii=False,
                 ),
                 is_error=True,
-                metadata={"error": "background_task_not_found", "task_id": parsed.task_id},
+                metadata={
+                    "error": "background_task_not_found",
+                    "task_id": parsed.task_id,
+                },
             )
         payload = {
             "task_id": task.id,

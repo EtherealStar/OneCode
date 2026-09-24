@@ -7,11 +7,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 
 def render_plan_mode_intro(
-    plan_path: Path,
+    plan_path: Path | str,
     *,
     plan_content: str = "",
 ) -> str:
@@ -41,7 +40,7 @@ def render_plan_mode_intro(
     )
 
 
-def render_plan_mode_reentry(plan_path: Path, plan_content: str) -> str:
+def render_plan_mode_reentry(plan_path: Path | str, plan_content: str) -> str:
     """用户拒绝计划或刷新计划时的重入消息。"""
 
     plan_section = _format_plan_section(plan_content)
@@ -61,7 +60,7 @@ def render_plan_mode_reentry(plan_path: Path, plan_content: str) -> str:
     )
 
 
-def render_plan_mode_exit(plan_path: Path, plan_content: str) -> str:
+def render_plan_mode_exit(plan_path: Path | str, plan_content: str) -> str:
     """计划审批通过后的消息：告知模型现在可以开始执行实现。"""
 
     plan_section = _format_plan_section(plan_content)
@@ -78,9 +77,4 @@ def render_plan_mode_exit(plan_path: Path, plan_content: str) -> str:
 def _format_plan_section(plan_content: str) -> str:
     if not plan_content.strip():
         return "Current plan contents: (empty — write the plan to this file.)"
-    return (
-        "Current plan contents:\n"
-        "----\n"
-        f"{plan_content.rstrip()}\n"
-        "----"
-    )
+    return f"Current plan contents:\n----\n{plan_content.rstrip()}\n----"

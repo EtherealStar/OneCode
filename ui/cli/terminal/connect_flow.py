@@ -65,7 +65,6 @@ async def run_connect_flow(
     from infrastructure.providers.model_catalog import (
         ProviderModel,
         fetch_models_for_connect,
-        test_model_connection,
     )
     from ui.cli.connect import (
         ProviderEnvUpdate,
@@ -97,8 +96,7 @@ async def run_connect_flow(
     selector: TransientSelector = TransientSelector(
         "选择供应商",
         tuple(
-            SelectorItem(label=option.display_name, value=option)
-            for option in options
+            SelectorItem(label=option.display_name, value=option) for option in options
         ),
     )
     chosen = await selector.run()
@@ -156,7 +154,9 @@ async def run_connect_flow(
         else:
             # 该提供商暂无现有密钥 -> 提示输入。
             new_key = await _prompt_text(
-                f"请输入 {provider.display_name} 的 API Key", out=out, secret=True,
+                f"请输入 {provider.display_name} 的 API Key",
+                out=out,
+                secret=True,
             )
             if not new_key:
                 return ConnectFlowResult(cancelled=True)
@@ -170,18 +170,23 @@ async def run_connect_flow(
 
     try:
         models: tuple[ProviderModel, ...] = fetch_models_for_connect(
-            provider, api_key, base_url,
+            provider,
+            api_key,
+            base_url,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         models = ()
 
     if models:
         model = await _prompt_model_selection(models, provider.display_name)
-    
+
     if model is None:
         # 回退逻辑：手动输入模型名称并进行连接测试。
         model = await _prompt_manual_model(
-            provider, api_key, base_url, out=out,
+            provider,
+            api_key,
+            base_url,
+            out=out,
         )
         if not model:
             return ConnectFlowResult(cancelled=True)
@@ -255,7 +260,8 @@ async def _prompt_manual_model(
     from infrastructure.providers.model_catalog import test_model_connection
 
     model = await _prompt_text(
-        "无法获取模型列表，请手动输入模型名称", out=out,
+        "无法获取模型列表，请手动输入模型名称",
+        out=out,
     )
     if not model:
         return None
@@ -408,7 +414,9 @@ def _build_text_prompt_application(
     # full_screen 自行管理备用屏幕（DEC 1049），
     # 确保凭据输入过程绝不泄漏到静态回滚历史中。
     app: Application[None] = Application(
-        layout=Layout(HSplit([header, input_window, footer]), focused_element=input_window),
+        layout=Layout(
+            HSplit([header, input_window, footer]), focused_element=input_window
+        ),
         full_screen=True,
         mouse_support=False,
         key_bindings=bindings,

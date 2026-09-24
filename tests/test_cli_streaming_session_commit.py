@@ -23,20 +23,18 @@ import asyncio
 import io
 from pathlib import Path
 
+from rich.console import Console
+
 from core.stream_events import AgentEvent
 from services.tools.types import ToolExecutionResult
 from ui.cli.terminal import static_output as so
 from ui.cli.terminal.stream_reducer import reduce_stream_event
 from ui.cli.terminal.stream_session import StreamingSession
 from ui.cli.terminal.stream_state import (
-    CliStreamUiState,
-    CommitKind,
-    StaticCommit,
     StreamingToolUseState,
     ToolStatus,
 )
 from ui.cli.theme import RICH_THEME
-from rich.console import Console
 
 
 def _evt(event_type: str, **kwargs) -> AgentEvent:
@@ -63,7 +61,7 @@ def _captured_console() -> io.StringIO:
 
     buffer = io.StringIO()
     so.reset_static_console()
-    so._STATIC_CONSOLE = Console(  # noqa: SLF001
+    so._STATIC_CONSOLE = Console(
         file=buffer,
         force_terminal=True,
         color_system="standard",
@@ -178,9 +176,7 @@ def test_active_tool_count_reflects_new_state_model(tmp_path: Path) -> None:
         session.state,
         _evt(
             "tool_result",
-            result=ToolExecutionResult(
-                tool_call_id="a", tool_name="a", content="ok"
-            ),
+            result=ToolExecutionResult(tool_call_id="a", tool_name="a", content="ok"),
             metadata=_attr(call_id="ac1", turn=1, tool_call_id="a"),
         ),
     )

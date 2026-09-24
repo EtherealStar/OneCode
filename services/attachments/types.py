@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-import uuid
 
 
 class AttachmentScope(StrEnum):
@@ -16,7 +16,7 @@ class AttachmentScope(StrEnum):
 
 
 def utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(frozen=True)

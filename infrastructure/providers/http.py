@@ -22,16 +22,14 @@ class HttpTransport(Protocol):
         headers: dict[str, str],
         payload: dict[str, Any],
         timeout_seconds: float,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     def get_json(
         self,
         url: str,
         headers: dict[str, str],
         timeout_seconds: float,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class UrllibHttpTransport:
@@ -91,7 +89,9 @@ class UrllibHttpTransport:
         return parse_json_object(raw_body, provider_id=self.provider_id)
 
 
-def parse_json_object(raw_body: str, *, provider_id: str | None = None) -> dict[str, Any]:
+def parse_json_object(
+    raw_body: str, *, provider_id: str | None = None
+) -> dict[str, Any]:
     try:
         value = json.loads(raw_body)
     except json.JSONDecodeError as exc:
@@ -176,5 +176,5 @@ def _extract_error_message(raw_body: str | None) -> str | None:
 def _read_error_body(error: HTTPError) -> str:
     try:
         return error.read().decode("utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001
         return ""

@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 from application.types import DetailRef
 
@@ -92,7 +93,7 @@ class ViewChange:
         )
 
     @classmethod
-    def none(cls) -> "ViewChange":
+    def none(cls) -> ViewChange:
         return cls()
 
 

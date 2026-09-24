@@ -24,16 +24,14 @@ from services.tools.types import (
     ToolDescriptor,
     ToolTarget,
 )
-from utils.text_io import DEFAULT_TEXT_ENCODING, read_text_file
-
+from utils.text_io import DEFAULT_TEXT_ENCODING
 
 MAX_DIRECTORY_ENTRIES = 1_000
 MAX_FULL_ATTACHMENT_CHARS = 200_000
 
 
 class QueuedAttachmentSource(Protocol):
-    def collect(self, state: RuntimeState) -> tuple[dict[str, Any], ...]:
-        ...
+    def collect(self, state: RuntimeState) -> tuple[dict[str, Any], ...]: ...
 
 
 @dataclass(frozen=True)
@@ -336,10 +334,7 @@ def _read_numbered_lines(
             if last_line is not None and line_number > last_line:
                 break
             selected.append((line_number, line.rstrip("\r\n")))
-    return "\n".join(
-        f"{line_number}\t{line}"
-        for line_number, line in selected
-    )
+    return "\n".join(f"{line_number}\t{line}" for line_number, line in selected)
 
 
 def _read_text_with_char_limit(path: Path, *, max_chars: int) -> tuple[str, bool]:

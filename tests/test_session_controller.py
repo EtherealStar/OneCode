@@ -13,15 +13,9 @@ from application.types import (
     AssistantDelta,
     DetailRef,
     DetailResult,
-    MessageCommitted,
-    QueueChanged,
-    RunCancelled,
     RunCompleted,
-    RunFailed,
-    RunStarted,
     SessionSnapshot,
     SnapshotUpdate,
-    StatusChanged,
     ToolUpdate,
 )
 from core.runtime_state import RuntimeState
@@ -72,7 +66,9 @@ class FakeLoop:
             self.running -= 1
             self.done.set()
 
-    def snapshot_run_facts(self, status: str | None = None) -> InterruptedRunFacts | None:
+    def snapshot_run_facts(
+        self, status: str | None = None
+    ) -> InterruptedRunFacts | None:
         return self.facts
 
 
@@ -214,7 +210,7 @@ def test_slow_subscriber_resyncs_with_complete_snapshot(tmp_path: Path) -> None:
             while True:
                 try:
                     item = await asyncio.wait_for(stream.__anext__(), 0.2)
-                except (asyncio.TimeoutError, StopAsyncIteration):
+                except (TimeoutError, StopAsyncIteration):
                     break
                 if isinstance(item, SnapshotUpdate) and item.snapshot.run.active:
                     saw_snapshot = True
@@ -483,9 +479,7 @@ def test_failed_turn_pauses_queue_until_resume(tmp_path: Path) -> None:
 def test_unconfigured_rejects_prompts_but_commands_work(tmp_path: Path) -> None:
     async def scenario() -> None:
         loop = FakeLoop()
-        controller = SessionController(
-            make_runtime(tmp_path, loop, configured=False)
-        )
+        controller = SessionController(make_runtime(tmp_path, loop, configured=False))
         async with controller:
             receipt = await controller.submit("hi")
             assert receipt.status == "rejected"
@@ -535,7 +529,9 @@ class ReloadableRuntime:
         self.user_question_prompter = None
         self.mcp_manager = None
 
-    def with_model_config(self, *, model_client: Any | None = None) -> "ReloadableRuntime":
+    def with_model_config(
+        self, *, model_client: Any | None = None
+    ) -> ReloadableRuntime:
         rebound = ReloadableRuntime(self.workspace, model_client)
         rebound.provider_label = "new"
         rebound.model = "new-model"
@@ -663,7 +659,7 @@ def test_tool_updates_are_published_in_arrival_order(tmp_path: Path) -> None:
             while True:
                 try:
                     item = await asyncio.wait_for(stream.__anext__(), 0.2)
-                except (asyncio.TimeoutError, StopAsyncIteration):
+                except (TimeoutError, StopAsyncIteration):
                     break
                 if isinstance(item, ToolUpdate):
                     tool_ids.append(item.tool_call_id)

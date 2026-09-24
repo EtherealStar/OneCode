@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from services.tools.types import ToolTarget
 
 if TYPE_CHECKING:
-    from services.permissions.rules import PermissionUpdate
     from services.guard import GuardPolicy
+    from services.permissions.rules import PermissionUpdate
     from services.tools.types import ToolCall, ToolCallClassification, ToolDescriptor
 
 

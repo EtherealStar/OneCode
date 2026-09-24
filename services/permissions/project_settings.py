@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 from typing import Any
 
 from services.permissions.rules import (
@@ -13,7 +13,6 @@ from services.permissions.rules import (
     permission_rule_value_from_string,
     permission_rule_value_to_string,
 )
-
 
 BEHAVIORS: tuple[PermissionBehavior, ...] = ("allow", "deny", "ask")
 
@@ -86,7 +85,7 @@ class ProjectPermissionSettingsStore:
                 f"Invalid JSON in project settings: {self.settings_path}: {exc.msg}"
             ) from exc
         if not isinstance(data, dict):
-            raise ValueError(
+            raise TypeError(
                 f"Project settings must contain a JSON object: {self.settings_path}"
             )
         return data
@@ -111,7 +110,7 @@ def _permissions_object(
         value = {}
         settings["permissions"] = value
     if not isinstance(value, dict):
-        raise ValueError("Project settings field 'permissions' must be an object.")
+        raise TypeError("Project settings field 'permissions' must be an object.")
     return value
 
 

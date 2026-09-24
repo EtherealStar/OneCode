@@ -14,7 +14,9 @@ class ContextProjector:
         max_messages: int | None = None,
     ) -> None:
         self.start_index = max(0, start_index)
-        self.max_messages = max_messages if max_messages is None else max(0, max_messages)
+        self.max_messages = (
+            max_messages if max_messages is None else max(0, max_messages)
+        )
 
     def project(
         self,
@@ -32,7 +34,9 @@ class ContextProjector:
             start_index,
         )
         projected = messages[start_index:]
-        return tuple(deepcopy(message) for message in _drop_unpaired_tool_results(projected))
+        return tuple(
+            deepcopy(message) for message in _drop_unpaired_tool_results(projected)
+        )
 
     def adjust_start_index_to_preserve_tool_pairs(
         self,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from core.runtime_state import RuntimeState
 from services.compaction import (
@@ -85,7 +84,9 @@ def test_session_memory_compact_rewrites_active_chain_before_full_compact(
     )
     for index in range(4):
         message_store.append_user(f"old user message {index} " + ("x" * 1000))
-        message_store.append_assistant({"role": "assistant", "content": "old assistant"})
+        message_store.append_assistant(
+            {"role": "assistant", "content": "old assistant"}
+        )
     memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
     memory_store.write(
         SessionMemory(
@@ -132,7 +133,9 @@ def test_session_memory_compact_waits_for_running_extraction(
     )
     for index in range(4):
         message_store.append_user(f"old user message {index} " + ("x" * 1000))
-        message_store.append_assistant({"role": "assistant", "content": "old assistant"})
+        message_store.append_assistant(
+            {"role": "assistant", "content": "old assistant"}
+        )
     memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
     extractor = FakeMemoryExtractor(memory_store)
     runner = FakeSubagentRunner()

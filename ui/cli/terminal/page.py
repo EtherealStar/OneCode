@@ -70,8 +70,10 @@ class TransientPage:
         调用方应检测此情况并回退为行内打印。
         """
 
-        if input is None and output is None and not can_enter_alternate_screen(
-            self._stdout
+        if (
+            input is None
+            and output is None
+            and not can_enter_alternate_screen(self._stdout)
         ):
             return
 
@@ -107,7 +109,7 @@ class TransientPage:
             try:
                 size = app.output.get_size()
                 width, height = size.columns, size.rows
-            except Exception:
+            except Exception:  # noqa: BLE001
                 width, height = 80, 24
             return ANSI(lines.window(width=width, height=height - 1))
 

@@ -12,11 +12,9 @@ from services.observability.events import TraceRecord, record_to_json_dict
 
 
 class TraceSink(Protocol):
-    def emit(self, record: TraceRecord) -> None:
-        ...
+    def emit(self, record: TraceRecord) -> None: ...
 
-    def flush(self) -> None:
-        ...
+    def flush(self) -> None: ...
 
 
 class NoopTraceSink:
@@ -71,7 +69,7 @@ class JsonlTraceSink:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.dropped_count += 1
             return
         self._enqueue_line(line)

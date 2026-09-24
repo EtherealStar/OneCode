@@ -15,7 +15,7 @@ _SAFE_TASK_LIST_ID = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def resolve_task_list_id(
-    state: "RuntimeState",
+    state: RuntimeState,
     *,
     env: Mapping[str, str] | None = None,
 ) -> str:

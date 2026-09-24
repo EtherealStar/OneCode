@@ -8,8 +8,7 @@ handler 保持轻量设计：它从不执行用户代码，仅变更 RuntimeStat
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.tools.types import (
     ToolCallClassification,
@@ -33,7 +32,7 @@ INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def descriptor(plan_store: "PlanStore") -> ToolDescriptor:
+def descriptor(plan_store: PlanStore) -> ToolDescriptor:
     return ToolDescriptor(
         name="enter_plan_mode",
         description=(
@@ -49,7 +48,7 @@ def descriptor(plan_store: "PlanStore") -> ToolDescriptor:
     )
 
 
-def _handle_for(plan_store: "PlanStore"):
+def _handle_for(plan_store: PlanStore):
     async def handle(
         tool_input: dict[str, Any],
         runtime: ToolRuntime,
@@ -90,7 +89,9 @@ def _validate(tool_input: dict[str, Any], runtime: ToolRuntime) -> ValidationRes
     _ = runtime
     reason = tool_input.get("reason")
     if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-        return ValidationResult.failure("reason must be a non-empty string when provided.")
+        return ValidationResult.failure(
+            "reason must be a non-empty string when provided."
+        )
     return ValidationResult.success()
 
 

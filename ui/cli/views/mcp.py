@@ -28,7 +28,9 @@ def render_mcp(runtime: CliRuntime) -> Group:
             style="onecode.info",
         )
 
-    servers = Table(title="Servers", box=None, show_header=True, header_style="onecode.subtle")
+    servers = Table(
+        title="Servers", box=None, show_header=True, header_style="onecode.subtle"
+    )
     servers.add_column("state", no_wrap=True)
     servers.add_column("name")
     servers.add_column("transport")
@@ -45,7 +47,9 @@ def render_mcp(runtime: CliRuntime) -> Group:
             preview(status.error),
         )
 
-    tools = Table(title="Tools", box=None, show_header=True, header_style="onecode.subtle")
+    tools = Table(
+        title="Tools", box=None, show_header=True, header_style="onecode.subtle"
+    )
     tools.add_column("server")
     tools.add_column("tool")
     tools.add_column("descriptor")

@@ -7,15 +7,23 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
-from infrastructure.filesystem.onecode_paths import session_messages_path, session_dir, sessions_dir
+from infrastructure.filesystem.onecode_paths import (
+    session_dir,
+    session_messages_path,
+    sessions_dir,
+)
 from services.background_tasks import BackgroundTaskManager
 from services.compaction import SessionMemoryStore
+from services.compaction.types import CompactionResult, CompactionTrigger
 from services.context.current_model_context import CurrentModelContext
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
-from services.compaction.types import CompactionResult, CompactionTrigger
 from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool, McpServerStatus
-from services.permissions import PermissionPolicy, ProjectPermissionSettingsStore, SessionPermissionStore
+from services.permissions import (
+    PermissionPolicy,
+    ProjectPermissionSettingsStore,
+    SessionPermissionStore,
+)
 from services.tasks import TaskStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
@@ -242,7 +250,15 @@ def test_read_only_status_commands_are_page_results(tmp_path: Path) -> None:
         mcp_manager=FakeMcpManager(),  # type: ignore[arg-type]
     )
 
-    for command in ("/status", "/usage", "/memory", "/permissions", "/skills", "/tasks", "/mcp"):
+    for command in (
+        "/status",
+        "/usage",
+        "/memory",
+        "/permissions",
+        "/skills",
+        "/tasks",
+        "/mcp",
+    ):
         result, output = run_command(runtime, command)
         assert result.presentation == "page"
         assert output
@@ -261,7 +277,9 @@ def test_status_command_shows_session_and_model(tmp_path: Path) -> None:
 
 
 def test_usage_command_shows_tokens_and_compaction(tmp_path: Path) -> None:
-    runtime = replace(make_runtime(tmp_path), compaction_service=FakeCompactionService())  # type: ignore[arg-type]
+    runtime = replace(
+        make_runtime(tmp_path), compaction_service=FakeCompactionService()
+    )  # type: ignore[arg-type]
 
     _result, output = run_command(runtime, "/usage")
 
@@ -379,7 +397,9 @@ def test_unknown_command_does_not_exit(tmp_path: Path) -> None:
     assert "Unknown command" in output
 
 
-def test_tasks_command_renders_empty_task_list_and_background_section(tmp_path: Path) -> None:
+def test_tasks_command_renders_empty_task_list_and_background_section(
+    tmp_path: Path,
+) -> None:
     runtime = replace(
         make_runtime(tmp_path),
         task_store=TaskStore(tmp_path),
@@ -455,7 +475,9 @@ def test_permissions_command_is_read_only(tmp_path: Path) -> None:
     store = SessionPermissionStore()
     store.allow_tool("bash")
     store.deny_tool("agent")
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(store, project_store=project_store)
     runtime = replace(
         make_runtime(tmp_path),
@@ -474,7 +496,9 @@ def test_permissions_command_is_read_only(tmp_path: Path) -> None:
 
 
 def test_permissions_command_adds_project_rules(tmp_path: Path) -> None:
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(project_store=project_store)
     runtime = replace(make_runtime(tmp_path), permission_policy=policy)
 
@@ -487,7 +511,9 @@ def test_permissions_command_adds_project_rules(tmp_path: Path) -> None:
 
 
 def test_permissions_command_adds_deny_rule(tmp_path: Path) -> None:
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(project_store=project_store)
     runtime = replace(make_runtime(tmp_path), permission_policy=policy)
 
@@ -498,7 +524,9 @@ def test_permissions_command_adds_deny_rule(tmp_path: Path) -> None:
 
 
 def test_permissions_command_removes_project_rules(tmp_path: Path) -> None:
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(project_store=project_store)
     runtime = replace(make_runtime(tmp_path), permission_policy=policy)
     run_command(runtime, "/permissions add allow bash(npm run:*)")
@@ -512,12 +540,16 @@ def test_permissions_command_removes_project_rules(tmp_path: Path) -> None:
 
 
 def test_permissions_command_replaces_project_rules(tmp_path: Path) -> None:
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(project_store=project_store)
     runtime = replace(make_runtime(tmp_path), permission_policy=policy)
     run_command(runtime, "/permissions add ask read_file(old/*)")
 
-    result, output = run_command(runtime, "/permissions replace ask read_file(secret/*)")
+    result, output = run_command(
+        runtime, "/permissions replace ask read_file(secret/*)"
+    )
 
     assert result.should_exit is False
     assert "Replaced project ask permission rule" in output
@@ -528,7 +560,9 @@ def test_permissions_command_replaces_project_rules(tmp_path: Path) -> None:
 def test_permissions_command_rejects_invalid_project_rule_without_writing(
     tmp_path: Path,
 ) -> None:
-    project_store = ProjectPermissionSettingsStore(tmp_path / ".onecode" / "settings.json")
+    project_store = ProjectPermissionSettingsStore(
+        tmp_path / ".onecode" / "settings.json"
+    )
     policy = PermissionPolicy(project_store=project_store)
     runtime = replace(make_runtime(tmp_path), permission_policy=policy)
 

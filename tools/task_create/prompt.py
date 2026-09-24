@@ -1,4 +1,5 @@
 """task_create 工具的提示词文本。"""
+
 PROMPT = """Purpose:
 Create a durable task in the current task list.
 

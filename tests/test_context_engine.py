@@ -167,6 +167,4 @@ def test_context_engine_projects_safe_model_request_overrides(tmp_path: Path) ->
 
     snapshot = asyncio.run(engine.build_for_model(state))
 
-    assert snapshot.usage_hints["request_overrides"] == {
-        "max_output_tokens": 64000
-    }
+    assert snapshot.usage_hints["request_overrides"] == {"max_output_tokens": 64000}

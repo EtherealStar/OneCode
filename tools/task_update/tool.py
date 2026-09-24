@@ -145,7 +145,9 @@ async def _handle(
         return ToolExecutionResult(
             tool_call_id=runtime.tool_call_id,
             tool_name="task_update",
-            content=f"Task #{parsed.task_id} deleted." if deleted else f"Task #{parsed.task_id} not found.",
+            content=f"Task #{parsed.task_id} deleted."
+            if deleted
+            else f"Task #{parsed.task_id} not found.",
             metadata={
                 "task_id": parsed.task_id,
                 "task_list_id": task_list_id,
@@ -153,7 +155,11 @@ async def _handle(
             },
         )
 
-    if parsed.status == "completed" and existing.status != "completed" and hooks is not None:
+    if (
+        parsed.status == "completed"
+        and existing.status != "completed"
+        and hooks is not None
+    ):
         hook_result = await hooks.run(
             HookEvent.TASK_COMPLETED,
             {
@@ -207,11 +213,11 @@ async def _handle(
         )
 
     changed = _changed_fields(parsed, dependency_changes)
-    content = f"Task #{updated.id} updated: {', '.join(changed) if changed else 'no changes'}"
+    content = (
+        f"Task #{updated.id} updated: {', '.join(changed) if changed else 'no changes'}"
+    )
     if parsed.status == "completed" and existing.status != "completed":
-        content += (
-            "\nTask completed. Use task_list if you need to check remaining or newly unblocked work."
-        )
+        content += "\nTask completed. Use task_list if you need to check remaining or newly unblocked work."
     return ToolExecutionResult(
         tool_call_id=runtime.tool_call_id,
         tool_name="task_update",
@@ -226,7 +232,9 @@ async def _handle(
     )
 
 
-def _changed_fields(parsed: TaskUpdateInput, dependency_changes: list[str]) -> list[str]:
+def _changed_fields(
+    parsed: TaskUpdateInput, dependency_changes: list[str]
+) -> list[str]:
     fields: list[str] = []
     alias_by_field = {
         "task_id": "taskId",

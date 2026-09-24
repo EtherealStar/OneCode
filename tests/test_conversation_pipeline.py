@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncIterator
+from typing import Any
 
 from application.session import SessionController
 from application.types import (
@@ -62,7 +62,7 @@ class RecordingLoop:
         self.done = asyncio.Event()
         self.gate = asyncio.Event()
 
-    async def _default_script(self, loop: "RecordingLoop", prompt: str):
+    async def _default_script(self, loop: RecordingLoop, prompt: str):
         loop.store.append_user(prompt)
         yield AgentEvent(
             type="interaction_started",
@@ -94,15 +94,15 @@ class RecordingLoop:
         finally:
             self.done.set()
 
-    def snapshot_run_facts(self, status: str | None = None) -> InterruptedRunFacts | None:
+    def snapshot_run_facts(
+        self, status: str | None = None
+    ) -> InterruptedRunFacts | None:
         return self.facts
 
 
 def make_runtime(tmp_path: Path, loop: RecordingLoop) -> SimpleNamespace:
     message_store = loop.store
-    state = RuntimeState(
-        session_id=message_store.transcript_store.session_id
-    )
+    state = RuntimeState(session_id=message_store.transcript_store.session_id)
     return SimpleNamespace(
         workspace=tmp_path,
         state=state,
@@ -205,7 +205,9 @@ def test_tool_turn_live_matches_authoritative_history(tmp_path: Path) -> None:
                 metadata={
                     "assistant_call_id": "c1",
                     "model_turn_index": 1,
-                    "tool_call": ToolCall(id="A", name="read_file", input={"path": "a.txt"}),
+                    "tool_call": ToolCall(
+                        id="A", name="read_file", input={"path": "a.txt"}
+                    ),
                 },
             )
             yield AgentEvent(
@@ -265,7 +267,9 @@ def test_tool_turn_live_matches_authoritative_history(tmp_path: Path) -> None:
 def test_cancel_cleanup_publishes_corrected_projection(tmp_path: Path) -> None:
     async def scenario() -> None:
         loop = RecordingLoop(
-            MessageStore(transcript_store=InMemoryTranscriptStore("session-pipe-cancel"))
+            MessageStore(
+                transcript_store=InMemoryTranscriptStore("session-pipe-cancel")
+            )
         )
 
         async def script(loop: RecordingLoop, prompt: str):
@@ -403,7 +407,9 @@ class _FakeCompaction:
 def test_compact_publishes_snapshot_and_preserves_history(tmp_path: Path) -> None:
     async def scenario() -> None:
         loop = RecordingLoop(
-            MessageStore(transcript_store=InMemoryTranscriptStore("session-pipe-compact"))
+            MessageStore(
+                transcript_store=InMemoryTranscriptStore("session-pipe-compact")
+            )
         )
         runtime = make_runtime(tmp_path, loop)
         loop.store = runtime.message_store
@@ -473,7 +479,7 @@ def test_slow_subscriber_resync_converges_to_authoritative_history(
             while True:
                 try:
                     update = await asyncio.wait_for(stream.__anext__(), 0.2)
-                except (asyncio.TimeoutError, StopAsyncIteration):
+                except (TimeoutError, StopAsyncIteration):
                     break
                 if isinstance(update, SnapshotUpdate):
                     projection.replace(update.snapshot)

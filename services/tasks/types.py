@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, get_args
+from typing import Any, Literal, get_args
 
 TaskStatus = Literal["pending", "in_progress", "completed"]
 TASK_STATUSES = set(get_args(TaskStatus))
@@ -31,7 +32,7 @@ def task_from_json(data: Mapping[str, Any]) -> TaskRecord:
         raise ValueError(f"Invalid task status for task {task_id}: {status}")
     metadata = data.get("metadata", {})
     if not isinstance(metadata, dict):
-        raise ValueError(f"metadata must be an object for task {task_id}.")
+        raise TypeError(f"metadata must be an object for task {task_id}.")
     return TaskRecord(
         id=task_id,
         subject=_required_string(data, "subject"),
@@ -39,7 +40,9 @@ def task_from_json(data: Mapping[str, Any]) -> TaskRecord:
         active_form=_optional_string(data, "activeForm"),
         owner=_optional_string(data, "owner"),
         status=status,  # type: ignore[arg-type]
-        blocks=_string_tuple(data.get("blocks", ()), field_name="blocks", task_id=task_id),
+        blocks=_string_tuple(
+            data.get("blocks", ()), field_name="blocks", task_id=task_id
+        ),
         blocked_by=_string_tuple(
             data.get("blockedBy", ()),
             field_name="blockedBy",
@@ -75,13 +78,13 @@ def _optional_string(data: Mapping[str, Any], field_name: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string or null.")
+        raise TypeError(f"{field_name} must be a string or null.")
     return value
 
 
 def _string_tuple(value: Any, *, field_name: str, task_id: str) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list for task {task_id}.")
+        raise TypeError(f"{field_name} must be a list for task {task_id}.")
     items: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item:

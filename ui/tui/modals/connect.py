@@ -8,6 +8,7 @@ App 负责编排连接步骤（供应商 → 凭据 → 模型）；这些界面
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -21,7 +22,7 @@ from infrastructure.providers.connection import ConnectOption
 
 
 class ProviderPickerModal(ModalScreen[ConnectOption | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     ProviderPickerModal { align: center middle; }
@@ -50,9 +51,7 @@ class ProviderPickerModal(ModalScreen[ConnectOption | None]):
                 id="connect-providers",
             )
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         for option in self.options:
             if option.provider_id == event.option.id:
                 self.dismiss(option)
@@ -69,7 +68,7 @@ class CredentialResult:
 
 
 class CredentialModal(ModalScreen[CredentialResult | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     CredentialModal { align: center middle; }
@@ -148,7 +147,7 @@ class CredentialModal(ModalScreen[CredentialResult | None]):
 
 
 class ModelPickerModal(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     ModelPickerModal { align: center middle; }
@@ -173,9 +172,7 @@ class ModelPickerModal(ModalScreen[str | None]):
                 )
             yield Input(placeholder="或手动输入模型名称", id="model-manual")
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option.id is not None:
             self.dismiss(str(event.option.id))
 

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -17,7 +19,7 @@ from ui.cli.permissions import render_permission_request_summary
 
 
 class PermissionModal(ModalScreen[PermissionResponse | None]):
-    BINDINGS = [Binding("escape", "deny", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "deny", "", priority=True)]
 
     DEFAULT_CSS = """
     PermissionModal { align: center middle; }
@@ -39,7 +41,9 @@ class PermissionModal(ModalScreen[PermissionResponse | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label(f"工具 {self.request.descriptor.name} 请求授权", id="permission-title")
+            yield Label(
+                f"工具 {self.request.descriptor.name} 请求授权", id="permission-title"
+            )
             yield Static(
                 render_permission_request_summary(self.request),
                 id="permission-summary",
@@ -65,7 +69,9 @@ class PermissionModal(ModalScreen[PermissionResponse | None]):
     def action_deny(self) -> None:
         self.dismiss(
             PermissionResponse(
-                action="deny", scope="once", feedback="User denied the permission request."
+                action="deny",
+                scope="once",
+                feedback="User denied the permission request.",
             )
         )
 

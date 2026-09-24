@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool
+from core.runtime_state import RuntimeState
 from services.mcp.tool_factory import build_mcp_tool_descriptors
+from services.mcp.types import McpConnectionSnapshot, McpDiscoveredTool
 from services.permissions import PermissionPolicy
 from services.tools.registry import ToolRegistry
 from services.tools.types import ToolCall, ToolRuntime
-from core.runtime_state import RuntimeState
 
 
 class FakeMcpManager:

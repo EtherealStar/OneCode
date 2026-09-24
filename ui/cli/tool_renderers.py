@@ -28,7 +28,6 @@ from typing import Any, Protocol
 from services.tools.types import ToolExecutionResult
 from ui.cli.views.common import display_path
 
-
 # --- 策略类型 ----------------------------------------------------------
 
 
@@ -42,14 +41,26 @@ class ToolCliRenderer(Protocol):
     def render_use_preview(self, tool_name: str, tool_input: Any) -> str:
         """正在进行的工具调用的有界单行预览。"""
 
+        ...
+
     def render_running(self, tool_name: str, tool_input: Any) -> str:
         """工具运行期间展示的有界状态行。"""
 
-    def render_success(self, result: ToolExecutionResult, *, workspace: Path | None) -> str:
+        ...
+
+    def render_success(
+        self, result: ToolExecutionResult, *, workspace: Path | None
+    ) -> str:
         """成功工具结果的单行摘要。"""
 
-    def render_error(self, result: ToolExecutionResult, *, workspace: Path | None) -> str:
+        ...
+
+    def render_error(
+        self, result: ToolExecutionResult, *, workspace: Path | None
+    ) -> str:
         """失败工具结果的单行摘要。"""
+
+        ...
 
 
 @dataclass(frozen=True)
@@ -87,7 +98,7 @@ def render_tool_result(result: ToolExecutionResult, *, workspace: Path) -> str:
         if method is not None:
             try:
                 return method(result, workspace)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
     return render_fallback_tool_result(result)
 
@@ -118,7 +129,7 @@ def render_use_preview(tool_name: str, tool_input: Any) -> str:
             text = policy.render_use_preview(tool_name, tool_input)
             if text:
                 return text
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     # 通用回退：单行 key=value 预览。
     return _default_use_preview(tool_name, tool_input)
@@ -136,7 +147,7 @@ def render_running(tool_name: str, tool_input: Any) -> str:
             text = policy.render_running(tool_name, tool_input)
             if text:
                 return text
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     return _default_use_preview(tool_name, tool_input)
 
@@ -297,7 +308,6 @@ def _bash_success(result: ToolExecutionResult, workspace: Path | None) -> str:
     if metadata.get("error") is not None and metadata.get("exit_code") is None:
         return f"[bash error] {_text(metadata.get('error'), 'error')}"
 
-    ws = workspace or Path(".")
     exit_code = _number(metadata.get("exit_code"), default=0)
     duration = _number(metadata.get("duration_ms"), default=0)
     stdout_chars = _number(metadata.get("stdout_chars"), default=0)
@@ -316,7 +326,6 @@ def _bash_error(result: ToolExecutionResult, workspace: Path | None) -> str:
         return f"[bash error] Background task {task_id} failed"
     if metadata.get("error") is not None and metadata.get("exit_code") is None:
         return f"[bash error] {_text(metadata.get('error'), 'error')}"
-    ws = workspace or Path(".")
     exit_code = _number(metadata.get("exit_code"), default=0)
     duration = _number(metadata.get("duration_ms"), default=0)
     stdout_chars = _number(metadata.get("stdout_chars"), default=0)
@@ -344,13 +353,12 @@ def _read_file_use_preview(tool_name: str, tool_input: Any) -> str:
     if isinstance(tool_input, dict):
         path = tool_input.get("path")
         if path:
-            return f"tool: {tool_name} path=\"{path}\""
+            return f'tool: {tool_name} path="{path}"'
     return _default_use_preview(tool_name, tool_input)
 
 
 def _grep_success(result: ToolExecutionResult, workspace: Path | None) -> str:
     metadata = result.metadata
-    ws = workspace or Path(".")
     mode = metadata.get("mode")
     num_files = _number(metadata.get("num_files"), default=0)
     if mode == "count":
@@ -374,7 +382,7 @@ def _grep_use_preview(tool_name: str, tool_input: Any) -> str:
             compact = " ".join(str(pattern).split())
             if len(compact) > 60:
                 compact = compact[:59] + "…"
-            return f"tool: {tool_name} pattern=\"{compact}\""
+            return f'tool: {tool_name} pattern="{compact}"'
     return _default_use_preview(tool_name, tool_input)
 
 
@@ -398,7 +406,7 @@ def _glob_use_preview(tool_name: str, tool_input: Any) -> str:
     if isinstance(tool_input, dict):
         pattern = tool_input.get("pattern")
         if pattern:
-            return f"tool: {tool_name} pattern=\"{pattern}\""
+            return f'tool: {tool_name} pattern="{pattern}"'
     return _default_use_preview(tool_name, tool_input)
 
 
@@ -436,7 +444,9 @@ register_renderer(
         name="read_file",
         render_use_preview=_read_file_use_preview,
         render_success=_read_file_success,
-        render_error=lambda r, workspace: _error_summary("read_file", r.metadata, workspace),
+        render_error=lambda r, workspace: _error_summary(
+            "read_file", r.metadata, workspace
+        ),
     )
 )
 register_renderer(
@@ -459,21 +469,25 @@ register_renderer(
     BuiltinToolRenderer(
         name="write_file",
         render_success=_write_file_success,
-        render_error=lambda r, workspace: _error_summary("write_file", r.metadata, workspace),
+        render_error=lambda r, workspace: _error_summary(
+            "write_file", r.metadata, workspace
+        ),
     )
 )
 register_renderer(
     BuiltinToolRenderer(
         name="edit_file",
         render_success=_edit_file_success,
-        render_error=lambda r, workspace: _error_summary("edit_file", r.metadata, workspace),
+        render_error=lambda r, workspace: _error_summary(
+            "edit_file", r.metadata, workspace
+        ),
     )
 )
 
 
 __all__ = [
-    "BuiltinToolRenderer",
     "RENDERERS",  # 保留用于测试的旧版别名
+    "BuiltinToolRenderer",
     "ToolCliRenderer",
     "ToolResultRenderer",
     "register_renderer",
@@ -488,7 +502,9 @@ __all__ = [
 # --- 遗留兼容 -------------------------------------------------
 
 
-def _legacy_dispatch_for(name: str, result: ToolExecutionResult, workspace: Path) -> str:
+def _legacy_dispatch_for(
+    name: str, result: ToolExecutionResult, workspace: Path
+) -> str:
     """将新策略 API 适配回旧版 ToolResultRenderer 形式。
 
     部分重构前的测试仍导入 RENDERERS 映射并通过工具名查找可调用对象。
@@ -503,13 +519,17 @@ def _legacy_dispatch_for(name: str, result: ToolExecutionResult, workspace: Path
         return render_fallback_tool_result(result)
     try:
         return method(result, workspace)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return render_fallback_tool_result(result)
 
 
 # 部分测试与下游代码仍导入 ToolResultRenderer 可调用对象的 RENDERERS 映射。
 # 该映射从已注册的策略中一次性构建。
 RENDERERS: dict[str, ToolResultRenderer] = {
-    name: (lambda _name=name: (lambda result, workspace: _legacy_dispatch_for(_name, result, workspace)))()
+    name: (
+        lambda result, workspace, _name=name: _legacy_dispatch_for(
+            _name, result, workspace
+        )
+    )
     for name in _POLICIES
 }

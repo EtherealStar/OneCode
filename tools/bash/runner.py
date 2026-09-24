@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from utils.text_io import decode_text
-
 
 DEFAULT_TIMEOUT_MS = 120_000
 MAX_TIMEOUT_MS = 600_000
@@ -26,8 +25,7 @@ class BashRunResult:
 
 
 class BashRunner(Protocol):
-    def run(self, command: str, *, cwd: Path, timeout_ms: int) -> BashRunResult:
-        ...
+    def run(self, command: str, *, cwd: Path, timeout_ms: int) -> BashRunResult: ...
 
 
 class GitBashRunner:

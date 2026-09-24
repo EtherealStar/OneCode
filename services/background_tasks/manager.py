@@ -14,9 +14,9 @@ from core.runtime_state import RuntimeState
 from services.background_tasks.ids import generate_background_task_id
 from services.background_tasks.output import background_task_output_path
 from services.background_tasks.types import (
+    TERMINAL_STATUSES,
     BackgroundTaskState,
     BackgroundTaskType,
-    TERMINAL_STATUSES,
 )
 from services.observability import TraceRecorder
 
@@ -35,9 +35,7 @@ class BackgroundTaskManager:
 
     def list_tasks(self) -> tuple[BackgroundTaskState, ...]:
         with self._lock:
-            return tuple(
-                sorted(self._tasks.values(), key=lambda item: item.start_time)
-            )
+            return tuple(sorted(self._tasks.values(), key=lambda item: item.start_time))
 
     def get(self, task_id: str) -> BackgroundTaskState | None:
         with self._lock:
@@ -87,7 +85,7 @@ class BackgroundTaskManager:
         finally:
             try:
                 output_handle.close()  # type: ignore[possibly-undefined]
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
         self._update(task.id, metadata={"process": process})
@@ -115,7 +113,9 @@ class BackgroundTaskManager:
             tool_use_id=tool_use_id,
             metadata=metadata or {},
         )
-        asyncio_task = asyncio.create_task(self._run_async_task(task.id, run, notify=True))
+        asyncio_task = asyncio.create_task(
+            self._run_async_task(task.id, run, notify=True)
+        )
         self._update(task.id, metadata={"asyncio_task": asyncio_task})
         return self.get(task.id) or task
 
@@ -134,7 +134,9 @@ class BackgroundTaskManager:
             tool_use_id=None,
             metadata=metadata or {},
         )
-        asyncio_task = asyncio.create_task(self._run_async_task(task.id, run, notify=False))
+        asyncio_task = asyncio.create_task(
+            self._run_async_task(task.id, run, notify=False)
+        )
         self._update(task.id, metadata={"asyncio_task": asyncio_task})
         return self.get(task.id) or task
 
@@ -164,7 +166,11 @@ class BackgroundTaskManager:
         payloads: list[dict[str, object]] = []
         with self._lock:
             for task in list(self._tasks.values()):
-                if task.type == "dream" or task.notified or task.status not in TERMINAL_STATUSES:
+                if (
+                    task.type == "dream"
+                    or task.notified
+                    or task.status not in TERMINAL_STATUSES
+                ):
                     continue
                 summary = str(task.metadata.get("summary") or _default_summary(task))
                 payloads.append(
@@ -279,8 +285,10 @@ class BackgroundTaskManager:
                 except subprocess.TimeoutExpired:
                     timed_out = True
                     self._stop_process(process)
-                    exit_code = process.returncode if process.returncode is not None else 124
-        except Exception as exc:
+                    exit_code = (
+                        process.returncode if process.returncode is not None else 124
+                    )
+        except Exception as exc:  # noqa: BLE001
             self._complete(
                 task_id,
                 status="failed",
@@ -320,10 +328,12 @@ class BackgroundTaskManager:
                     notify=notify,
                 )
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             task = self.get(task_id)
             if task is not None:
-                self._append_output(task, f"[background task failed] {type(exc).__name__}: {exc}\n")
+                self._append_output(
+                    task, f"[background task failed] {type(exc).__name__}: {exc}\n"
+                )
             self._complete(
                 task_id,
                 status="failed",
@@ -334,7 +344,9 @@ class BackgroundTaskManager:
             return
         task = self.get(task_id)
         if task is not None:
-            final_summary = str(metadata.pop("summary", "") or f"Background task {task_id} completed.")
+            final_summary = str(
+                metadata.pop("summary", "") or f"Background task {task_id} completed."
+            )
             self._complete(
                 task_id,
                 status="completed",
@@ -359,11 +371,11 @@ class BackgroundTaskManager:
         try:
             process.terminate()
             process.wait(timeout=2)
-        except Exception:
+        except Exception:  # noqa: BLE001
             try:
                 process.kill()
                 process.wait(timeout=2)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return
 
 

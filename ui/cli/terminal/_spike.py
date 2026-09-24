@@ -18,25 +18,18 @@ M0 仅需端到端证明上述四项原语可行；生产级装配将在 M1 至 
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from prompt_toolkit import Application
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.input import create_input
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.dimension import D
-from prompt_toolkit.output import create_output
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.text import Text
 
 from ui.cli.terminal.detect import detect_terminal_brightness
-
 
 # --- 静态输出（探针最小切片） --------------------------
 
@@ -152,12 +145,8 @@ def _render_streaming_preview(state: _SpikeState) -> FormattedText:
     if buffer.endswith("\n```") or buffer.count("```") % 2 == 1:
         # 未闭合的代码块：Rich 虽可渲染，但底部会遗留不完整的围栏。
         # 此处仅以低调样式展示原始文本。
-        return FormattedText(
-            [("class:stream-text", buffer + " …")]
-        )
-    return FormattedText(
-        [("class:stream-text", buffer + " …")]
-    )
+        return FormattedText([("class:stream-text", buffer + " …")])
+    return FormattedText([("class:stream-text", buffer + " …")])
 
 
 async def _run_streaming_preview(state: _SpikeState) -> None:

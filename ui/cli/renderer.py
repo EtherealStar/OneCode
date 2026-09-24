@@ -2,26 +2,40 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
 from services.background_tasks import BackgroundTaskState
-from services.tools.types import ToolExecutionResult
 from services.tasks import TaskRecord
+from services.tools.types import ToolExecutionResult
 from ui.cli.theme import RICH_THEME, SYMBOLS
 from ui.cli.tool_renderers import render_fallback_tool_result, render_tool_result
 from ui.cli.types import CliRuntime
-from ui.cli.views.common import display_path, preview, render_to_text, titled_section
+from ui.cli.views.common import (  # noqa: F401 - 转导出给 CLI 层使用
+    display_path,
+    preview,
+    render_to_text,
+    titled_section,
+)
 from ui.cli.views.mcp import render_mcp
-from ui.cli.views.memory import render_memory
-from ui.cli.views.permissions import render_permissions
-from ui.cli.views.resume import render_session_summaries
-from ui.cli.views.skills import render_skills
-from ui.cli.views.status import render_banner, render_status, render_usage
+from ui.cli.views.memory import render_memory  # noqa: F401 - 转导出给 CLI 层使用
+from ui.cli.views.permissions import (  # noqa: F401 - 转导出给 CLI 层使用
+    render_permissions,
+)
+from ui.cli.views.resume import (  # noqa: F401 - 转导出给 CLI 层使用
+    render_session_summaries,
+)
+from ui.cli.views.skills import render_skills  # noqa: F401 - 转导出给 CLI 层使用
+from ui.cli.views.status import (  # noqa: F401 - 转导出给 CLI 层使用
+    render_banner,
+    render_status,
+    render_usage,
+)
 from ui.cli.views.tasks import render_tasks as render_tasks_view
 
 
@@ -110,7 +124,9 @@ def render_mcp_status(runtime: CliRuntime, *, show_tools: bool = True) -> Group:
     return render_mcp(runtime)
 
 
-def render_history(messages: Iterable[dict[str, Any]], *, start_index: int = 1) -> Group:
+def render_history(
+    messages: Iterable[dict[str, Any]], *, start_index: int = 1
+) -> Group:
     items = list(messages)
     table = Table(box=None, show_header=True, header_style="onecode.subtle")
     table.add_column("#", no_wrap=True)
@@ -185,15 +201,17 @@ def render_compact(result: Any, runtime: CliRuntime) -> Group:
     table = Table.grid(padding=(0, 2))
     table.add_column(style="onecode.subtle", no_wrap=True)
     table.add_column()
-    table.add_row("trigger", getattr(result, "trigger").value)
+    table.add_row("trigger", result.trigger.value)
     table.add_row(
         "tokens",
-        f"{getattr(result, 'token_before')} -> {getattr(result, 'token_after')}",
+        f"{result.token_before} -> {result.token_after}",
     )
-    table.add_row("messages", str(len(getattr(result, "messages"))))
+    table.add_row("messages", str(len(result.messages)))
     table.add_row(
         "transcript",
-        display_path(runtime.message_store.transcript_store.messages_path, runtime.workspace),
+        display_path(
+            runtime.message_store.transcript_store.messages_path, runtime.workspace
+        ),
     )
     if memory_path is not None:
         table.add_row("session memory", display_path(memory_path, runtime.workspace))
@@ -206,7 +224,7 @@ def render_unknown_command(command: str) -> Text:
     )
 
 
-def render_group(*renderables: object) -> Group:
+def render_group(*renderables: RenderableType) -> Group:
     return Group(*renderables)
 
 

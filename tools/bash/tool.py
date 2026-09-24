@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -166,7 +166,7 @@ def _handle_with_runner(
             str(exc),
             {"read_only": plan.read_only, "command_count": _command_count(plan)},
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error_result(
             "bash_execution_error",
             str(exc),
@@ -239,7 +239,7 @@ def _start_background_bash(
             tool_use_id=runtime.tool_call_id,
             timeout_ms=parsed.timeout_ms,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error_result(
             "background_bash_start_failed",
             str(exc),
@@ -285,12 +285,14 @@ def _build_plan(command: str) -> BashPlan:
             parse_error=parsed,
             read_only=False,
             reason=parsed.reason,
-            targets=(ToolTarget(
-                kind="command",
-                operation="execute",
-                value=command,
-                metadata={"shell": "git_bash", "parse_error": parsed.reason},
-            ),),
+            targets=(
+                ToolTarget(
+                    kind="command",
+                    operation="execute",
+                    value=command,
+                    metadata={"shell": "git_bash", "parse_error": parsed.reason},
+                ),
+            ),
         )
     semantic = check_semantics(parsed)
     if not semantic.ok:

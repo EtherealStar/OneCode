@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
 import inspect
 import json
 import math
 import os
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from services.guard import GuardPolicy, SandboxGuard
+from services.guard.boundary import Operation, TargetKind
 from services.hooks import HookEvent, HookRegistry
 from services.observability import ErrorLogRecorder, TraceRecorder
 from services.permissions import PermissionPolicy, PermissionPrompter
@@ -86,12 +87,14 @@ class ToolExecutionUpdate:
 
 
 class ToolExecutor(Protocol):
+    @property
+    def file_state_cache(self) -> FileStateCache: ...
+
     def execute(
         self,
         tool_calls: tuple[ToolCall, ...],
-        state: object,
-    ) -> AsyncIterator[ToolExecutionUpdate]:
-        ...
+        state: RuntimeState,
+    ) -> AsyncIterator[ToolExecutionUpdate]: ...
 
 
 class RegistryToolExecutor:
@@ -114,9 +117,7 @@ class RegistryToolExecutor:
         self._hooks = hooks or HookRegistry()
         self._permission_policy = permission_policy
         self._permission_prompter = permission_prompter
-        self._max_tool_concurrency = _resolve_max_tool_concurrency(
-            max_tool_concurrency
-        )
+        self._max_tool_concurrency = _resolve_max_tool_concurrency(max_tool_concurrency)
         self._trace_recorder = trace_recorder or TraceRecorder.noop()
         self._error_log_recorder = error_log_recorder or ErrorLogRecorder.noop()
         self._result_store = result_store
@@ -142,7 +143,9 @@ class RegistryToolExecutor:
             {
                 "tool_call_count": len(tool_calls),
                 "concurrency_candidate_count": sum(
-                    1 for call in tool_calls if self._is_concurrency_candidate(call, state)
+                    1
+                    for call in tool_calls
+                    if self._is_concurrency_candidate(call, state)
                 ),
             },
         ) as batch_span:
@@ -151,9 +154,9 @@ class RegistryToolExecutor:
                 tool_call = tool_calls[index]
                 if not self._is_concurrency_candidate(tool_call, state):
                     async for update in self._execute_one(
-                            tool_call,
-                            state,
-                            parent_span_id=batch_span.span_id,
+                        tool_call,
+                        state,
+                        parent_span_id=batch_span.span_id,
                     ):
                         yield update
                     index += 1
@@ -167,9 +170,9 @@ class RegistryToolExecutor:
                     batch.append(tool_calls[index])
                     index += 1
                 async for update in self._execute_concurrency_candidate_batch(
-                        batch,
-                        state,
-                        parent_span_id=batch_span.span_id,
+                    batch,
+                    state,
+                    parent_span_id=batch_span.span_id,
                 ):
                     yield update
 
@@ -180,10 +183,14 @@ class RegistryToolExecutor:
         *,
         parent_span_id: str | None = None,
     ) -> AsyncIterator[ToolExecutionUpdate]:
-        ready = await self._preflight_one(tool_call, state, parent_span_id=parent_span_id)
+        ready = await self._preflight_one(
+            tool_call, state, parent_span_id=parent_span_id
+        )
         if isinstance(ready, ToolExecutionResult):
             self._record_tool_result(ready, parent_span_id=parent_span_id)
-            yield _result_update(ready, update_type="error" if ready.is_error else "result")
+            yield _result_update(
+                ready, update_type="error" if ready.is_error else "result"
+            )
             return
         yield _started_update(ready)
         final = await self._finalize_outcome(
@@ -232,7 +239,9 @@ class RegistryToolExecutor:
             tool_input = dict(tool_call.input)
             # hook 之前先校验、分类并执行 guard，确保 deny/ask 基于模型原始请求，
             # 不能被 hook 改写绕过。
-            prepared = await self._prepare_input(tool_call, descriptor, tool_input, runtime)
+            prepared = await self._prepare_input(
+                tool_call, descriptor, tool_input, runtime
+            )
             if isinstance(prepared, _PreparedInputError):
                 span.end(
                     self._preflight_trace_attributes(
@@ -291,7 +300,9 @@ class RegistryToolExecutor:
                 tool_input = dict(hook_result.updated_input)
                 # hook 修改后的输入视为一次新请求，必须重新通过 schema、工具校验、
                 # 分类和 guard 检查。
-                prepared = await self._prepare_input(tool_call, descriptor, tool_input, runtime)
+                prepared = await self._prepare_input(
+                    tool_call, descriptor, tool_input, runtime
+                )
                 if isinstance(prepared, _PreparedInputError):
                     span.end(
                         self._preflight_trace_attributes(
@@ -343,12 +354,19 @@ class RegistryToolExecutor:
                 parent_span_id=ready.trace_parent_span_id,
             ):
                 try:
-                    result = await ready.descriptor.handler(
+                    async_handler = cast(
+                        Callable[
+                            [dict[str, Any], ToolRuntime],
+                            Awaitable[ToolExecutionResult],
+                        ],
+                        ready.descriptor.handler,
+                    )
+                    result = await async_handler(
                         ready.tool_input,
                         ready.runtime,
                     )
                     return _HandlerOutcome(ready=ready, result=result)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     self._record_unexpected_tool_error(
                         exc,
                         tool_call=ready.tool_call,
@@ -369,11 +387,15 @@ class RegistryToolExecutor:
             parent_span_id=ready.trace_parent_span_id,
         ):
             try:
+                sync_handler = cast(
+                    Callable[[dict[str, Any], ToolRuntime], ToolExecutionResult],
+                    ready.descriptor.handler,
+                )
                 return _HandlerOutcome(
                     ready=ready,
-                    result=ready.descriptor.handler(ready.tool_input, ready.runtime),
+                    result=sync_handler(ready.tool_input, ready.runtime),
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._record_unexpected_tool_error(
                     exc,
                     tool_call=ready.tool_call,
@@ -469,7 +491,7 @@ class RegistryToolExecutor:
             return False
         try:
             classification = descriptor.classify_input(tool_input, runtime)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
         return classification.concurrency_safe
 
@@ -481,7 +503,7 @@ class RegistryToolExecutor:
         parent_span_id: str | None = None,
     ) -> AsyncIterator[ToolExecutionUpdate]:
         """预检看似安全的运行序列，然后按冲突批次执行处理器。
-        
+
         原始的单一布尔标志 concurrency_safe 不再是唯一的裁决依据：
         预检之后，我们额外按目标冲突对就绪调用进行分区，
         使得读取不同文件的两个探索 agent 仍能并行运行，
@@ -516,9 +538,7 @@ class RegistryToolExecutor:
                 )
             return
 
-        ready_calls = [
-            item for item in prepared if isinstance(item, _ReadyToolCall)
-        ]
+        ready_calls = [item for item in prepared if isinstance(item, _ReadyToolCall)]
         # build_conflict_batches 返回 ready_calls 的索引列表；
         # 我们并发运行每个批次，批次之间则串行执行。
         batches = build_conflict_batches(
@@ -530,9 +550,9 @@ class RegistryToolExecutor:
         outcomes_by_id: dict[int, _HandlerOutcome] = {}
         for batch in batches:
             if len(batch) == 1:
-                outcomes_by_id[id(ready_calls[batch[0]])] = (
-                    await self._run_handler_async(ready_calls[batch[0]])
-                )
+                outcomes_by_id[
+                    id(ready_calls[batch[0]])
+                ] = await self._run_handler_async(ready_calls[batch[0]])
                 continue
             batch_ready = [ready_calls[index] for index in batch]
             # 作为安全兜底检测批次内部的边界：build_conflict_batches
@@ -580,9 +600,7 @@ class RegistryToolExecutor:
             async with semaphore:
                 return await self._run_handler_async(ready)
 
-        tasks = [
-            asyncio.ensure_future(run_one(ready)) for ready in ready_calls
-        ]
+        tasks = [asyncio.ensure_future(run_one(ready)) for ready in ready_calls]
         try:
             return list(await asyncio.gather(*tasks))
         except BaseException:
@@ -611,7 +629,7 @@ class RegistryToolExecutor:
 
         try:
             classification = descriptor.classify_input(tool_input, runtime)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._record_unexpected_tool_error(
                 exc,
                 tool_call=tool_call,
@@ -624,7 +642,7 @@ class RegistryToolExecutor:
 
         try:
             guard_policies = self._check_guard(classification)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._record_unexpected_tool_error(
                 exc,
                 tool_call=tool_call,
@@ -675,7 +693,7 @@ class RegistryToolExecutor:
             return None
         try:
             validation = descriptor.validate_input(tool_input, runtime)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._record_unexpected_tool_error(
                 exc,
                 tool_call=tool_call,
@@ -713,8 +731,8 @@ class RegistryToolExecutor:
             # 主循环或具体工具里。
             policy = self._guard.check_path(
                 target.value,
-                operation=target.operation,
-                kind=target.kind,
+                operation=cast(Operation, target.operation),
+                kind=cast(TargetKind, target.kind),
             )
             policies.append(policy)
         return tuple(policies)
@@ -928,7 +946,9 @@ class RegistryToolExecutor:
                 "tool_name": (
                     descriptor.name
                     if descriptor is not None
-                    else tool_call.name if tool_call is not None else "unknown_tool"
+                    else tool_call.name
+                    if tool_call is not None
+                    else "unknown_tool"
                 ),
                 "tool_call_id": tool_call.id if tool_call is not None else "",
                 "stage": stage,
@@ -941,7 +961,11 @@ class RegistryToolExecutor:
         policy: ToolResultPolicy,
     ) -> ToolExecutionResult:
         max_chars = policy.max_result_size_chars
-        if max_chars is None or math.isinf(max_chars) or len(result.content) <= max_chars:
+        if (
+            max_chars is None
+            or math.isinf(max_chars)
+            or len(result.content) <= max_chars
+        ):
             return result
 
         preview = result.content[: policy.preview_chars]
@@ -1039,7 +1063,6 @@ class RegistryToolExecutor:
             partial=result.tool_name == "read_file"
             and ("offset" in tool_input or "limit" in tool_input),
         )
-
 
     async def _tool_error(
         self,
@@ -1218,7 +1241,7 @@ def _permission_ask_required_result(
     tool_call: ToolCall,
     decision: PermissionDecision,
 ) -> ToolExecutionResult:
-    payload = {
+    payload: dict[str, Any] = {
         "error": "permission_ask_required",
         "tool_name": tool_call.name,
         "tool_call_id": tool_call.id,

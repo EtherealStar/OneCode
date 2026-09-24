@@ -27,7 +27,9 @@ def test_tty_stdin_and_stdout_run_tui(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli_app.sys, "stdin", FakeTty(True))
     monkeypatch.setattr(cli_app.sys, "stdout", FakeTty(True))
-    monkeypatch.setattr("ui.tui.app.run_tui", lambda workspace: calls.append(workspace) or 0)
+    monkeypatch.setattr(
+        "ui.tui.app.run_tui", lambda workspace: calls.append(workspace) or 0
+    )
 
     assert cli_app.main([]) == 0
     assert calls == [tmp_path]
@@ -39,13 +41,17 @@ def test_non_tty_stdin_uses_batch(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli_app.sys, "stdin", FakeTty(False))
     monkeypatch.setattr(cli_app.sys, "stdout", FakeTty(True))
-    monkeypatch.setattr("ui.cli.batch.run_batch", lambda workspace: calls.append(workspace) or 7)
+    monkeypatch.setattr(
+        "ui.cli.batch.run_batch", lambda workspace: calls.append(workspace) or 7
+    )
 
     assert cli_app.main([]) == 7
     assert calls == [tmp_path]
 
 
-def test_tty_stdin_redirected_stdout_is_an_error(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_tty_stdin_redirected_stdout_is_an_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli_app.sys, "stdin", FakeTty(True))
     monkeypatch.setattr(cli_app.sys, "stdout", FakeTty(False))

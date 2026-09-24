@@ -42,8 +42,7 @@ class VirtualLayoutIndex:
         heights = dict(zip(self._ids, self._heights))
         self._ids = list(message_ids)
         self._heights = [
-            heights.get(message_id, self._default_height)
-            for message_id in self._ids
+            heights.get(message_id, self._default_height) for message_id in self._ids
         ]
         self._positions = {
             message_id: index for index, message_id in enumerate(self._ids)
@@ -84,12 +83,7 @@ class VirtualLayoutIndex:
         if not self._ids:
             return (0, 0)
         first = bisect_right(self._prefixes, max(scroll_y, 0))
-        last = (
-            bisect_right(
-                self._prefixes, max(scroll_y, 0) + viewport_height - 1
-            )
-            + 1
-        )
+        last = bisect_right(self._prefixes, max(scroll_y, 0) + viewport_height - 1) + 1
         return max(0, first - overscan), min(len(self._ids), last + overscan)
 
     def _rebuild_prefixes(self) -> None:

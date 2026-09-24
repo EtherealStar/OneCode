@@ -81,9 +81,7 @@ class StatusBar(Horizontal):
         right = self.query_one("#status-right", Static)
         width = max(1, self.size.width - right.outer_size.width - 2)
         self.query_one("#status-left", Static).update(
-            render_status_left(
-                self._workspace_root, self._model, max_width=width
-            )
+            render_status_left(self._workspace_root, self._model, max_width=width)
         )
 
 

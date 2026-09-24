@@ -13,9 +13,7 @@ from rich.text import Text
 
 from ui.tui.conversation.render_cache import MarkdownBlockCache
 from ui.tui.projection_types import (
-    LIFECYCLE_COMPLETED,
     LIFECYCLE_DRAFT,
-    MESSAGE_ROLE_ASSISTANT,
     MESSAGE_ROLE_SYSTEM,
     MESSAGE_ROLE_USER,
     PART_ATTACHMENT,
@@ -49,8 +47,7 @@ def render_message(
         message,
         details_expanded=details_expanded,
         md_caches=md_caches,
-        tool_presentations=tool_presentations
-        or build_tool_presentation_registry(),
+        tool_presentations=tool_presentations or build_tool_presentation_registry(),
     )
 
 
@@ -98,9 +95,7 @@ def _render_assistant(
         elif part.kind == PART_ATTACHMENT:
             blocks.append(Text("附件: " + part.content, style="ui.attachment"))
         elif part.kind == PART_TEXT:
-            blocks.append(
-                _render_text_part(message, index, part, md_caches)
-            )
+            blocks.append(_render_text_part(message, index, part, md_caches))
     if message.lifecycle == "failed":
         blocks.append(Text("未完成", style="ui.error"))
     return Group(*blocks)
@@ -152,8 +147,7 @@ def _render_tool_part(
             line.append("\n    " + excerpt, style="ui.error")
     blocks: list = [line]
     blocks.extend(
-        Padding(preview, pad=(0, 0, 0, 4))
-        for preview in presentation.preview_lines
+        Padding(preview, pad=(0, 0, 0, 4)) for preview in presentation.preview_lines
     )
     if expanded and presentation.body:
         blocks.append(

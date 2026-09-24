@@ -8,8 +8,8 @@ TTY/batch 入口路由以及面向终端的 MCP 信任提示。旧的内联 REPL
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 from application.runtime import (
     McpTrustMode,
@@ -17,7 +17,11 @@ from application.runtime import (
     TrustChoice,
     _collect_untrusted_project_mcp_servers,
     _iter_untrusted_project_mcp_server_requests,
+)
+from application.runtime import (
     build_runtime as _build_application_runtime,
+)
+from application.runtime import (
     build_unconfigured_runtime as _build_unconfigured_application_runtime,
 )
 from services.mcp import McpConfigSet, McpTrustStore
@@ -132,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         return run_tui(workspace)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

@@ -12,19 +12,19 @@ from typing import Any
 
 import httpx
 import pytest
-
-from infrastructure.providers.chat_completions import (
-    OpenAICompatibleChatCompletionsClient,
-)
 from sdk_test_support import (
-    Recorder,
     SSE_HEADERS,
+    Recorder,
     async_sdk,
     resolved_config,
     sse_body,
     text_chunk,
     tool_call_chunk,
     usage_chunk,
+)
+
+from infrastructure.providers.chat_completions import (
+    OpenAICompatibleChatCompletionsClient,
 )
 from services.context.snapshot import ContextSnapshot
 from services.model.types import ProviderError
@@ -38,14 +38,17 @@ def collect_events(
     config: Any | None = None,
 ) -> tuple[list[Any], Recorder]:
     config = config or resolved_config()
-    recorder = Recorder(lambda _request: httpx.Response(200, content=sse_body(chunks), headers=SSE_HEADERS))
+    recorder = Recorder(
+        lambda _request: httpx.Response(
+            200, content=sse_body(chunks), headers=SSE_HEADERS
+        )
+    )
     sdk = async_sdk(config, recorder)
     client = OpenAICompatibleChatCompletionsClient(config, sdk_client=sdk)
 
     async def run() -> list[Any]:
         events = [
-            event
-            async for event in client.stream(snapshot or ContextSnapshot("", ()))
+            event async for event in client.stream(snapshot or ContextSnapshot("", ()))
         ]
         await sdk.close()
         return events
@@ -77,9 +80,7 @@ def test_chat_completions_streams_text_deltas_and_final_message() -> None:
 
 
 def test_chat_completions_marks_length_finish_as_output_interrupted() -> None:
-    events, _recorder = collect_events(
-        [text_chunk("cut", finish_reason="length")]
-    )
+    events, _recorder = collect_events([text_chunk("cut", finish_reason="length")])
 
     completed = events[-1]
     assert completed.type == "message_completed"
@@ -119,7 +120,9 @@ def test_chat_completions_stream_accumulates_tool_call_arguments() -> None:
 def test_chat_completions_merges_interleaved_tool_call_fragments() -> None:
     events, _recorder = collect_events(
         [
-            tool_call_chunk(0, call_id="call_a", name="read_file", arguments='{"file_path":'),
+            tool_call_chunk(
+                0, call_id="call_a", name="read_file", arguments='{"file_path":'
+            ),
             tool_call_chunk(1, call_id="call_b", name="grep", arguments='{"pattern":'),
             tool_call_chunk(0, arguments='"a.txt"}'),
             tool_call_chunk(1, arguments='"needle"}', finish_reason="tool_calls"),

@@ -1,5 +1,7 @@
 # CLI Message Rendering Architecture
 
+> 目标消息展示将由参考 `UiProjection` 适配形成的 [ConversationProjection](conversation-projection-architecture.md) 和全屏 [ConversationView](conversation-view-architecture.md) 接替。本文的静态提交、checkpoint 和 scrollback 重放描述现有实现，目标路径不再保留这些机制。
+
 本文记录当前 CLI 如何把会话消息、模型流式输出、工具调用和恢复历史渲染到终端界面。它只描述现有实现，不定义新的 UI 目标。
 
 ## 边界定位

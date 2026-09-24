@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import socket
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Thread
-from typing import Any, Iterator
+from typing import Any
 
 import uvicorn
 
@@ -19,18 +20,14 @@ from services.mcp.types import McpConfigSet, McpServerConfig
 def test_mcp_connection_manager_discovers_and_calls_stdio_tools(tmp_path: Path) -> None:
     server_path = tmp_path / "fake_mcp_server.py"
     server_path.write_text(
-        "\n".join(
-            [
-                "from mcp.server.fastmcp import FastMCP",
-                "from mcp.types import ToolAnnotations",
-                "mcp = FastMCP('fake', instructions='Use fake MCP instructions.')",
-                "@mcp.tool(name='search.docs', description='Search docs.', annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))",
-                "def search_docs(query: str) -> str:",
-                "    return 'result:' + query",
-                "if __name__ == '__main__':",
-                "    mcp.run('stdio')",
-            ]
-        ),
+        "from mcp.server.fastmcp import FastMCP\n"
+        "from mcp.types import ToolAnnotations\n"
+        "mcp = FastMCP('fake', instructions='Use fake MCP instructions.')\n"
+        "@mcp.tool(name='search.docs', description='Search docs.', annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))\n"
+        "def search_docs(query: str) -> str:\n"
+        "    return 'result:' + query\n"
+        "if __name__ == '__main__':\n"
+        "    mcp.run('stdio')",
         encoding="utf-8",
     )
     manager = McpConnectionManager(
@@ -174,20 +171,16 @@ def test_mcp_stdio_env_uses_allowlist_and_explicit_env(
     monkeypatch.setenv("OPENAI_API_KEY", "parent-secret")
     server_path = tmp_path / "env_mcp_server.py"
     server_path.write_text(
-        "\n".join(
-            [
-                "import os",
-                "from mcp.server.fastmcp import FastMCP",
-                "mcp = FastMCP('env')",
-                "@mcp.tool(name='env.check')",
-                "def env_check() -> str:",
-                "    secret = os.environ.get('OPENAI_API_KEY', 'missing')",
-                "    explicit = os.environ.get('ONECODE_EXPLICIT', 'missing')",
-                "    return secret + '|' + explicit",
-                "if __name__ == '__main__':",
-                "    mcp.run('stdio')",
-            ]
-        ),
+        "import os\n"
+        "from mcp.server.fastmcp import FastMCP\n"
+        "mcp = FastMCP('env')\n"
+        "@mcp.tool(name='env.check')\n"
+        "def env_check() -> str:\n"
+        "    secret = os.environ.get('OPENAI_API_KEY', 'missing')\n"
+        "    explicit = os.environ.get('ONECODE_EXPLICIT', 'missing')\n"
+        "    return secret + '|' + explicit\n"
+        "if __name__ == '__main__':\n"
+        "    mcp.run('stdio')",
         encoding="utf-8",
     )
     manager = McpConnectionManager(
@@ -267,23 +260,19 @@ def test_mcp_connection_manager_reconnects_once_after_call_failure(
     marker = tmp_path / "crashed_once"
     server_path = tmp_path / "flaky_mcp_server.py"
     server_path.write_text(
-        "\n".join(
-            [
-                "import os",
-                "import sys",
-                "from mcp.server.fastmcp import FastMCP",
-                "marker = sys.argv[1]",
-                "mcp = FastMCP('flaky')",
-                "@mcp.tool(name='lookup.docs')",
-                "def lookup_docs(query: str) -> str:",
-                "    if not os.path.exists(marker):",
-                "        open(marker, 'w').close()",
-                "        os._exit(1)",
-                "    return 'reconnected:' + query",
-                "if __name__ == '__main__':",
-                "    mcp.run('stdio')",
-            ]
-        ),
+        "import os\n"
+        "import sys\n"
+        "from mcp.server.fastmcp import FastMCP\n"
+        "marker = sys.argv[1]\n"
+        "mcp = FastMCP('flaky')\n"
+        "@mcp.tool(name='lookup.docs')\n"
+        "def lookup_docs(query: str) -> str:\n"
+        "    if not os.path.exists(marker):\n"
+        "        open(marker, 'w').close()\n"
+        "        os._exit(1)\n"
+        "    return 'reconnected:' + query\n"
+        "if __name__ == '__main__':\n"
+        "    mcp.run('stdio')",
         encoding="utf-8",
     )
     manager = McpConnectionManager(
@@ -360,8 +349,9 @@ class _OpeningTrackingMcpConnectionManager(McpConnectionManager):
         super().__init__(workspace, configs, trust_policy=trust_policy)
         self.open_attempts = 0
 
-    async def _open_streams(self, config: McpServerConfig, exit_stack: Any) -> tuple[Any, ...]:
+    async def _open_streams(
+        self, config: McpServerConfig, exit_stack: Any
+    ) -> tuple[Any, ...]:
         del config, exit_stack
         self.open_attempts += 1
         raise AssertionError("untrusted stdio server should not open streams")
-

@@ -38,7 +38,9 @@ class FakePrompter:
         self.response = response
         self.requests: list[PermissionRequest] = []
 
-    async def request_permission(self, request: PermissionRequest) -> PermissionResponse:
+    async def request_permission(
+        self, request: PermissionRequest
+    ) -> PermissionResponse:
         self.requests.append(request)
         return self.response
 
@@ -91,7 +93,8 @@ def make_descriptor(
     return ToolDescriptor(
         name=name,
         description=f"{name} description",
-        input_schema=input_schema or {
+        input_schema=input_schema
+        or {
             "type": "object",
             "properties": {
                 "call_id": {"type": "string"},
@@ -298,7 +301,9 @@ def test_executor_applies_result_policy_from_classification() -> None:
     assert result.metadata["original_size_chars"] == 6
 
 
-def test_executor_runs_concurrency_safe_batch_concurrently_and_preserves_result_order() -> None:
+def test_executor_runs_concurrency_safe_batch_concurrently_and_preserves_result_order() -> (
+    None
+):
     barrier = threading.Barrier(2, timeout=2)
     starts: list[str] = []
     lock = threading.Lock()
@@ -337,7 +342,9 @@ def test_executor_runs_concurrency_safe_batch_concurrently_and_preserves_result_
     assert [result.content for result in results] == ["call-1", "call-2"]
 
 
-def test_executor_keeps_non_concurrency_safe_calls_serial_between_parallel_batches() -> None:
+def test_executor_keeps_non_concurrency_safe_calls_serial_between_parallel_batches() -> (
+    None
+):
     events: list[str] = []
     lock = threading.Lock()
     barriers = {

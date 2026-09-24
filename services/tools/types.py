@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from core.runtime_state import RuntimeState
-    from services.guard import GuardPolicy
-    from services.guard import SandboxGuard
+    from services.guard import GuardPolicy, SandboxGuard
     from services.tools.file_state import FileStateCache
 
 
@@ -35,11 +35,11 @@ class ValidationResult:
     message: str | None = None
 
     @classmethod
-    def success(cls) -> "ValidationResult":
+    def success(cls) -> ValidationResult:
         return cls(ok=True)
 
     @classmethod
-    def failure(cls, message: str) -> "ValidationResult":
+    def failure(cls, message: str) -> ValidationResult:
         return cls(ok=False, message=message)
 
 
@@ -83,7 +83,10 @@ class ToolCallClassification:
     permission_subject: str = ""
 
 
-ToolHandler = Callable[[dict[str, Any], ToolRuntime], ToolExecutionResult]
+ToolHandler = Callable[
+    [dict[str, Any], ToolRuntime],
+    ToolExecutionResult | Awaitable[ToolExecutionResult],
+]
 ToolValidator = Callable[[dict[str, Any], ToolRuntime], ValidationResult]
 ToolClassifier = Callable[[dict[str, Any], ToolRuntime], ToolCallClassification]
 

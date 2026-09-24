@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from core.runtime_state import RuntimeState
-from services.skills.loader import get_commands
 from services.skills.loader import find_command as loader_find_command
+from services.skills.loader import get_commands
 from services.skills.types import SkillCommand
 
 
@@ -16,11 +17,9 @@ class SkillCatalogProvider(Protocol):
         self,
         state: RuntimeState,
         cwd: Path,
-    ) -> Iterable[SkillCommand]:
-        ...
+    ) -> Iterable[SkillCommand]: ...
 
-    def find_skill(self, name: str, cwd: Path) -> SkillCommand | None:
-        ...
+    def find_skill(self, name: str, cwd: Path) -> SkillCommand | None: ...
 
 
 class LoaderSkillCatalogProvider:
@@ -53,7 +52,6 @@ def _names(value: object) -> set[str]:
         return set()
     if isinstance(value, str):
         return {value.lstrip("/")} if value else set()
-    try:
+    if isinstance(value, Iterable):
         return {str(item).lstrip("/") for item in value if str(item)}
-    except TypeError:
-        return {str(value).lstrip("/")} if str(value) else set()
+    return {str(value).lstrip("/")} if str(value) else set()

@@ -16,7 +16,9 @@ def render_connect_success(provider_name: str, model: str) -> Group:
     table.add_column()
     table.add_row("provider", provider_name)
     table.add_row("model", model)
-    return titled_section(f"{SYMBOLS.success} Connected", table, style="onecode.success")
+    return titled_section(
+        f"{SYMBOLS.success} Connected", table, style="onecode.success"
+    )
 
 
 def render_connect_cancelled() -> Text:

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from math import ceil
 from typing import Any
-import json
 
 from services.context.snapshot import ContextSnapshot
 
@@ -28,7 +28,9 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
     return max(1, total)
 
 
-def estimate_messages_tokens(messages: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> int:
+def estimate_messages_tokens(
+    messages: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+) -> int:
     """估算有序消息链的 token 数。"""
 
     return sum(estimate_message_tokens(message) for message in messages)

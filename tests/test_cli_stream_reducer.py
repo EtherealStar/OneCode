@@ -192,7 +192,9 @@ def test_tool_progress_with_unknown_call_id_is_ignored() -> None:
         state,
         _evt(
             "tool_progress",
-            metadata=_attr(call_id="ac2", turn=2, tool_call_id="ghost", message="noise"),
+            metadata=_attr(
+                call_id="ac2", turn=2, tool_call_id="ghost", message="noise"
+            ),
         ),
     )
     assert state.tools == {}
@@ -390,7 +392,9 @@ def test_full_turn_lifecycle_assistant_then_tool_then_assistant() -> None:
         _evt(
             "tool_call_ready",
             metadata=_attr(
-                tool_call=_Call(id="c1", name="read_file", input={"path": "core/loop.py"})
+                tool_call=_Call(
+                    id="c1", name="read_file", input={"path": "core/loop.py"}
+                )
             ),
         ),
     )
@@ -472,7 +476,10 @@ def test_visible_active_tools_respects_limit() -> None:
             _evt(
                 "tool_started",
                 metadata=_attr(
-                    call_id=f"ac{i}", turn=i + 1, tool_call_id=f"c{i}", tool_name=f"tool{i}"
+                    call_id=f"ac{i}",
+                    turn=i + 1,
+                    tool_call_id=f"c{i}",
+                    tool_name=f"tool{i}",
                 ),
             ),
         )

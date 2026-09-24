@@ -172,7 +172,7 @@ def short_error_stack(value: object, max_frames: int = 5) -> str:
     if error.__traceback__ is None:
         return f"{type(error).__name__}: {error}"
     frames = traceback.extract_tb(error.__traceback__)
-    selected = frames[-max(0, max_frames):]
+    selected = frames[-max(0, max_frames) :]
     formatted = "".join(traceback.format_list(selected))
     return f"{type(error).__name__}: {error}\n{formatted}".rstrip()
 

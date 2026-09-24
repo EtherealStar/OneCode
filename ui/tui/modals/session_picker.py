@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -24,7 +25,7 @@ def _format_updated(value: datetime | None) -> str:
 
 
 class SessionPickerModal(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     SessionPickerModal { align: center middle; }
@@ -60,9 +61,7 @@ class SessionPickerModal(ModalScreen[str | None]):
             else:
                 yield OptionList(*options, id="session-options")
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option.id is not None:
             self.dismiss(str(event.option.id))
 

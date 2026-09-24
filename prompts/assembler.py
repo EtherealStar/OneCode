@@ -23,10 +23,10 @@ class DynamicPromptAssembler:
     def __init__(
         self,
         cwd: Path | str | Callable[[], Path | str],
-        tool_registry: "ToolRegistry | None" = None,
-        skill_provider: "SkillCatalogProvider | None" = None,
-        instruction_memory_loader: "InstructionMemoryLoader | None" = None,
-        long_term_memory_provider: "LongTermMemoryPromptProvider | None" = None,
+        tool_registry: ToolRegistry | None = None,
+        skill_provider: SkillCatalogProvider | None = None,
+        instruction_memory_loader: InstructionMemoryLoader | None = None,
+        long_term_memory_provider: LongTermMemoryPromptProvider | None = None,
         section_cache: PromptSectionCache | None = None,
     ) -> None:
         self._cwd = cwd
@@ -63,7 +63,9 @@ class DynamicPromptAssembler:
             result = self._instruction_memory_loader.load(
                 state,
                 cwd,
-                target_paths=tuple(Path(path) for path in _files_read_from_state(state)),
+                target_paths=tuple(
+                    Path(path) for path in _files_read_from_state(state)
+                ),
             )
             instruction_memory = result.rendered_text
             instruction_memory_fingerprint = result.fingerprint
@@ -79,7 +81,9 @@ class DynamicPromptAssembler:
             visible_skills=visible_skills,
             files_read=_files_read_from_state(state),
             transition=(
-                state.last_transition.value if state.last_transition is not None else None
+                state.last_transition.value
+                if state.last_transition is not None
+                else None
             ),
             mcp_server_instructions=_mcp_instructions_from_state(state),
             instruction_memory=instruction_memory,

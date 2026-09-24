@@ -22,6 +22,7 @@ from services.mcp.types import (
 )
 
 __all__ = [
+    "BASE_STDIO_ENV_ALLOWLIST",
     "McpConfigError",
     "McpConfigSet",
     "McpConnectionManager",
@@ -33,10 +34,9 @@ __all__ = [
     "McpToolName",
     "McpTrustPolicy",
     "McpTrustStore",
-    "BASE_STDIO_ENV_ALLOWLIST",
-    "build_stdio_child_env",
     "build_mcp_tool_descriptors",
     "build_mcp_tool_name",
+    "build_stdio_child_env",
     "fingerprint_mcp_server",
     "load_project_mcp_config",
     "normalize_mcp_name",

@@ -59,12 +59,12 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding import KeyBindings, KeyBindingsBase, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
@@ -79,11 +79,9 @@ from ui.cli.terminal.interaction_host import TerminalInteractionHost
 from ui.cli.terminal.output_coordinator import TerminalOutputCoordinator
 from ui.cli.terminal.queue import InputQueue
 from ui.cli.terminal.stream_reducer import (
-    queue_assistant_checkpoint,
     reduce_stream_event,
-    release_ready_tool_result_commits,
 )
-from ui.cli.terminal.stream_state import CliStreamUiState, CommitKind
+from ui.cli.terminal.stream_state import CliStreamUiState
 from ui.cli.terminal.stream_view import (
     render_status_fragments,
     render_stream_body_ansi,
@@ -96,6 +94,8 @@ from ui.cli.terminal.streaming_coalescer import StreamingCoalescer
 # 不直接调用它们(走 reducer),但保留 export 不会破坏现有测试。
 from ui.cli.types import CliRuntime
 
+if TYPE_CHECKING:
+    from core.stream_events import AgentEvent
 
 #: 50 ms = 20 fps; 与旧实现保持一致。
 _THROTTLE_INTERVAL = 0.05
@@ -202,15 +202,12 @@ class StreamingSession:
                     feeder_already_awaited = True
                 except asyncio.CancelledError:
                     feeder_already_awaited = True
-                    pass
         self.coordinator.end_dynamic_app()
         if self._interaction_host is not None:
             self._interaction_host.unbind_app(app)
         self._finalised = True
         if self._cancel.is_set():
-            self.coordinator.queue_status_line(
-                Text("已取消", style="onecode.warning")
-            )
+            self.coordinator.queue_status_line(Text("已取消", style="onecode.warning"))
         # 在 session 收尾阶段,可能 reducer 还在最后一波 commit 之
         # 中(例如 ``completed`` 事件触发的 assistant_markdown),
         # 再做一次 commit + flush 兜底。reducer 自己保证
@@ -268,7 +265,7 @@ class StreamingSession:
             _safe_invalidate(app)
             _safe_exit(app)
 
-    def _apply_event(self, event: object) -> None:
+    def _apply_event(self, event: AgentEvent) -> None:
         """输送给合并器的单事件入口点。
 
         委托给纯函数 reducer。reducer 本身将生成的提交直接暂存在
@@ -306,7 +303,7 @@ class StreamingSession:
         def preview_text():  # type: ignore[no-untyped-def]
             try:
                 width = app.output.get_size().columns  # type: ignore[union-attr]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 width = 80
             if self._interaction_host is not None:
                 permission_body = self._interaction_host.render_body(width=width)
@@ -424,7 +421,7 @@ class StreamingSession:
             _border_window("running-border"),
         ]
 
-    def _build_key_bindings(self) -> KeyBindings:
+    def _build_key_bindings(self) -> KeyBindingsBase:
         """装配运行中轮次的按键绑定。
 
         Esc / Ctrl-C 取消当前轮次（设置 _cancel 事件，退出 app）。
@@ -434,8 +431,10 @@ class StreamingSession:
 
         bindings = KeyBindings()
         no_permission_modal = Condition(
-            lambda: self._interaction_host is None
-            or self._interaction_host.active_permission is None
+            lambda: (
+                self._interaction_host is None
+                or self._interaction_host.active_permission is None
+            )
         )
 
         @bindings.add(Keys.Escape, eager=True, filter=no_permission_modal)
@@ -467,7 +466,7 @@ def _safe_invalidate(app: Application) -> None:
     try:
         if app.is_running:
             app.invalidate()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
@@ -475,7 +474,7 @@ def _safe_exit(app: Application) -> None:
     try:
         if app.is_running:
             app.exit()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
 

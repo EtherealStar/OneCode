@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.theme import Theme as RichTheme
 from textual.app import App
 from textual.theme import Theme
@@ -81,19 +83,20 @@ RICH_STYLES: dict[str, str] = {
 
 
 def _detect_code_theme() -> str:
+    # 主题检测依赖已安装的 pygments；任何失败都回退到 monokai。
     try:
         from pygments.styles import get_style_by_name
 
         get_style_by_name("one-dark")
         return "one-dark"
-    except Exception:  # pragma: no cover - depends on installed pygments
+    except Exception:  # noqa: BLE001
         return "monokai"
 
 
 MARKDOWN_CODE_THEME = _detect_code_theme()
 
 
-def apply_theme(app: App[object]) -> None:
+def apply_theme(app: App[Any]) -> None:
     """注册并选用 OneCode 主题，注入具名 Rich 样式。"""
 
     app.register_theme(ONECODE_THEME)

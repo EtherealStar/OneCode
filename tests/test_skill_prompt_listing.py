@@ -18,7 +18,9 @@ class FakeSkillProvider:
         return next((skill for skill in self.skills if skill.name == name), None)
 
 
-def test_dynamic_prompt_lists_skill_catalog_without_full_content(tmp_path: Path) -> None:
+def test_dynamic_prompt_lists_skill_catalog_without_full_content(
+    tmp_path: Path,
+) -> None:
     provider = FakeSkillProvider(
         (
             SkillCommand(
@@ -35,5 +37,7 @@ def test_dynamic_prompt_lists_skill_catalog_without_full_content(tmp_path: Path)
     prompt = assembler.assemble(RuntimeState())
 
     assert "# Available Skills\n" in prompt
-    assert "- code-review: Review code changes - Use when asked to review a diff" in prompt
+    assert (
+        "- code-review: Review code changes - Use when asked to review a diff" in prompt
+    )
     assert "Follow this review checklist." not in prompt

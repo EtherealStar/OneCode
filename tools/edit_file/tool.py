@@ -18,7 +18,6 @@ from services.tools.types import (
 from tools.edit_file.prompt import PROMPT
 from utils.text_io import read_text_file, write_text_file
 
-
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {

@@ -50,17 +50,23 @@ def render_status(runtime: CliRuntime) -> Group:
     )
     table.add_row(
         "transcript",
-        display_path(runtime.message_store.transcript_store.messages_path, runtime.workspace),
+        display_path(
+            runtime.message_store.transcript_store.messages_path, runtime.workspace
+        ),
     )
     trace_path = runtime.trace_recorder.trace_path
     table.add_row(
         "trace",
-        display_path(trace_path, runtime.workspace) if trace_path is not None else "disabled",
+        display_path(trace_path, runtime.workspace)
+        if trace_path is not None
+        else "disabled",
     )
     error_path = runtime.error_log_recorder.error_log_path
     table.add_row(
         "errors",
-        display_path(error_path, runtime.workspace) if error_path is not None else "disabled",
+        display_path(error_path, runtime.workspace)
+        if error_path is not None
+        else "disabled",
     )
     table.add_row("mcp", _mcp_summary(runtime))
     table.add_row("background tasks", _background_task_summary(runtime))

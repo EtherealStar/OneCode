@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import re
 import uuid
-from typing import TYPE_CHECKING, Any, Protocol
+from copy import deepcopy
+from typing import Any, Protocol
 
 from core.runtime_state import RuntimeState
 from services.compaction.session_memory import SessionMemoryStore
@@ -22,11 +22,8 @@ from services.context.snapshot import PreparedContext
 from services.hooks import HookEvent, HookRegistry
 from services.model.types import ProviderError
 from services.observability import TraceRecorder
-from services.subagents.types import SubagentRequest
+from services.subagents.types import SubagentRequest, SubagentResult
 from utils.toolResultStorage import ToolResultStorage
-
-if TYPE_CHECKING:
-    from services.subagents.runner import SubagentRunner
 
 MICROCOMPACT_PLACEHOLDER = (
     "[Old tool result content cleared. Re-read the referenced file or rerun the "
@@ -35,7 +32,7 @@ MICROCOMPACT_PLACEHOLDER = (
 
 
 class SubagentRunnerProtocol(Protocol):
-    async def run(self, request: SubagentRequest): ...
+    async def run(self, request: SubagentRequest) -> SubagentResult: ...
 
 
 class SessionMemoryExtractorProtocol(Protocol):
@@ -155,7 +152,10 @@ class ContextCompactionService:
         prepared = await self.prepare_for_model(messages, state)
         if prepared.token_after < self.config.auto_compact_threshold_tokens:
             return None
-        if _auto_compact_failures(state) >= self.config.max_consecutive_auto_compact_failures:
+        if (
+            _auto_compact_failures(state)
+            >= self.config.max_consecutive_auto_compact_failures
+        ):
             self._trace_recorder.event(
                 "compact_auto_decision",
                 {
@@ -190,7 +190,7 @@ class ContextCompactionService:
             )
             _reset_auto_compact_failures(state)
             return full_result
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _increment_auto_compact_failures(state)
             await self._compact_failed(
                 state,
@@ -385,7 +385,9 @@ class ContextCompactionService:
                 "subagent_session_id": result.session_id,
             },
         )
-        await self._post_compact(state, compaction_result, messages_before=len(messages))
+        await self._post_compact(
+            state, compaction_result, messages_before=len(messages)
+        )
         return compaction_result
 
     def _recent_tail_for_session_memory(
@@ -422,8 +424,7 @@ class ContextCompactionService:
         records = self._active_records()
         if records and len(records) == len(messages):
             return [
-                (deepcopy(record.message), record.uuid)
-                for record in records[adjusted:]
+                (deepcopy(record.message), record.uuid) for record in records[adjusted:]
             ]
         return [(deepcopy(message), None) for message in messages[adjusted:]]
 
@@ -635,7 +636,9 @@ class ContextCompactionService:
     ) -> tuple[dict[str, Any], ...]:
         if len(messages) <= self.config.snip_max_messages:
             return tuple(deepcopy(message) for message in messages)
-        return ContextProjector(max_messages=self.config.snip_max_messages).project(messages)
+        return ContextProjector(max_messages=self.config.snip_max_messages).project(
+            messages
+        )
 
     def _microcompact(
         self,

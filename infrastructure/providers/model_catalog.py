@@ -13,6 +13,7 @@ from typing import Any
 from openai import OpenAI
 
 from infrastructure.config.env import ResolvedProviderConfig
+from infrastructure.providers.catalog import ProviderDefinition
 from infrastructure.providers.chat_completions import (
     SDK_PLACEHOLDER_API_KEY,
     _join_url,
@@ -60,7 +61,9 @@ class ModelCatalogClient:
         transport: HttpTransport | None = None,
     ) -> None:
         self.config = config
-        self.transport = transport or UrllibHttpTransport(provider_id=config.provider_id)
+        self.transport = transport or UrllibHttpTransport(
+            provider_id=config.provider_id
+        )
         self.sdk_client = sdk_client or build_sync_openai_client(
             api_key=config.api_key,
             base_url=config.base_url,
@@ -80,7 +83,7 @@ class ModelCatalogClient:
             page = self.sdk_client.models.list()
         except ProviderError:
             raise
-        except Exception as exc:  # noqa: BLE001 - 在 provider 边界统一归一化
+        except Exception as exc:
             raise provider_error_from_sdk_exception(
                 exc,
                 provider_id=self.config.provider_id,
@@ -89,7 +92,7 @@ class ModelCatalogClient:
 
 
 def fetch_models_for_connect(
-    provider: "ProviderDefinition",
+    provider: ProviderDefinition,
     api_key: str,
     base_url: str | None = None,
     *,
@@ -103,8 +106,6 @@ def fetch_models_for_connect(
     对于其他供应商，用 SDK Models resource 依次尝试候选 base URL，
     自动探测 `{base_url}/v1/models` 与 `{base_url}/models`。
     """
-
-    from infrastructure.providers.catalog import ProviderDefinition  # noqa: F811
 
     effective_base_url = (base_url or provider.base_url).rstrip("/")
     if not effective_base_url:
@@ -171,7 +172,7 @@ def _parse_ollama_models(response: dict[str, Any]) -> tuple[ProviderModel, ...]:
 
 
 def _fetch_openai_models_with_probe(
-    provider: "ProviderDefinition",
+    provider: ProviderDefinition,
     api_key: str,
     base_url: str,
     *,
@@ -245,7 +246,7 @@ def _provider_models_from_sdk(data: Any) -> tuple[ProviderModel, ...]:
 
 
 def test_model_connection(
-    provider: "ProviderDefinition",
+    provider: ProviderDefinition,
     api_key: str,
     model: str,
     base_url: str | None = None,
@@ -277,7 +278,9 @@ def test_model_connection(
             "stream": False,
         }
         try:
-            http.post_json(url, {**headers, "Content-Type": "application/json"}, payload, 30.0)
+            http.post_json(
+                url, {**headers, "Content-Type": "application/json"}, payload, 30.0
+            )
             return None
         except ProviderError as exc:
             return exc.message

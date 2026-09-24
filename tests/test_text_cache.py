@@ -14,7 +14,6 @@ invariants the production code depends on:
 from __future__ import annotations
 
 import threading
-from typing import Callable
 
 from ui.cli.terminal.text_cache import TextCache
 
@@ -161,6 +160,7 @@ def test_cache_is_thread_safe() -> None:
     def render(text: str, width: int) -> list[str]:
         # Sleep a tiny amount to encourage interleaving.
         import time
+
         time.sleep(0.001)
         return [f"{text}@{width}"]
 
@@ -173,8 +173,7 @@ def test_cache_is_thread_safe() -> None:
                 results[(key, width)] = out
 
     threads = [
-        threading.Thread(target=worker, args=(f"key-{i % 4}",))
-        for i in range(20)
+        threading.Thread(target=worker, args=(f"key-{i % 4}",)) for i in range(20)
     ]
     for t in threads:
         t.start()

@@ -91,7 +91,7 @@ ToolCallClassification(
 
 ## ToolTarget
 
-所有 guard 和权限判断都基于 `ToolTarget`。不再保留 `get_path()` 单路径方式。
+所有 guard 和权限判断都基于 `ToolTarget`。
 
 ```python
 ToolTarget(

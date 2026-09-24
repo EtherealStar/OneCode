@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import atexit
+import json
+import os
+import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-import json
-import os
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock, Timer
-from typing import Any, Iterator
-import uuid
+from typing import Any
 
 from utils.toolResultStorage import ToolResultStorage
-
 
 VALID_MESSAGE_ROLES = {"user", "assistant", "tool_result", "attachment"}
 TOOL_RESULT_EXTERNALIZE_THRESHOLD_BYTES = 50 * 1024
@@ -40,7 +40,7 @@ class LoadedTranscriptMessage:
     source_uuid: str | None = None
     record_kind: str | None = None
 
-    def with_message(self, message: dict[str, Any]) -> "LoadedTranscriptMessage":
+    def with_message(self, message: dict[str, Any]) -> LoadedTranscriptMessage:
         return replace(self, message=message)
 
 
@@ -227,12 +227,9 @@ class JsonlTranscriptStore:
             ]
             payload = "".join(f"{line}\n" for line in lines)
             self.last_staging_path = str(staging_path)
-            try:
-                staging_path.write_text(payload, encoding="utf-8", newline="\n")
-                os.replace(staging_path, self.messages_path)
-            except OSError:
-                # 保留暂存文件以便人工恢复，绝不触碰正式文件。
-                raise
+            # 若写入失败，保留暂存文件以便人工恢复，绝不触碰正式文件。
+            staging_path.write_text(payload, encoding="utf-8", newline="\n")
+            os.replace(staging_path, self.messages_path)
             self._pending_records = []
 
     def flush(self) -> None:
@@ -499,7 +496,7 @@ class InMemoryTranscriptStore:
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _parse_json_line(line: str) -> dict[str, Any] | None:

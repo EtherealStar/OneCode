@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -17,7 +19,7 @@ from services.questions.types import QuestionRequest
 
 
 class QuestionModal(ModalScreen[tuple[str, ...] | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     QuestionModal { align: center middle; }
@@ -58,9 +60,7 @@ class QuestionModal(ModalScreen[tuple[str, ...] | None]):
                 )
             yield Button("取消", id="question-cancel")
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option.id is None:
             return
         index = int(event.option.id)
@@ -72,10 +72,7 @@ class QuestionModal(ModalScreen[tuple[str, ...] | None]):
             self.dismiss(None)
             return
         if event.button.id == "question-submit":
-            selected = (
-                self.query_one(SelectionList)
-                .selected
-            )
+            selected = self.query_one(SelectionList).selected
             values = tuple(str(value) for value in selected)
             if not values:
                 return

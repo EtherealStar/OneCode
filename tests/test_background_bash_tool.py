@@ -5,8 +5,8 @@ from pathlib import Path
 from core.runtime_state import RuntimeState
 from services.guard import SandboxBoundary, SandboxGuard
 from services.tools.types import ToolRuntime
-from tools.bash.tool import _handle_with_runner
 from tools.bash.runner import BashRunResult
+from tools.bash.tool import _handle_with_runner
 
 
 class FakeRunner:
@@ -32,7 +32,9 @@ class FakeManager:
         )()
 
 
-def test_background_bash_starts_manager_and_returns_task(monkeypatch, tmp_path: Path) -> None:
+def test_background_bash_starts_manager_and_returns_task(
+    monkeypatch, tmp_path: Path
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     runtime = ToolRuntime(

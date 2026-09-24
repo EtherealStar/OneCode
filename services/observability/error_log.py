@@ -10,7 +10,7 @@ import atexit
 import json
 import re
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock, Timer
 from typing import Any, Protocol
@@ -27,11 +27,9 @@ _SK_KEY_RE = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
 
 
 class ErrorLogSink(Protocol):
-    def emit(self, record: Mapping[str, Any]) -> None:
-        ...
+    def emit(self, record: Mapping[str, Any]) -> None: ...
 
-    def flush(self) -> None:
-        ...
+    def flush(self) -> None: ...
 
 
 class NoopErrorLogSink:
@@ -82,7 +80,7 @@ class JsonlErrorLogSink:
     def emit(self, record: Mapping[str, Any]) -> None:
         try:
             line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.dropped_count += 1
             return
         self._enqueue_line(line)
@@ -100,7 +98,9 @@ class JsonlErrorLogSink:
 
         try:
             self.session_dir.mkdir(parents=True, exist_ok=True)
-            with self.error_log_path.open("a", encoding="utf-8", newline="\n") as handle:
+            with self.error_log_path.open(
+                "a", encoding="utf-8", newline="\n"
+            ) as handle:
                 handle.write("\n".join(lines) + "\n")
         except OSError:
             self.dropped_count += len(lines)
@@ -126,10 +126,10 @@ class ErrorLogRecorder:
         self.session_id = session_id
         self.workspace = workspace
         self.sink = sink or NoopErrorLogSink()
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     @classmethod
-    def noop(cls, session_id: str | None = None) -> "ErrorLogRecorder":
+    def noop(cls, session_id: str | None = None) -> ErrorLogRecorder:
         return cls(session_id=session_id or "", sink=NoopErrorLogSink())
 
     @property
@@ -160,7 +160,9 @@ class ErrorLogRecorder:
             "source": source,
             "category": details.category.value,
             "error_type": details.error_type,
-            "message": _sanitize_text(details.message, self.workspace, MAX_MESSAGE_CHARS),
+            "message": _sanitize_text(
+                details.message, self.workspace, MAX_MESSAGE_CHARS
+            ),
             "safe_message": _sanitize_text(
                 details.safe_message,
                 self.workspace,
@@ -194,8 +196,8 @@ class ErrorLogRecorder:
     def _timestamp(self) -> str:
         value = self._clock()
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _sanitize_text(value: str, workspace: Path | None, max_chars: int) -> str:

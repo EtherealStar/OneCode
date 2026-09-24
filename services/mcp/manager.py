@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
-import os
 from pathlib import Path
-import tempfile
 from threading import Thread
-from typing import Any
+from typing import Any, TextIO, cast
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
@@ -46,7 +46,7 @@ class ConnectedMcpServer:
     exit_stack: AsyncExitStack
     tools: tuple[McpDiscoveredTool, ...] = ()
     instructions: str | None = None
-    stderr: "_LimitedTextLog | None" = None
+    stderr: _LimitedTextLog | None = None
 
 
 class McpConnectionManager:
@@ -63,7 +63,9 @@ class McpConnectionManager:
         trust_policy: McpTrustPolicy | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
-        self.configs = configs.servers if isinstance(configs, McpConfigSet) else dict(configs)
+        self.configs = (
+            configs.servers if isinstance(configs, McpConfigSet) else dict(configs)
+        )
         self.timeout_seconds = timeout_seconds
         self.max_stdio_concurrency = max(1, max_stdio_concurrency)
         self.max_remote_concurrency = max(1, max_remote_concurrency)
@@ -93,7 +95,7 @@ class McpConnectionManager:
         def runner() -> None:
             try:
                 result["value"] = asyncio.run(self.connect_all())
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001
                 result["error"] = exc
 
         thread = Thread(target=runner, daemon=True)
@@ -126,7 +128,7 @@ class McpConnectionManager:
             async with sem:
                 try:
                     await self._connect_one(config)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     return
 
         await asyncio.gather(*(connect_one(config) for config in self.configs.values()))
@@ -157,12 +159,12 @@ class McpConnectionManager:
         try:
             connected = await self.ensure_connected(server_name)
             result = await connected.session.call_tool(tool_name, arguments or {})
-        except Exception:
+        except Exception:  # noqa: BLE001
             await self._disconnect(server_name)
             try:
                 connected = await self.ensure_connected(server_name)
                 result = await connected.session.call_tool(tool_name, arguments or {})
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self.error_log_recorder.record_mcp_error(
                     server_name,
                     exc,
@@ -242,7 +244,9 @@ class McpConnectionManager:
                     timeout=self.timeout_seconds,
                 )
                 if len(streams) < 2:
-                    raise RuntimeError("MCP transport did not return read/write streams.")
+                    raise RuntimeError(
+                        "MCP transport did not return read/write streams."
+                    )
                 session = await exit_stack.enter_async_context(
                     ClientSession(
                         streams[0],
@@ -309,7 +313,8 @@ class McpConnectionManager:
         if config.transport == "stdio":
             env = build_stdio_child_env(dict(os.environ), config)
             stderr_log = _LimitedTextLog(STDIO_STDERR_LIMIT_CHARS)
-            setattr(exit_stack, "_onecode_stderr_log", stderr_log)
+            # 记录在 exit_stack 上以保持 stderr 日志存活到关闭。
+            exit_stack._onecode_stderr_log = stderr_log  # type: ignore[attr-defined]
             exit_stack.callback(stderr_log.close)
             params = StdioServerParameters(
                 command=config.command or "",
@@ -317,7 +322,11 @@ class McpConnectionManager:
                 env=env,
                 cwd=self.workspace,
             )
-            return tuple(await exit_stack.enter_async_context(stdio_client(params, errlog=stderr_log)))
+            return tuple(
+                await exit_stack.enter_async_context(
+                    stdio_client(params, errlog=cast(TextIO, stderr_log))
+                )
+            )
         if config.transport == "sse":
             return tuple(
                 await exit_stack.enter_async_context(
@@ -367,7 +376,7 @@ class McpConnectionManager:
             return
         try:
             await connected.exit_stack.aclose()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.error_log_recorder.record_mcp_error(
                 server_name,
                 exc,
@@ -398,7 +407,9 @@ class McpConnectionManager:
         )
 
 
-def _discovered_tools(server_name: str, sdk_tools: Any) -> tuple[McpDiscoveredTool, ...]:
+def _discovered_tools(
+    server_name: str, sdk_tools: Any
+) -> tuple[McpDiscoveredTool, ...]:
     tools: list[McpDiscoveredTool] = []
     for sdk_tool in sdk_tools or ():
         raw_name = getattr(sdk_tool, "name", "")
@@ -427,16 +438,16 @@ def _annotations_dict(value: Any) -> dict[str, Any]:
         return dict(value)
     dump = getattr(value, "model_dump", None)
     if callable(dump):
-        return {
-            key: item
-            for key, item in dump(exclude_none=True, by_alias=True).items()
-            if item is not None
-        }
+        data = dump(exclude_none=True, by_alias=True)
+        if isinstance(data, dict):
+            return {key: item for key, item in data.items() if item is not None}
     return {}
 
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {"type": "object", "properties": {}}
+    return (
+        dict(value) if isinstance(value, dict) else {"type": "object", "properties": {}}
+    )
 
 
 def _string_or_empty(value: Any) -> str:
@@ -459,7 +470,11 @@ def _error_summary(exc: Exception) -> str:
 class _LimitedTextLog:
     def __init__(self, limit_chars: int) -> None:
         self.limit_chars = max(0, limit_chars)
-        self._file = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+        # 该临时文件的生命周期由本对象拥有并在 close() 中关闭，
+        # 因此不能使用 with 上下文管理器。
+        self._file = tempfile.TemporaryFile(  # noqa: SIM115
+            mode="w+", encoding="utf-8", errors="replace"
+        )
 
     def write(self, value: str) -> int:
         return self._file.write(value)

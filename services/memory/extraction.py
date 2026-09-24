@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Protocol
 
 from core.runtime_state import RuntimeState
 from services.memory.auto_store import LongTermMemoryStore
-from services.subagents.types import SubagentRequest, SubagentResult
 from services.observability import TraceRecorder
+from services.subagents.types import SubagentRequest, SubagentResult
 
 LONG_TERM_MEMORY_EXTRACTION_KEY = "long_term_memory_extraction"
 
@@ -177,7 +176,7 @@ class LongTermMemoryExtractionService:
                     {"memory_dir": self.store.memory_dir},
                 )
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 _merge_metadata(
                     state,
                     {
@@ -189,7 +188,10 @@ class LongTermMemoryExtractionService:
                 )
                 self._trace_recorder.event(
                     "long_term_memory_extraction_failed",
-                    {"error_type": type(exc).__name__, "memory_dir": self.store.memory_dir},
+                    {
+                        "error_type": type(exc).__name__,
+                        "memory_dir": self.store.memory_dir,
+                    },
                 )
 
 

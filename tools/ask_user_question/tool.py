@@ -7,7 +7,7 @@ handler 委派给运行时提供的 UserQuestionPrompter（CLI TTY、批处理�
 from __future__ import annotations
 
 import json
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.questions.types import (
     QuestionOption,
@@ -70,7 +70,7 @@ INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def descriptor(prompter: "UserQuestionPrompter") -> ToolDescriptor:
+def descriptor(prompter: UserQuestionPrompter) -> ToolDescriptor:
     return ToolDescriptor(
         name="ask_user_question",
         description=(
@@ -86,7 +86,7 @@ def descriptor(prompter: "UserQuestionPrompter") -> ToolDescriptor:
     )
 
 
-def _handle_for(prompter: "UserQuestionPrompter"):
+def _handle_for(prompter: UserQuestionPrompter):
     async def handle(
         tool_input: dict[str, Any],
         runtime: ToolRuntime,

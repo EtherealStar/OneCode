@@ -44,7 +44,7 @@ def provider_error_from_sdk_exception(
 
 
 def _provider_error_from_status(
-    exc: "openai.APIStatusError",
+    exc: openai.APIStatusError,
     *,
     provider_id: str | None,
 ) -> ProviderError:
@@ -73,16 +73,17 @@ def _response_text(response: object) -> str | None:
     if response is None:
         return None
     try:
-        return response.text
+        text = response.text  # type: ignore[attr-defined] - 鸭子类型响应对象
     except Exception:  # noqa: BLE001 - 响应正文仅用于提取错误消息
         return None
+    return text if isinstance(text, str) else None
 
 
 def _parse_retry_after(headers: object) -> float | None:
     if headers is None:
         return None
     try:
-        raw = headers.get("retry-after")
+        raw = headers.get("retry-after")  # type: ignore[attr-defined] - 鸭子类型 headers
     except Exception:  # noqa: BLE001 - headers 可能不支持 get
         return None
     if raw is None:

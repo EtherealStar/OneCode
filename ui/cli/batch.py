@@ -86,13 +86,25 @@ class BatchUserQuestionPrompter:
         return QuestionResponse(answers=tuple(answers))
 
 
+async def _aclose_stream(stream: Any) -> None:
+    """关闭 watch() 返回的异步流。
+
+    契约声明为 AsyncIterator，但实际实现是异步生成器并暴露 aclose；
+    这里用 getattr 守卫以匹配运行时能力而不改变行为。
+    """
+
+    aclose = getattr(stream, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
 async def run_batch_async(workspace: Path) -> int:
     try:
         runtime = build_runtime(workspace)
     except ProviderError as exc:
         renderer.print_renderable(renderer.render_error(exc.message))
         return 1
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         renderer.print_renderable(renderer.render_error(str(exc)))
         return 1
 
@@ -116,15 +128,15 @@ async def run_batch_async(workspace: Path) -> int:
             await stream.__anext__()
             receipt = await controller.submit(line)
             if receipt.status == "rejected":
-                await stream.aclose()
+                await _aclose_stream(stream)
                 renderer.print_renderable(
                     renderer.render_error(f"Batch input rejected: {receipt.reason}")
                 )
                 await controller.close()
                 return 1
             failed = await _consume_updates(controller, stream, runtime)
-            await stream.aclose()
-        except Exception as exc:
+            await _aclose_stream(stream)
+        except Exception as exc:  # noqa: BLE001
             runtime.error_log_recorder.record_error(
                 exc,
                 source="cli_main_loop",

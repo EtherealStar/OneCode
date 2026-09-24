@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
+from core.runtime_state import RuntimeState
 from services.memory.auto_store import LongTermMemoryStore
 from services.memory.extraction import (
     LongTermMemoryExtractionService,
     should_extract_long_term_memory,
 )
 from services.subagents.types import SubagentResult
-from core.runtime_state import RuntimeState
 
 
 class FakeRunner:
@@ -60,9 +60,9 @@ def test_extraction_runs_restricted_subagent(tmp_path):
     assert len(runner.requests) == 1
     request = runner.requests[0]
     assert request.metadata["purpose"] == "long_term_memory_extraction"
-    assert request.metadata["allowed_memory_dir"].endswith(".onecode\\memory") or request.metadata[
-        "allowed_memory_dir"
-    ].endswith(".onecode/memory")
+    assert request.metadata["allowed_memory_dir"].endswith(
+        ".onecode\\memory"
+    ) or request.metadata["allowed_memory_dir"].endswith(".onecode/memory")
     assert state.metadata["long_term_memory_extraction"]["last_status"] == "success"
 
 

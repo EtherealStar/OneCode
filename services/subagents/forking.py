@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
-from typing import Any, Iterable
+from typing import Any
 
 FORK_PLACEHOLDER_RESULT = "Fork started - processing in child agent"
 FORK_DIRECTIVE_TEMPLATE = """You are a fork worker, not the main agent.

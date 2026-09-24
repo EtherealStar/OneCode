@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from application.runtime import ApplicationRuntime
 from core.runtime_state import RuntimeState
 from infrastructure.filesystem.onecode_paths import sessions_dir
-from application.runtime import ApplicationRuntime
 from services.context.message_store import MessageStore
-from services.context.transcript import JsonlTranscriptStore, VALID_MESSAGE_ROLES
+from services.context.transcript import VALID_MESSAGE_ROLES, JsonlTranscriptStore
 from services.tools.file_state import FileStateCache
 
 _PREVIEW_CHARS = 160
@@ -43,7 +43,7 @@ def list_session_summaries(workspace: Path) -> tuple[SessionSummary, ...]:
     return tuple(
         sorted(
             summaries,
-            key=lambda item: item.updated_at or datetime.min,
+            key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
     )
@@ -198,7 +198,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None
 

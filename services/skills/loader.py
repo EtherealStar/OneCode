@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from services.skills.frontmatter import parse_skill_markdown
 from services.skills.types import SkillCommand

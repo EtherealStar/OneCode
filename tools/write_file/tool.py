@@ -20,7 +20,6 @@ from services.tools.types import (
 from tools.write_file.prompt import PROMPT
 from utils.text_io import read_text_file, write_text_file
 
-
 MAX_DIFF_CHARS = 4_000
 
 INPUT_SCHEMA: dict[str, Any] = {

@@ -134,7 +134,9 @@ def tree(projection: ConversationProjection) -> list[tuple[Any, ...]]:
     ]
 
 
-def live_projection(updates: list[Any], *, session_id: str = "s1") -> ConversationProjection:
+def live_projection(
+    updates: list[Any], *, session_id: str = "s1"
+) -> ConversationProjection:
     projection = ConversationProjection(snapshot(session_id=session_id))
     for sequence, update in enumerate(updates, start=1):
         change = projection.apply(_with_sequence(update, sequence))
@@ -408,7 +410,9 @@ def test_late_finalization_replaces_body_and_keeps_results() -> None:
 
     assistant = view.messages[-1]
     assert assistant.message_id == "a1"
-    assert [part.content for part in assistant.parts if part.kind == "text"] == ["hello"]
+    assert [part.content for part in assistant.parts if part.kind == "text"] == [
+        "hello"
+    ]
     tools = [part for part in assistant.parts if part.kind == "tool"]
     assert tools[0].result_preview == "result"
     assert tools[0].status == "completed"
@@ -473,11 +477,14 @@ def test_withdraw_and_commit_keep_queue_projection_separate() -> None:
     assert [message.message_id for message in projection.messages] == ["u1"]
 
     projection.apply(
-        QueueChanged(generation=1, sequence=3, queue=(QueueItem(input_id="i2", text="second"),), paused=False)
+        QueueChanged(
+            generation=1,
+            sequence=3,
+            queue=(QueueItem(input_id="i2", text="second"),),
+            paused=False,
+        )
     )
-    projection.apply(
-        QueueChanged(generation=1, sequence=4, queue=(), paused=False)
-    )
+    projection.apply(QueueChanged(generation=1, sequence=4, queue=(), paused=False))
     assert projection.queue == ()
 
 
@@ -785,9 +792,7 @@ def test_interrupt_correction_removes_unpaired_tools_without_notice() -> None:
             ),
         ]
     )
-    assert any(
-        part.kind == "tool" for part in view.messages[-1].parts
-    )
+    assert any(part.kind == "tool" for part in view.messages[-1].parts)
 
     # The authoritative cleanup kept the half text and dropped the unpaired call.
     view.replace(
@@ -816,7 +821,9 @@ def test_history_tool_result_merges_into_declaration() -> None:
                     "",
                     assistant_call_id="c1",
                     model_turn_index=1,
-                    tool_calls=(HistoryToolCall(tool_call_id="A", tool_name="read_file"),),
+                    tool_calls=(
+                        HistoryToolCall(tool_call_id="A", tool_name="read_file"),
+                    ),
                 ),
                 tool_record(
                     "t1",
@@ -857,12 +864,8 @@ def test_pending_interactions_are_tracked_and_removed() -> None:
     second = InteractionRequest(
         request_id="r2", session_id="s1", kind="question", payload={}
     )
-    projection.apply(
-        InteractionRequested(generation=1, sequence=1, request=first)
-    )
-    projection.apply(
-        InteractionRequested(generation=1, sequence=2, request=second)
-    )
+    projection.apply(InteractionRequested(generation=1, sequence=1, request=first))
+    projection.apply(InteractionRequested(generation=1, sequence=2, request=second))
     assert [r.request_id for r in projection.pending_interactions] == ["r1", "r2"]
 
     stale = projection.apply(
@@ -901,8 +904,6 @@ def test_cancel_update_marks_run_inactive() -> None:
     projection = ConversationProjection(
         snapshot(run=RunState(active=True, input_id="i1", text="go", status="running"))
     )
-    change = projection.apply(
-        RunCancelled(generation=1, sequence=1, input_id="i1")
-    )
+    change = projection.apply(RunCancelled(generation=1, sequence=1, input_id="i1"))
     assert change.run_changed is True
     assert projection.run.active is False

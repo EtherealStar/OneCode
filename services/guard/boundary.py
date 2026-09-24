@@ -13,7 +13,6 @@ from infrastructure.filesystem.paths import (
     resolve_write_target,
 )
 
-
 Operation = Literal["read", "write", "list", "delete"]
 TargetKind = Literal["file", "directory"]
 
@@ -74,11 +73,7 @@ class Denied:
 
 
 SandboxDecision = (
-    InsideWorkspace
-    | InsideWorktree
-    | InsideExtraAllowed
-    | ExternalDirectory
-    | Denied
+    InsideWorkspace | InsideWorktree | InsideExtraAllowed | ExternalDirectory | Denied
 )
 
 

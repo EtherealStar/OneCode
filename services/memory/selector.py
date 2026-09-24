@@ -13,7 +13,7 @@ from services.observability import TraceRecorder
 
 SELECTOR_SYSTEM_PROMPT = (
     "Select at most five long-term memory files relevant to the current turn. "
-    "Return only JSON: {\"selected_memories\": [\"relative/path.md\"]}. "
+    'Return only JSON: {"selected_memories": ["relative/path.md"]}. '
     "Use only filenames present in the catalog."
 )
 
@@ -50,13 +50,17 @@ class RelevantMemorySelector:
                     },
                 ),
                 tool_schemas=(),
-                transition=state.last_transition.value if state.last_transition else None,
+                transition=state.last_transition.value
+                if state.last_transition
+                else None,
             )
             async for event in self._model_client.stream(snapshot):
                 if event.type == "message_completed":
-                    final_text = event.final_text or _message_text(event.assistant_message)
+                    final_text = event.final_text or _message_text(
+                        event.assistant_message
+                    )
             selected = self._parse_selection(final_text, allowed)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._trace_recorder.event(
                 "long_term_memory_selector_failed",
                 {"error_type": type(exc).__name__},

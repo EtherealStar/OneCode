@@ -11,5 +11,4 @@ class PermissionPrompter(Protocol):
     async def request_permission(
         self,
         request: PermissionRequest,
-    ) -> PermissionResponse:
-        ...
+    ) -> PermissionResponse: ...

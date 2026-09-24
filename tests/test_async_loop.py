@@ -46,9 +46,9 @@ class FakeToolExecutor:
             yield ToolExecutionUpdate(
                 type="result",
                 result=ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                content=f"result for {tool_call.name}",
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    content=f"result for {tool_call.name}",
                 ),
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,

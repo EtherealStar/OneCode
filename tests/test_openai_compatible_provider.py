@@ -6,21 +6,9 @@ from typing import Any
 
 import httpx
 import pytest
-
-from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
-from infrastructure.config.env import provider_env_prefix
-from infrastructure.providers.catalog import BUILTIN_PROVIDERS, get_provider_definition
-from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
-from infrastructure.providers.connection import ProviderConnectionService
-from infrastructure.providers.http import provider_error_from_http_status
-from infrastructure.providers.model_catalog import (
-    ModelCatalogClient,
-    fetch_models_for_connect,
-    test_model_connection as probe_model_connection,
-)
 from sdk_test_support import (
-    Recorder,
     SSE_HEADERS,
+    Recorder,
     async_sdk,
     error_response,
     json_response,
@@ -30,6 +18,25 @@ from sdk_test_support import (
     text_chunk,
     tool_call_chunk,
     usage_chunk,
+)
+
+from infrastructure.config.env import (
+    ResolvedProviderConfig,
+    load_provider_config,
+    provider_env_prefix,
+)
+from infrastructure.providers.catalog import BUILTIN_PROVIDERS, get_provider_definition
+from infrastructure.providers.chat_completions import (
+    OpenAICompatibleChatCompletionsClient,
+)
+from infrastructure.providers.connection import ProviderConnectionService
+from infrastructure.providers.http import provider_error_from_http_status
+from infrastructure.providers.model_catalog import (
+    ModelCatalogClient,
+    fetch_models_for_connect,
+)
+from infrastructure.providers.model_catalog import (
+    test_model_connection as probe_model_connection,
 )
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
@@ -61,7 +68,9 @@ def sdk_collect(
 
 
 def completed_event(events: list[ModelStreamEvent]) -> ModelStreamEvent:
-    return next(event for event in reversed(events) if event.type == "message_completed")
+    return next(
+        event for event in reversed(events) if event.type == "message_completed"
+    )
 
 
 def write_env(
@@ -335,7 +344,15 @@ def test_chat_completions_parses_tool_calls() -> None:
 
     events, _recorder = sdk_collect(
         resolved_config(),
-        [tool_call_chunk(0, call_id="call_x", name="read_file", arguments='{"path":"a.txt"}', finish_reason="tool_calls")],
+        [
+            tool_call_chunk(
+                0,
+                call_id="call_x",
+                name="read_file",
+                arguments='{"path":"a.txt"}',
+                finish_reason="tool_calls",
+            )
+        ],
         ContextSnapshot(system_prompt="", messages=()),
     )
 
@@ -351,7 +368,11 @@ def test_chat_completions_parses_tool_calls() -> None:
 def test_chat_completions_generates_fallback_tool_call_id() -> None:
     events, _recorder = sdk_collect(
         resolved_config(),
-        [tool_call_chunk(0, name="read_file", arguments="", finish_reason="tool_calls")],
+        [
+            tool_call_chunk(
+                0, name="read_file", arguments="", finish_reason="tool_calls"
+            )
+        ],
         ContextSnapshot(system_prompt="", messages=()),
     )
 
@@ -368,8 +389,18 @@ def test_list_models_parses_openai_compatible_response() -> None:
             {
                 "object": "list",
                 "data": [
-                    {"id": "z-model", "object": "model", "created": 1, "owned_by": "owner"},
-                    {"id": "a-model", "object": "model", "created": 2, "display_name": "A Model"},
+                    {
+                        "id": "z-model",
+                        "object": "model",
+                        "created": 1,
+                        "owned_by": "owner",
+                    },
+                    {
+                        "id": "a-model",
+                        "object": "model",
+                        "created": 2,
+                        "display_name": "A Model",
+                    },
                 ],
             }
         )
@@ -418,7 +449,10 @@ def test_fetch_models_for_connect_falls_back_to_second_candidate() -> None:
         if request.url.path.endswith("/v1/models"):
             return error_response(404, "not found")
         return json_response(
-            {"object": "list", "data": [{"id": "fallback", "object": "model", "created": 1}]}
+            {
+                "object": "list",
+                "data": [{"id": "fallback", "object": "model", "created": 1}],
+            }
         )
 
     recorder = Recorder(handler)
@@ -446,7 +480,9 @@ class _FakeSyncTransport:
         self.get_calls: list[str] = []
         self.post_calls: list[str] = []
 
-    def get_json(self, url: str, headers: dict[str, str], timeout_seconds: float) -> dict[str, Any]:
+    def get_json(
+        self, url: str, headers: dict[str, str], timeout_seconds: float
+    ) -> dict[str, Any]:
         self.get_calls.append(url)
         return self.response
 
@@ -528,7 +564,9 @@ def test_model_connection_keeps_ollama_native_chat_endpoint() -> None:
     transport = _FakeSyncTransport({})
     provider = get_provider_definition("ollama")
 
-    error = probe_model_connection(provider, "", "llama3:latest", None, transport=transport)
+    error = probe_model_connection(
+        provider, "", "llama3:latest", None, transport=transport
+    )
 
     assert error is None
     assert transport.post_calls == ["http://localhost:11434/api/chat"]

@@ -22,7 +22,6 @@ from services.model.stream import ModelStreamEvent
 from services.model.types import ModelUsage, ProviderError
 from services.tools.types import ToolCall
 
-
 # 无密钥的本地 OpenAI 兼容端没有真实凭证；SDK 构造器要求非空 key，
 # 因此使用一个明确非秘密的占位值，绝不从 SDK 环境变量读取配置。
 SDK_PLACEHOLDER_API_KEY = "onecode-local-placeholder"
@@ -178,14 +177,16 @@ class OpenAICompatibleChatCompletionsClient:
         snapshot: ContextSnapshot,
     ) -> AsyncIterator[ModelStreamEvent]:
         if not self.config.model:
-            raise self._configuration_error("A model must be configured before calling chat completions.")
+            raise self._configuration_error(
+                "A model must be configured before calling chat completions."
+            )
         request = build_chat_completions_request(self.config, snapshot, stream=True)
         final_text_parts: list[str] = []
         tool_accumulators: dict[int, _ToolCallAccumulator] = {}
         stop_reason: str | None = None
         usage: ModelUsage | None = None
         emitted_completed_tool_ids: set[str] = set()
-        sdk_stream: Any | None = None
+        sdk_stream: Any = None
 
         try:
             sdk_stream = await self.sdk_client.chat.completions.create(
@@ -235,7 +236,7 @@ class OpenAICompatibleChatCompletionsClient:
             raise
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - 在 provider 边界统一归一化
+        except Exception as exc:
             raise provider_error_from_sdk_exception(
                 exc,
                 provider_id=self.config.provider_id,
@@ -251,7 +252,9 @@ class OpenAICompatibleChatCompletionsClient:
             emitted_completed_tool_ids.add(tool_call.id)
             yield ModelStreamEvent.tool_call_completed(tool_call)
         final_text = "".join(final_text_parts)
-        assistant_message = _assistant_message_from_stream(final_text, tool_accumulators)
+        assistant_message = _assistant_message_from_stream(
+            final_text, tool_accumulators
+        )
         yield ModelStreamEvent.message_completed(
             assistant_message=assistant_message,
             final_text=final_text,
@@ -285,11 +288,15 @@ class OpenAICompatibleChatCompletionsClient:
         if isinstance(arguments, dict):
             return arguments
         if not isinstance(arguments, str):
-            raise self._invalid_tool_arguments("Tool arguments must be a JSON object string.")
+            raise self._invalid_tool_arguments(
+                "Tool arguments must be a JSON object string."
+            )
         try:
             parsed = json.loads(arguments)
         except json.JSONDecodeError as exc:
-            raise self._invalid_tool_arguments("Tool arguments are not valid JSON.") from exc
+            raise self._invalid_tool_arguments(
+                "Tool arguments are not valid JSON."
+            ) from exc
         if not isinstance(parsed, dict):
             raise self._invalid_tool_arguments("Tool arguments JSON must be an object.")
         return parsed

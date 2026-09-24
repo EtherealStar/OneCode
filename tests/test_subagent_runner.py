@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from core.runtime_state import RuntimeState
 from infrastructure.filesystem.onecode_paths import session_messages_path, sessions_dir
+from services.context.current_model_context import CurrentModelContext
 from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.guard import SandboxBoundary, SandboxGuard
@@ -15,7 +16,6 @@ from services.model.stream import ModelStreamEvent
 from services.model.types import LLMResponse, ModelUsage
 from services.observability import TraceRecorder
 from services.permissions import PermissionPolicy, SessionPermissionStore
-from services.context.current_model_context import CurrentModelContext
 from services.skills import SkillCommand
 from services.subagents.runner import SubagentRunner
 from services.subagents.types import SubagentRequest
@@ -263,10 +263,14 @@ def test_child_registry_hides_agent_even_when_base_descriptors_include_it(
 def test_compact_fork_child_has_no_tools_and_never_prompts(tmp_path: Path) -> None:
     ran = False
 
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         nonlocal ran
         ran = True
-        return ToolExecutionResult(tool_call_id="", tool_name="edit_file", content="ran")
+        return ToolExecutionResult(
+            tool_call_id="", tool_name="edit_file", content="ran"
+        )
 
     parent_store = MessageStore(
         transcript_root=sessions_dir(tmp_path),
@@ -284,7 +288,9 @@ def test_compact_fork_child_has_no_tools_and_never_prompts(tmp_path: Path) -> No
         ContextSnapshot(system_prompt="PARENT_PROMPT", messages=())
     )
     prompter = FakePrompter()
-    edit_call = ToolCall(id="call-edit", name="edit_file", input={"call_id": "call-edit"})
+    edit_call = ToolCall(
+        id="call-edit", name="edit_file", input={"call_id": "call-edit"}
+    )
     runner, model, _parent_store, _policy = make_runner(
         tmp_path,
         [
@@ -338,7 +344,9 @@ def test_compact_fork_child_has_no_tools_and_never_prompts(tmp_path: Path) -> No
 def test_read_only_subagent_denies_state_changing_tool_calls(tmp_path: Path) -> None:
     ran = False
 
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         nonlocal ran
         ran = True
         return ToolExecutionResult(tool_call_id="", tool_name="mutate", content="ran")
@@ -352,7 +360,9 @@ def test_read_only_subagent_denies_state_changing_tool_calls(tmp_path: Path) -> 
                 final_text="",
                 tool_calls=(call,),
             ),
-            LLMResponse(assistant_message=assistant("after deny"), final_text="after deny"),
+            LLMResponse(
+                assistant_message=assistant("after deny"), final_text="after deny"
+            ),
         ],
         base_descriptors=(
             dummy_descriptor(
@@ -443,7 +453,9 @@ def test_fork_skill_allowed_tools_are_scoped_to_child_policy(tmp_path: Path) -> 
     policy = PermissionPolicy(store)
     call = ToolCall(id="call-bash", name="bash", input={})
 
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         nonlocal ran
         ran = True
         return ToolExecutionResult(
@@ -613,7 +625,9 @@ def external_read_descriptor() -> ToolDescriptor:
             read_only=True,
             modifies_filesystem=False,
             concurrency_safe=True,
-            targets=(ToolTarget(kind="file", operation="read", value=tool_input["path"]),),
+            targets=(
+                ToolTarget(kind="file", operation="read", value=tool_input["path"]),
+            ),
         )
 
     def handler(
@@ -650,7 +664,11 @@ def task_list_probe_descriptor() -> ToolDescriptor:
             read_only=True,
             modifies_filesystem=False,
             concurrency_safe=True,
-            targets=(ToolTarget(kind="session_state", operation="task_read", value=task_list_id),),
+            targets=(
+                ToolTarget(
+                    kind="session_state", operation="task_read", value=task_list_id
+                ),
+            ),
         )
 
     def handler(

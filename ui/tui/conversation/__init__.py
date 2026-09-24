@@ -36,7 +36,7 @@ _LAZY: dict[str, tuple[str, str]] = {
     ),
 }
 
-__all__ = sorted(_LAZY)
+__all__ = sorted(_LAZY)  # noqa: PLE0605 - 惰性导出列表由 _LAZY 动态生成
 
 
 def __getattr__(name: str):

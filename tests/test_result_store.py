@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 
 from core.runtime_state import RuntimeState
-from infrastructure.filesystem.onecode_paths import session_dir, session_messages_path, session_tool_results_dir
-from utils.toolResultStorage import ToolResultStorage
+from infrastructure.filesystem.onecode_paths import (
+    session_dir,
+    session_messages_path,
+    session_tool_results_dir,
+)
 from services.guard import SandboxBoundary, SandboxGuard
 from services.permissions import PermissionPolicy
 from services.tools.executor import RegistryToolExecutor
@@ -18,6 +21,7 @@ from services.tools.types import (
     ToolRuntime,
 )
 from tools.read_file import descriptor as read_file_descriptor
+from utils.toolResultStorage import ToolResultStorage
 
 
 def _execute_results(
@@ -149,7 +153,9 @@ def test_executor_persists_oversized_result_when_store_is_injected(tmp_path) -> 
     assert result.metadata["result_stored"] is True
     assert result.metadata["stored_result_relative_path"] == "tool-results/call-1.txt"
     assert "Preview:\nab" in result.content
-    assert (result_store.results_dir / "call-1.txt").read_text(encoding="utf-8") == "abcdef"
+    assert (result_store.results_dir / "call-1.txt").read_text(
+        encoding="utf-8"
+    ) == "abcdef"
 
 
 def test_permission_policy_exempts_current_session_tool_results_read(tmp_path) -> None:

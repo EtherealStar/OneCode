@@ -126,7 +126,7 @@ def test_first_delta_arrives_before_message_completed(tmp_path: Path) -> None:
         # was reached.
         try:
             await asyncio.wait_for(first_delta_seen.wait(), timeout=1.0)
-        except asyncio.TimeoutError as exc:  # pragma: no cover
+        except TimeoutError as exc:  # pragma: no cover
             await consumer
             raise AssertionError("first assistant_delta never arrived") from exc
         await consumer

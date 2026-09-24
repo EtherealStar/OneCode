@@ -8,10 +8,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from core.runtime_state import PermissionMode, PlanState, RuntimeState
+from core.runtime_state import PermissionMode, RuntimeState
 from services.plans.store import PlanFile, PlanStore
 
 

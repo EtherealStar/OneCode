@@ -24,7 +24,7 @@ class PromptRuntimeContext:
     state: RuntimeState
     cwd: Path
     visible_tools: tuple[ToolDescriptor, ...] = ()
-    visible_skills: tuple["SkillCommand", ...] = ()
+    visible_skills: tuple[SkillCommand, ...] = ()
     files_read: tuple[str, ...] = ()
     transition: str | None = None
     mcp_server_instructions: dict[str, str] | None = None

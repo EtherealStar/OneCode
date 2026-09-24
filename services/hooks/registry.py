@@ -52,7 +52,7 @@ class HookRegistry:
                     result = callback(payload)
                     if inspect.isawaitable(result):
                         result = await result
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     # hook 异常会被记录，但不会打断运行时 hook 链；
                     # 只有显式 blocking_error 才能阻止工具执行。
                     metadata.setdefault("hook_errors", []).append(str(exc))

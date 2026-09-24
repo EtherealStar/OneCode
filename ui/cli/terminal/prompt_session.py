@@ -27,9 +27,9 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
@@ -119,9 +119,7 @@ def _highlighted_completion(buffer: Buffer) -> Completion | None:
     completer = buffer.completer
     if completer is None:
         return None
-    completions = list(
-        completer.get_completions(buffer.document, CompleteEvent())
-    )
+    completions = list(completer.get_completions(buffer.document, CompleteEvent()))
     if completions:
         return completions[0]
     return None
@@ -255,7 +253,7 @@ class PromptSession:
         self,
         buffer: Buffer,
         result: list[PromptSubmission | None],
-        hint: "_PromptHint",
+        hint: _PromptHint,
     ) -> KeyBindings:
         bindings = KeyBindings()
 
@@ -389,7 +387,7 @@ class PromptSession:
     async def _expire_exit_hint_after(
         self,
         timestamp: float,
-        hint: "_PromptHint",
+        hint: _PromptHint,
         app: Application[None],
     ) -> None:
         await asyncio.sleep(self._exit_confirm_window_seconds)
@@ -418,7 +416,9 @@ def _spacer_window() -> Window:
 def _hint_window(buffer: Buffer, hint: Callable[[], str]) -> ConditionalContainer:
     window = Window(
         height=Dimension(min=1, max=1),
-        content=FormattedTextControl(lambda: [("class:prompt-hint", _hint_text(buffer, hint))]),
+        content=FormattedTextControl(
+            lambda: [("class:prompt-hint", _hint_text(buffer, hint))]
+        ),
         style="class:prompt-hint",
     )
     return ConditionalContainer(
@@ -473,8 +473,7 @@ def _suggestion_rows(buffer: Buffer) -> tuple[tuple[Completion, bool], ...]:
             buffer.completer.get_completions(buffer.document, CompleteEvent())
         )
         return tuple(
-            (completion, index == 0)
-            for index, completion in enumerate(completions[:8])
+            (completion, index == 0) for index, completion in enumerate(completions[:8])
         )
     completions = tuple(state.completions[:8])
     if not completions:

@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import shlex
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 
 from services.permissions import (
     PermissionBehavior,
@@ -165,7 +166,9 @@ async def dispatch(controller: Any, line: str) -> CommandOutcome:
     return await spec.handler(controller, invocation)
 
 
-def effective_category(spec: CommandSpec, invocation: CommandInvocation) -> CommandCategory:
+def effective_category(
+    spec: CommandSpec, invocation: CommandInvocation
+) -> CommandCategory:
     """按具体调用分类，而非仅凭命令名称。
 
     无参数的 /permissions 以及 /plan show|open 会读取一致快照，
@@ -209,9 +212,7 @@ async def _usage(controller: Any, invocation: CommandInvocation) -> CommandOutco
         "input_tokens": getattr(usage, "input_tokens", 0),
         "output_tokens": getattr(usage, "output_tokens", 0),
         "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
-        "cache_creation_input_tokens": getattr(
-            usage, "cache_creation_input_tokens", 0
-        ),
+        "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
     }
     return CommandOutcome(name="usage", category="view", data=data)
 
@@ -241,9 +242,11 @@ async def _skills(controller: Any, invocation: CommandInvocation) -> CommandOutc
     names: list[str] = []
     if provider is not None and hasattr(provider, "visible_skills"):
         try:
-            skills = tuple(provider.visible_skills(str(getattr(runtime, "workspace", ""))))
+            skills = tuple(
+                provider.visible_skills(str(getattr(runtime, "workspace", "")))
+            )
             names = [getattr(skill, "name", str(skill)) for skill in skills]
-        except Exception:
+        except Exception:  # noqa: BLE001
             names = []
     return CommandOutcome(name="skills", category="view", data=names)
 
@@ -262,7 +265,7 @@ async def _mcp(controller: Any, invocation: CommandInvocation) -> CommandOutcome
                         "status": getattr(status, "status", ""),
                     }
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             servers = []
     return CommandOutcome(name="mcp", category="view", data=servers)
 
@@ -307,7 +310,9 @@ async def _tasks(controller: Any, invocation: CommandInvocation) -> CommandOutco
     )
 
 
-async def _permissions(controller: Any, invocation: CommandInvocation) -> CommandOutcome:
+async def _permissions(
+    controller: Any, invocation: CommandInvocation
+) -> CommandOutcome:
     runtime = _runtime(controller)
     policy = getattr(runtime, "permission_policy", None)
     project_store = getattr(policy, "project_store", None)
@@ -317,9 +322,11 @@ async def _permissions(controller: Any, invocation: CommandInvocation) -> Comman
             try:
                 for rule in project_store.load_rules():
                     rules.append(str(rule))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 rules = []
-        return CommandOutcome(name="permissions", category="view", data={"rules": rules})
+        return CommandOutcome(
+            name="permissions", category="view", data={"rules": rules}
+        )
     if project_store is None:
         return CommandOutcome(
             name="permissions",
@@ -353,17 +360,17 @@ async def _permissions(controller: Any, invocation: CommandInvocation) -> Comman
             error="Permission behavior must be allow, deny, or ask.",
         )
     try:
-        rules = tuple(
+        rule_values = tuple(
             permission_rule_value_from_string(raw_rule) for raw_rule in raw_rules
         )
         update = PermissionUpdate(
             type=update_type,
-            rules=rules,
+            rules=rule_values,
             behavior=behavior,
             destination="projectSettings",
         )
         project_store.apply_update(update)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return CommandOutcome(
             name="permissions",
             category="mutate",
@@ -466,7 +473,7 @@ async def _compact(controller: Any, invocation: CommandInvocation) -> CommandOut
     focus = invocation.arg_text.strip() or None
     try:
         result = await service.manual_compact(runtime.state, focus=focus)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return CommandOutcome(
             name="compact", category="mutate", status="rejected", error=str(exc)
         )

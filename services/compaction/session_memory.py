@@ -13,7 +13,6 @@ from services.compaction.token_estimator import estimate_messages_tokens
 from services.observability import TraceRecorder
 from services.subagents.types import SubagentRequest, SubagentResult
 
-
 SESSION_MEMORY_EXTRACTION_KEY = "session_memory_extraction"
 
 
@@ -77,7 +76,9 @@ class SessionMemoryStore:
         metadata = _parse_front_matter(content)
         return SessionMemory(
             content=content,
-            last_summarized_message_uuid=metadata.get("last_summarized_message_uuid", ""),
+            last_summarized_message_uuid=metadata.get(
+                "last_summarized_message_uuid", ""
+            ),
             updated_at=metadata.get("updated_at", ""),
             covered_turn_count=_int_or_zero(metadata.get("covered_turn_count")),
             source=metadata.get("source", "rule"),
@@ -129,7 +130,7 @@ class SessionMemoryUpdater:
                     "estimated_tokens": estimate_messages_tokens(messages),
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._trace_recorder.event(
                 "session_memory_update",
                 {"status": "failed", "error_type": type(exc).__name__},
@@ -354,7 +355,7 @@ class SessionMemoryExtractionService:
                     {"path": self._store.path},
                 )
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 _merge_extraction_metadata(
                     state,
                     {
@@ -496,19 +497,23 @@ def build_rule_based_memory(
 ) -> SessionMemory:
     now = datetime.now(UTC).isoformat(timespec="seconds")
     last_uuid = _message_uuid(messages[-1], len(messages) - 1) if messages else ""
-    user_messages = [_text_content(message.get("content")) for message in messages if message.get("role") == "user"]
+    user_messages = [
+        _text_content(message.get("content"))
+        for message in messages
+        if message.get("role") == "user"
+    ]
     assistant_messages = [
         _text_content(message.get("content"))
         for message in messages
         if message.get("role") == "assistant"
     ]
     tool_results = [
-        message
-        for message in messages
-        if message.get("role") == "tool_result"
+        message for message in messages if message.get("role") == "tool_result"
     ]
     files_read = sorted(str(path) for path in state.metadata.get("files_read", set()))
-    files_changed = sorted(str(path) for path in state.metadata.get("files_changed", set()))
+    files_changed = sorted(
+        str(path) for path in state.metadata.get("files_changed", set())
+    )
     errors = [
         f"{message.get('tool_name', 'tool')} {message.get('tool_call_id', '')}: {_preview(message.get('content'))}"
         for message in tool_results
