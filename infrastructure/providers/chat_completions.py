@@ -1,22 +1,31 @@
-"""兼容 OpenAI Chat Completions 的模型客户端。"""
+"""兼容 OpenAI Chat Completions 的模型客户端。
+
+SDK 负责 HTTP 连接、序列化、SSE 解码与标准 typed chunk 解析；本适配器把
+`ContextSnapshot` 投影成 SDK 请求、把 typed chunk 聚合成 OneCode 的
+`ModelStreamEvent`，并在边界把 SDK 异常归一化为 `ProviderError`。
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from openai import AsyncOpenAI
+
 from infrastructure.config.env import ResolvedProviderConfig
-from infrastructure.providers.http import (
-    AsyncHttpTransport,
-    HttpxAsyncHttpTransport,
-)
+from infrastructure.providers.sdk_errors import provider_error_from_sdk_exception
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
 from services.model.types import ModelUsage, ProviderError
 from services.tools.types import ToolCall
 
+
+# 无密钥的本地 OpenAI 兼容端没有真实凭证；SDK 构造器要求非空 key，
+# 因此使用一个明确非秘密的占位值，绝不从 SDK 环境变量读取配置。
+SDK_PLACEHOLDER_API_KEY = "onecode-local-placeholder"
 
 # SDK 3.18.0 Chat Completions `create()` 已声明的可选参数名。
 # 命中的 default_params 字段按 SDK 具名参数传递，其余经 extra_body 传递。
@@ -73,6 +82,28 @@ class ChatCompletionsRequest:
         return {**self.named, **self.extra_body}
 
 
+def build_async_openai_client(
+    config: ResolvedProviderConfig,
+    *,
+    http_client: Any | None = None,
+) -> AsyncOpenAI:
+    """按 `ResolvedProviderConfig` 创建 SDK client。
+
+    显式设置 `timeout` 与 `max_retries=0`：SDK 不进行隐藏重试，
+    `ModelRetryRunner` 是唯一重试决策者。认证由 SDK `api_key` 负责，
+    `config.headers` 作为额外请求头传入。
+    """
+
+    return AsyncOpenAI(
+        api_key=config.api_key or SDK_PLACEHOLDER_API_KEY,
+        base_url=config.base_url or None,
+        timeout=config.timeout_seconds,
+        max_retries=0,
+        default_headers=config.headers or None,
+        http_client=http_client,
+    )
+
+
 def build_chat_completions_request(
     config: ResolvedProviderConfig,
     snapshot: ContextSnapshot,
@@ -124,12 +155,23 @@ class OpenAICompatibleChatCompletionsClient:
         self,
         config: ResolvedProviderConfig,
         *,
-        async_transport: AsyncHttpTransport | None = None,
+        sdk_client: AsyncOpenAI | None = None,
+        http_client: Any | None = None,
     ) -> None:
         self.config = config
-        self.async_transport = async_transport or HttpxAsyncHttpTransport(
-            provider_id=config.provider_id
+        self.sdk_client = sdk_client or build_async_openai_client(
+            config,
+            http_client=http_client,
         )
+
+    async def aclose(self) -> None:
+        """关闭适配器持有的 SDK client；重复调用安全。
+
+        应用拥有并复用该 client（会话重绑定、子 agent、记忆服务共享同一实例）；
+        生命周期接线在 Milestone 3 完成。
+        """
+
+        await self.sdk_client.close()
 
     async def stream(
         self,
@@ -137,59 +179,70 @@ class OpenAICompatibleChatCompletionsClient:
     ) -> AsyncIterator[ModelStreamEvent]:
         if not self.config.model:
             raise self._configuration_error("A model must be configured before calling chat completions.")
-        payload = {**self._build_payload(snapshot), "stream": True}
+        request = build_chat_completions_request(self.config, snapshot, stream=True)
         final_text_parts: list[str] = []
         tool_accumulators: dict[int, _ToolCallAccumulator] = {}
         stop_reason: str | None = None
         usage: ModelUsage | None = None
         emitted_completed_tool_ids: set[str] = set()
+        sdk_stream: Any | None = None
 
-        async for chunk in self.async_transport.stream_json_lines(
-            _join_url(self.config.base_url, self.config.chat_completions_path),
-            self._headers(),
-            payload,
-            self.config.timeout_seconds,
-        ):
-            chunk_usage = _parse_usage(chunk.get("usage"))
-            if chunk_usage is not None:
-                usage = chunk_usage
-                yield ModelStreamEvent.usage_event(chunk_usage)
+        try:
+            sdk_stream = await self.sdk_client.chat.completions.create(
+                **request.named,
+                extra_body=request.extra_body or None,
+            )
+            async for chunk in sdk_stream:
+                chunk_usage = _parse_usage(getattr(chunk, "usage", None))
+                if chunk_usage is not None:
+                    usage = chunk_usage
+                    yield ModelStreamEvent.usage_event(chunk_usage)
 
-            choices = chunk.get("choices")
-            if not isinstance(choices, list) or not choices:
-                continue
-            choice = choices[0]
-            if not isinstance(choice, dict):
-                raise self._invalid_response("Provider stream choice must be an object.")
-            finish_reason = _string_or_none(choice.get("finish_reason"))
-            if finish_reason is not None:
-                stop_reason = finish_reason
-            delta = choice.get("delta")
-            if not isinstance(delta, dict):
-                continue
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = _string_or_none(getattr(choice, "finish_reason", None))
+                if finish_reason is not None:
+                    stop_reason = finish_reason
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
 
-            content = delta.get("content")
-            if isinstance(content, str) and content:
-                final_text_parts.append(content)
-                yield ModelStreamEvent.content_delta(content)
+                content = getattr(delta, "content", None)
+                if isinstance(content, str) and content:
+                    final_text_parts.append(content)
+                    yield ModelStreamEvent.content_delta(content)
 
-            raw_tool_calls = delta.get("tool_calls")
-            if isinstance(raw_tool_calls, list):
-                for raw_delta in raw_tool_calls:
-                    if not isinstance(raw_delta, dict):
-                        continue
-                    accumulator = _update_tool_accumulator(
-                        tool_accumulators,
-                        raw_delta,
-                    )
-                    yield ModelStreamEvent.tool_call_delta(
-                        metadata={
-                            "index": accumulator.index,
-                            "id": accumulator.call_id,
-                            "name": accumulator.name,
-                            "arguments_delta_chars": _arguments_delta_chars(raw_delta),
-                        }
-                    )
+                raw_tool_calls = getattr(delta, "tool_calls", None)
+                if raw_tool_calls:
+                    for raw_delta in raw_tool_calls:
+                        accumulator = _update_tool_accumulator(
+                            tool_accumulators,
+                            raw_delta,
+                        )
+                        yield ModelStreamEvent.tool_call_delta(
+                            metadata={
+                                "index": accumulator.index,
+                                "id": accumulator.call_id,
+                                "name": accumulator.name,
+                                "arguments_delta_chars": _arguments_delta_chars(
+                                    raw_delta
+                                ),
+                            }
+                        )
+        except ProviderError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 在 provider 边界统一归一化
+            raise provider_error_from_sdk_exception(
+                exc,
+                provider_id=self.config.provider_id,
+            ) from exc
+        finally:
+            if sdk_stream is not None:
+                await _close_sdk_stream(sdk_stream)
 
         tool_calls = self._completed_tool_calls(tool_accumulators)
         for tool_call in tool_calls:
@@ -208,17 +261,6 @@ class OpenAICompatibleChatCompletionsClient:
             output_interrupted=_is_output_interrupted_stop_reason(stop_reason),
         )
 
-    def _build_payload(self, snapshot: ContextSnapshot) -> dict[str, Any]:
-        return build_chat_completions_request(self.config, snapshot).to_body()
-
-    def _headers(self) -> dict[str, str]:
-        if not self.config.api_key:
-            raise self._configuration_error("An API key must be configured before calling the provider.")
-        return {
-            **self.config.headers,
-            "Authorization": f"Bearer {self.config.api_key}",
-        }
-
     def _completed_tool_calls(
         self,
         accumulators: dict[int, _ToolCallAccumulator],
@@ -233,31 +275,6 @@ class OpenAICompatibleChatCompletionsClient:
                     id=accumulator.call_id or f"call_{index}",
                     name=accumulator.name,
                     input=self._parse_arguments(accumulator.arguments),
-                )
-            )
-        return tuple(parsed)
-
-    def _parse_tool_calls(self, raw_tool_calls: Any) -> tuple[ToolCall, ...]:
-        if raw_tool_calls is None:
-            return ()
-        if not isinstance(raw_tool_calls, list):
-            raise self._invalid_response("Provider tool_calls field must be a list.")
-
-        parsed: list[ToolCall] = []
-        for index, raw_tool_call in enumerate(raw_tool_calls):
-            if not isinstance(raw_tool_call, dict):
-                raise self._invalid_response("Provider tool call must be an object.")
-            function = raw_tool_call.get("function")
-            if not isinstance(function, dict):
-                raise self._invalid_response("Provider tool call is missing function.")
-            name = function.get("name")
-            if not isinstance(name, str) or not name:
-                raise self._invalid_response("Provider tool call is missing function name.")
-            parsed.append(
-                ToolCall(
-                    id=_string_or_none(raw_tool_call.get("id")) or f"call_{index}",
-                    name=name,
-                    input=self._parse_arguments(function.get("arguments")),
                 )
             )
         return tuple(parsed)
@@ -282,13 +299,6 @@ class OpenAICompatibleChatCompletionsClient:
             message,
             provider_id=self.config.provider_id,
             error_type="configuration_error",
-        )
-
-    def _invalid_response(self, message: str) -> ProviderError:
-        return ProviderError(
-            message,
-            provider_id=self.config.provider_id,
-            error_type="invalid_response",
         )
 
     def _invalid_tool_arguments(self, message: str) -> ProviderError:
@@ -336,34 +346,46 @@ def _assistant_message_from_stream(
 
 def _update_tool_accumulator(
     accumulators: dict[int, _ToolCallAccumulator],
-    raw_delta: dict[str, Any],
+    raw_delta: Any,
 ) -> _ToolCallAccumulator:
-    raw_index = raw_delta.get("index")
+    raw_index = getattr(raw_delta, "index", None)
     index = raw_index if isinstance(raw_index, int) else len(accumulators)
     accumulator = accumulators.setdefault(
         index,
         _ToolCallAccumulator(index=index),
     )
-    call_id = _string_or_none(raw_delta.get("id"))
+    call_id = _string_or_none(getattr(raw_delta, "id", None))
     if call_id:
         accumulator.call_id = call_id
-    function = raw_delta.get("function")
-    if isinstance(function, dict):
-        name = _string_or_none(function.get("name"))
+    function = getattr(raw_delta, "function", None)
+    if function is not None:
+        name = _string_or_none(getattr(function, "name", None))
         if name:
             accumulator.name += name
-        arguments = function.get("arguments")
+        arguments = getattr(function, "arguments", None)
         if isinstance(arguments, str):
             accumulator.arguments += arguments
     return accumulator
 
 
-def _arguments_delta_chars(raw_delta: dict[str, Any]) -> int:
-    function = raw_delta.get("function")
-    if not isinstance(function, dict):
+def _arguments_delta_chars(raw_delta: Any) -> int:
+    function = getattr(raw_delta, "function", None)
+    if function is None:
         return 0
-    arguments = function.get("arguments")
+    arguments = getattr(function, "arguments", None)
     return len(arguments) if isinstance(arguments, str) else 0
+
+
+async def _close_sdk_stream(sdk_stream: Any) -> None:
+    close = getattr(sdk_stream, "close", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - 释放失败不能掩盖原始结果
+        return
 
 
 def _requested_max_output_tokens(snapshot: ContextSnapshot) -> int | None:
@@ -401,15 +423,16 @@ def _project_messages(snapshot: ContextSnapshot) -> list[dict[str, Any]]:
 def _parse_usage(usage: Any) -> ModelUsage | None:
     if usage is None:
         return None
-    if not isinstance(usage, dict):
-        return None
-    prompt_details = usage.get("prompt_tokens_details")
-    if not isinstance(prompt_details, dict):
-        prompt_details = {}
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    cached_tokens = (
+        getattr(prompt_details, "cached_tokens", None)
+        if prompt_details is not None
+        else None
+    )
     return ModelUsage(
-        input_tokens=_int_or_zero(usage.get("prompt_tokens")),
-        output_tokens=_int_or_zero(usage.get("completion_tokens")),
-        cache_read_input_tokens=_int_or_zero(prompt_details.get("cached_tokens")),
+        input_tokens=_int_or_zero(getattr(usage, "prompt_tokens", None)),
+        output_tokens=_int_or_zero(getattr(usage, "completion_tokens", None)),
+        cache_read_input_tokens=_int_or_zero(cached_tokens),
     )
 
 

@@ -62,6 +62,26 @@ Rationale: 计划明确要求用 `httpx.MockTransport` 锁定契约；实测证�
 
 Consequences: 批 1/批 2 测试使用 `httpx.AsyncClient(transport=httpx.MockTransport(...))` 注入 SDK。生产实现仍由 `AsyncOpenAI` 自建默认 client；M3 决定是否显式传入 client 以控制关闭边界。请求投影已提取为 `chat_completions.build_chat_completions_request`（`ChatCompletionsRequest.named/extra_body`），M2 用它驱动 SDK 调用。
 
+## 2026-09-24: Milestone 2 由 SDK 驱动模型流，adapter 归一化错误
+
+Decision: `infrastructure/providers/chat_completions.py` 用 SDK `chat.completions.create(stream=True)` 消费 typed chunk，聚合工具调用参数，产出既有 `ModelStreamEvent`；`factory.py` 按 `ResolvedProviderConfig` 构建并注入 `AsyncOpenAI`。SDK 异常经新增 `infrastructure/providers/sdk_errors.py::provider_error_from_sdk_exception` 映射为 `ProviderError`：连接→`network_error`、超时→`timeout_error`（均可重试）、状态码复用 `provider_error_from_http_status`（401/403 认证、429 限流、5xx 服务端、413/上下文超限不可重试），有效 `Retry-After` 填入 `retry_after_seconds`。adapter 提供 `aclose()` 关闭其持有的 client；`CancelledError` 原样传播。
+
+Context: 计划要求“OneCode 是重试权威”，SDK `max_retries=0`；typed chunk 的对象形状与旧手写 dict 不同；SDK 异常不能越过 provider 边界进入 `core/`/`services/` 或 trace。
+
+Rationale: 让 SDK 负责传输、SSE 与 typed 解析，同时保持 OneCode 事件、重试与安全日志语义不变。错误映射集中在 infrastructure，便于 M3 的模型发现复用。
+
+Consequences: M2 只接线 `aclose()`，SDK client 所有权/关闭/热重载仍留给 M3；`http.py` 的无调用者异步传输与 SSE parser 在 M3 删除；旧 `async_transport` 测试 seam 已替换为 `sdk_client`/`http_client`。
+
+## 2026-09-24: Milestone 3 标准模型发现走 SDK，应用收口 client 生命周期
+
+Decision: `model_catalog.py` 的标准 `/models` 与 `/connect` 标准 Chat Completions 探测改用同步 SDK client（新增 `build_sync_openai_client`，`max_retries=0`、显式 `timeout`）；候选 base URL 由 OneCode 决定并逐个尝试，Ollama `/api/tags`、`/api/chat` 继续走隔离的 `UrllibHttpTransport`。应用拥有并复用 SDK client：`application/session.py` 在 worker、子任务与流结束后的 `_close_runtime_resources` 中调用 `close_model_client`；`with_model_config(model_client=...)` 允许先构建新 client，成功安装后关闭旧 client，装配失败时关闭新 client 并保留旧配置。`http.py` 删除 `AsyncHttpTransport`、`HttpxAsyncHttpTransport`、`parse_sse_json_line`，`httpx` 显式依赖因 `services/mcp/manager.py` 直接导入而保留。
+
+Context: SDK 只能表达标准请求，无法表达候选顺序与非标准数据格式；`AsyncOpenAI.close()` 为异步且幂等，但 `with_model_config` 是同步方法，不能在无运行事件循环时 await。
+
+Rationale: 把标准协议机械工作交给 SDK，同时让应用保持对连接池所有权与热重载安全切换的控制；错误映射复用 `sdk_errors.provider_error_from_sdk_exception`。
+
+Consequences: `close_model_client` 先尝试 `aclose()` 再尝试 `close()` 并 await awaitable；会话关闭与热重载测试确认每个 client 恰好关闭一次。剩余 M4 验收：端到端本地协议演练与文档最终对齐、计划归档。
+
 ## Open Questions
 
 当前没有阻止撰写计划的产品决策。实施中的 SDK 细节由锁定版本的隔离测试确定；若测试推翻以上选择，先更新本文件再继续。

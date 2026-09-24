@@ -380,6 +380,7 @@ class ApplicationRuntime:
             state=state,
             message_store=message_store,
             context_engine=context_engine,
+            # session rebind 复用应用拥有的同一 model client，不复制所有权。
             model_client=self.model_client,
             tool_executor=self.tool_executor,
             trace_recorder=self.trace_recorder,
@@ -415,10 +416,20 @@ class ApplicationRuntime:
             user_question_prompter=self.user_question_prompter,
         )
 
-    def with_model_config(self) -> "ApplicationRuntime":
-        """在保留活跃会话的同时重新加载 .env 中的提供商配置。"""
+    def with_model_config(
+        self,
+        *,
+        model_client: Any | None = None,
+    ) -> "ApplicationRuntime":
+        """在保留活跃会话的同时重新加载 .env 中的提供商配置。
 
-        model_client = create_model_client(self.workspace / ".env")
+        应用拥有并复用模型 client：会话重绑定（`with_session`）沿用同一实例，
+        子 agent 与记忆选择器共享该实例，而非各自新建连接池。热重载调用方
+        可先构建新 client 再传入，从而在装配失败时关闭新 client、
+        装配成功后关闭旧 client（由 `application.session` 负责关闭）。
+        """
+
+        model_client = model_client or create_model_client(self.workspace / ".env")
         config = model_client.config
         current_model_context = self.current_model_context or CurrentModelContext()
         current_model_context.snapshot = None

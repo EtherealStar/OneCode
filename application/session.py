@@ -52,6 +52,10 @@ from application.types import (
     WithdrawalResult,
 )
 from core.stream_events import AgentEvent
+from infrastructure.providers.factory import (
+    close_model_client,
+    create_model_client,
+)
 from services.model.types import ModelUsage
 from services.observability import ErrorLogRecorder
 from services.plans import build_plan_attachments_for_state
@@ -460,6 +464,12 @@ class SessionController:
                 await mcp_manager.close_all()
             except Exception as exc:  # pragma: no cover - defensive
                 self._record_error(exc, source="session_close_mcp")
+        # 前台 worker、子任务与正在消费的流此前已取消；此时才关闭应用拥有的
+        # SDK client，确保运行中请求不被提前关闭。重复 close 安全。
+        try:
+            await close_model_client(getattr(self._runtime, "model_client", None))
+        except Exception as exc:  # pragma: no cover - defensive
+            self._record_error(exc, source="session_close_model_client")
 
     # --- worker -----------------------------------------------------------
 
@@ -866,11 +876,23 @@ class SessionController:
             return await self._reload_model_config_locked()
 
     async def _reload_model_config_locked(self) -> bool:
+        runtime = self._runtime
         try:
-            self._runtime = self._runtime.with_model_config()
+            new_client = create_model_client(runtime.workspace / ".env")
         except Exception as exc:
             self._record_error(exc, source="session_model_config")
             return False
+        old_client = getattr(runtime, "model_client", None)
+        try:
+            new_runtime = runtime.with_model_config(model_client=new_client)
+        except Exception as exc:
+            # 装配失败：关闭新 client，保留旧配置与旧 client。
+            await close_model_client(new_client)
+            self._record_error(exc, source="session_model_config")
+            return False
+        # 成功安装新运行时时才接管新 client，随后释放旧 client。
+        self._runtime = new_runtime
+        await close_model_client(old_client)
         self._install_adapters()
         self._emit(
             lambda generation, sequence: StatusChanged(

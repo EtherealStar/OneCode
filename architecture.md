@@ -103,6 +103,26 @@ flowchart TD
 
 横切约定文档：`core-beliefs.md`（设计信念）、`tool-design-guidelines.md`（新增工具约定）。
 
+## TUI 替换的目标设计
+
+交互式展示的目标改为参考代码的 Textual 全屏 TUI，非 TTY batch 保留。此项尚未实现：下文的当前代码地图和运行流程仍描述现有 CLI。目标由三个深 Module 分工，相关 Interface 和规则见：
+
+| 目标 Module | 归属 | 职责 | 设计文档 |
+|:---|:---|:---|:---|
+| SessionController | `application/` 应用装配层 | 单会话执行、队列、命令、交互、取消、历史和资源生命周期 | [SessionController](docs/design-docs/session-controller-architecture.md) |
+| ConversationProjection | `ui/tui/` | 适配参考 `UiProjection`，统一历史与实时消息结构、身份及工具结果归并 | [ConversationProjection](docs/design-docs/conversation-projection-architecture.md) |
+| ConversationView | `ui/tui/conversation/` | 全屏虚拟消息视口、滚动锚点、展开、缓存及刷新 | [ConversationView](docs/design-docs/conversation-view-architecture.md) |
+
+目标依赖为 `ui -> application -> core / services / infrastructure`。应用层从现有 CLI 提取装配职责；core/services 不依赖 application 或 Textual。Controller 交付运行事实，Projection 形成展示结构，View 负责浏览与渲染。TUI 与 batch 共用会话 Interface。
+
+中断收尾的目标规则也发生变更：半段文字作为普通 assistant 消息保存并参与模型上下文；未配对工具调用和结果从内存与实际 transcript 中移除，不补造中断结果。此项要求消息存储提供受控整理能力，是现有 append-only 记录方式的明确例外，不由 UI 修改文件。完整契约及历史保留规则见 SessionController 文档。
+
+## OpenAI Python SDK 模型边界的目标设计
+
+模型层由 `infrastructure/providers/` 内的 OpenAI Python SDK 客户端发出标准 Chat Completions 与 Models API 请求，并处理 HTTP、SSE 和标准响应对象。OneCode 仍投影 `ContextSnapshot`、生成 `ModelStreamEvent`、归一化 `ProviderError`，并管理重试、工具权限与执行、上下文和会话。SDK 类型和异常不越过 infrastructure 边界；`core/` 与 `services/` 继续只依赖供应商中立接口。`/connect` 的候选端点顺序及 Ollama 原生 API 保留在 provider 基础设施中。
+
+客户端由应用层拥有和复用，配置热重载及会话关闭时释放；SDK 默认重试关闭，`ModelRetryRunner` 继续决定重试并即时转发流事件。标准 Chat Completions 流、标准模型发现与连通性探测已由 SDK 接管（见执行计划 Milestone 2/3）。接口和数据流的完整目标见 [模型供应商架构](docs/design-docs/model-provider-architecture.md)，实施顺序见 [SDK 迁移计划](docs/exec-plans/active/openai-sdk-provider-runtime/plan.md)。
+
 ## 当前代码模块地图
 
 ```text
@@ -159,7 +179,7 @@ OneCode/
 
 `MessageStore` 是内存优先的 session message store，并通过 `JsonlTranscriptStore` 写入 `.onecode/<session_id>/messages.jsonl`。内部使用 `role` 取值 `user`/`assistant`/`tool_result`/`attachment`；provider adapter 负责把 `tool_result` 投影成 wire format，`attachment` 由 context preparer 在调用前投影后隐藏。
 
-`ModelClient`（`services/model/client.py`）是 provider-neutral 模型协议，通过 `stream(snapshot)` 产出 `ModelStreamEvent`。`ModelRetryRunner` 在其上做缓冲式重试，只依据 `ProviderError.retryable` 与 `error_type` 决策。
+`ModelClient`（`services/model/client.py`）是 provider-neutral 模型协议，通过 `stream(snapshot)` 产出 `ModelStreamEvent`。`ModelRetryRunner` 即时转发事件，依据 `ProviderError.retryable` 与 `error_type` 决定是否重试；失败尝试的部分输出可能已经可见。
 
 `ToolDescriptor`（`services/tools/types.py`）是工具事实来源，定义名称、描述、输入/输出 schema、prompt、search hint、`validate_input`、input-aware `classify_input` 和 handler。`ToolCallClassification` 描述单次调用的只读性、文件系统修改、并发安全、`ToolTarget` 集合、结果预算和权限 subject。
 
@@ -198,7 +218,7 @@ flowchart TD
 2. loop 触发 `UserPromptSubmit` hook，把用户消息和 durable attachment 追加到 `MessageStore`，发布 interaction 事件。
 3. loop 递增 turn count；超过 `max_turns` 时设置 `max_turns` transition 并停止。
 4. `ContextEngine` 重建 `ContextSnapshot`：读取消息 → context preparer 链（附件投影、相关记忆注入、压缩）→ 组装 system prompt → 获取当前可见工具 schema。
-5. loop 经 `ModelRetryRunner` 调用 `ModelClient.stream(snapshot)`；retryable provider error 触发 `rate_limit_retry` 与指数退避，失败 attempt 的 partial 事件不外显。
+5. loop 经 `ModelRetryRunner` 调用 `ModelClient.stream(snapshot)`；retryable provider error 触发 `rate_limit_retry` 与指数退避，已转发的 partial 事件仍对调用方可见。
 6. provider adapter 归一化完整 assistant message、final text、tool calls、usage 和 stop reason。
 7. 若 `context_limit_exceeded` 且首次，触发 reactive compact 并 `reactive_compact_retry`；若输出被截断，触发 max-output escalate / recovery。
 8. loop 累计 usage、写入 assistant message，触发 `AssistantMessageCompleted` hook（可触发 session memory 提取）。
@@ -297,4 +317,4 @@ OneCode 的安全边界由代码路径保证，不依赖模型自觉。路径解
 - `docs/design-docs/core-beliefs.md`
 - `docs/design-docs/tool-design-guidelines.md`
 
-这些模块文档描述当前代码职责和局部架构。根文档优先用于判断跨模块归属、依赖方向和核心抽象。
+模块文档按各自状态描述当前实现或目标设计；上述三个 TUI Module 文档明确标注为尚未实现的目标。根文档优先用于判断跨模块归属、依赖方向和核心抽象。

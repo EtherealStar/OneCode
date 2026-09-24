@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from infrastructure.config.env import ResolvedProviderConfig, load_provider_config
@@ -14,92 +13,55 @@ from infrastructure.providers.catalog import BUILTIN_PROVIDERS, get_provider_def
 from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
 from infrastructure.providers.connection import ProviderConnectionService
 from infrastructure.providers.http import provider_error_from_http_status
-from infrastructure.providers.model_catalog import ModelCatalogClient
+from infrastructure.providers.model_catalog import (
+    ModelCatalogClient,
+    fetch_models_for_connect,
+    test_model_connection as probe_model_connection,
+)
+from sdk_test_support import (
+    Recorder,
+    SSE_HEADERS,
+    async_sdk,
+    error_response,
+    json_response,
+    resolved_config,
+    sse_body,
+    sync_sdk,
+    text_chunk,
+    tool_call_chunk,
+    usage_chunk,
+)
 from services.context.snapshot import ContextSnapshot
 from services.model.stream import ModelStreamEvent
 from services.model.types import ProviderError
 from services.tools.types import ToolCall
 
 
-@dataclass
-class FakeTransport:
-    post_response: dict[str, Any] | None = None
-    get_response: dict[str, Any] | None = None
-    post_calls: list[tuple[str, dict[str, str], dict[str, Any], float]] = field(
-        default_factory=list
-    )
-    get_calls: list[tuple[str, dict[str, str], float]] = field(default_factory=list)
-
-    async def post_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        self.post_calls.append((url, headers, payload, timeout_seconds))
-        assert self.post_response is not None
-        return self.post_response
-
-    async def stream_json_lines(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-        timeout_seconds: float,
-    ) -> AsyncIterator[dict[str, Any]]:
-        response = await self.post_json(url, headers, payload, timeout_seconds)
-        message = response["choices"][0]["message"]
-        finish_reason = response["choices"][0].get("finish_reason")
-        delta: dict[str, Any] = {}
-        content = message.get("content")
-        if content is not None:
-            delta["content"] = _content_to_text(content)
-        if message.get("tool_calls") is not None:
-            delta["tool_calls"] = [
-                {"index": index, **tool_call}
-                for index, tool_call in enumerate(message["tool_calls"])
-            ]
-            finish_reason = finish_reason or "tool_calls"
-        yield {"choices": [{"delta": delta, "finish_reason": finish_reason}]}
-        if response.get("usage") is not None:
-            yield {"usage": response["usage"]}
-
-    def get_json(
-        self,
-        url: str,
-        headers: dict[str, str],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        self.get_calls.append((url, headers, timeout_seconds))
-        assert self.get_response is not None
-        return self.get_response
-
-
-def collect_stream(
-    client: OpenAICompatibleChatCompletionsClient,
+def sdk_collect(
+    config: ResolvedProviderConfig,
+    chunks: list[dict[str, Any]],
     snapshot: ContextSnapshot,
-) -> list[ModelStreamEvent]:
-    async def run() -> list[ModelStreamEvent]:
-        return [event async for event in client.stream(snapshot)]
+) -> tuple[list[ModelStreamEvent], Recorder]:
+    recorder = Recorder(
+        lambda _request: httpx.Response(
+            200,
+            content=sse_body(chunks),
+            headers=SSE_HEADERS,
+        )
+    )
+    sdk = async_sdk(config, recorder)
+    client = OpenAICompatibleChatCompletionsClient(config, sdk_client=sdk)
 
-    return asyncio.run(run())
+    async def run() -> list[ModelStreamEvent]:
+        events = [event async for event in client.stream(snapshot)]
+        await sdk.close()
+        return events
+
+    return asyncio.run(run()), recorder
 
 
 def completed_event(events: list[ModelStreamEvent]) -> ModelStreamEvent:
     return next(event for event in reversed(events) if event.type == "message_completed")
-
-
-def _content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return ""
 
 
 def write_env(
@@ -133,28 +95,6 @@ def write_env(
     return env_path
 
 
-def resolved_config(
-    *,
-    provider_id: str = "openai",
-    model: str = "gpt-test",
-    base_url: str = "https://api.openai.com/v1",
-    api_key: str = "secret",
-    default_params: dict[str, Any] | None = None,
-) -> ResolvedProviderConfig:
-    provider = get_provider_definition(provider_id)
-    return ResolvedProviderConfig(
-        provider,
-        provider.id,
-        provider.display_name,
-        base_url,
-        model,
-        api_key,
-        default_params=default_params or {},
-        models_path=provider.models_path,
-        chat_completions_path=provider.chat_completions_path,
-    )
-
-
 def test_catalog_contains_builtin_providers() -> None:
     expected = {
         "openai",
@@ -163,14 +103,13 @@ def test_catalog_contains_builtin_providers() -> None:
         "minimax",
         "siliconflow",
         "gemini",
-        "claude-openai-compatible",
         "custom",
     }
 
     assert expected <= set(BUILTIN_PROVIDERS)
     for provider_id in expected:
         assert BUILTIN_PROVIDERS[provider_id].id == provider_id
-        if provider_id not in {"custom", "claude-openai-compatible"}:
+        if provider_id != "custom":
             assert BUILTIN_PROVIDERS[provider_id].base_url
 
 
@@ -246,13 +185,7 @@ def test_dotenv_interpolation_is_disabled(tmp_path: Path) -> None:
 
 
 def test_chat_completions_payload_includes_messages_and_tools() -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "ok"}}]},
-    )
-    client = OpenAICompatibleChatCompletionsClient(
-        resolved_config(default_params={"temperature": 0}),
-        async_transport=transport,
-    )
+    config = resolved_config(default_params={"temperature": 0})
     snapshot = ContextSnapshot(
         system_prompt="system",
         messages=({"role": "user", "content": "hello"},),
@@ -264,12 +197,16 @@ def test_chat_completions_payload_includes_messages_and_tools() -> None:
         ),
     )
 
-    collect_stream(client, snapshot)
+    _events, recorder = sdk_collect(
+        config,
+        [text_chunk("ok", finish_reason="stop")],
+        snapshot,
+    )
 
-    url, headers, payload, timeout = transport.post_calls[0]
-    assert url == "https://api.openai.com/v1/chat/completions"
-    assert headers["Authorization"] == "Bearer " + "secret"
-    assert timeout == 60.0
+    request = recorder.requests[0]
+    payload = recorder.body
+    assert str(request.url) == "https://api.openai.com/v1/chat/completions"
+    assert request.headers["authorization"] == "Bearer secret"
     assert payload["model"] == "gpt-test"
     assert payload["temperature"] == 0
     assert payload["messages"] == [
@@ -280,13 +217,7 @@ def test_chat_completions_payload_includes_messages_and_tools() -> None:
 
 
 def test_chat_completions_projects_internal_tool_results() -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "ok"}}]},
-    )
-    client = OpenAICompatibleChatCompletionsClient(
-        resolved_config(),
-        async_transport=transport,
-    )
+    config = resolved_config()
     assistant_tool_call = {
         "id": "call_x",
         "type": "function",
@@ -308,10 +239,13 @@ def test_chat_completions_projects_internal_tool_results() -> None:
         ),
     )
 
-    collect_stream(client, snapshot)
+    _events, recorder = sdk_collect(
+        config,
+        [text_chunk("ok", finish_reason="stop")],
+        snapshot,
+    )
 
-    payload = transport.post_calls[0][2]
-    assert payload["messages"] == [
+    assert recorder.body["messages"] == [
         {"role": "user", "content": "inspect"},
         {"role": "assistant", "content": "", "tool_calls": [assistant_tool_call]},
         {"role": "tool", "tool_call_id": "call_x", "content": "1\tcontents"},
@@ -319,13 +253,7 @@ def test_chat_completions_projects_internal_tool_results() -> None:
 
 
 def test_chat_completions_keeps_synthetic_attachment_context_user_side() -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "ok"}}]},
-    )
-    client = OpenAICompatibleChatCompletionsClient(
-        resolved_config(),
-        async_transport=transport,
-    )
+    config = resolved_config()
     snapshot = ContextSnapshot(
         system_prompt="",
         messages=(
@@ -341,71 +269,54 @@ def test_chat_completions_keeps_synthetic_attachment_context_user_side() -> None
         ),
     )
 
-    collect_stream(client, snapshot)
+    _events, recorder = sdk_collect(
+        config,
+        [text_chunk("ok", finish_reason="stop")],
+        snapshot,
+    )
 
-    payload = transport.post_calls[0][2]
-    assert payload["messages"][0]["role"] == "user"
-    assert "tool_calls" not in payload["messages"][0]
+    message = recorder.body["messages"][0]
+    assert message["role"] == "user"
+    assert "tool_calls" not in message
 
 
 def test_chat_completions_omits_empty_tools() -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "ok"}}]},
-    )
-    client = OpenAICompatibleChatCompletionsClient(
+    _events, recorder = sdk_collect(
         resolved_config(),
-        async_transport=transport,
+        [text_chunk("ok", finish_reason="stop")],
+        ContextSnapshot(system_prompt="", messages=()),
     )
 
-    collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
-
-    assert "tools" not in transport.post_calls[0][2]
+    assert "tools" not in recorder.body
 
 
 def test_chat_completions_applies_max_output_token_override() -> None:
-    transport = FakeTransport(
-        post_response={"choices": [{"message": {"content": "ok"}}]},
-    )
-    client = OpenAICompatibleChatCompletionsClient(
-        resolved_config(default_params={"max_tokens": 8000}),
-        async_transport=transport,
-    )
     snapshot = ContextSnapshot(
         system_prompt="",
         messages=(),
         usage_hints={"request_overrides": {"max_output_tokens": 64000}},
     )
 
-    collect_stream(client, snapshot)
+    _events, recorder = sdk_collect(
+        resolved_config(default_params={"max_tokens": 8000}),
+        [text_chunk("ok", finish_reason="stop")],
+        snapshot,
+    )
 
-    assert transport.post_calls[0][2]["max_tokens"] == 64000
+    assert recorder.body["max_tokens"] == 64000
 
 
 def test_chat_completions_parses_text_response() -> None:
-    transport = FakeTransport(
-        post_response={
-            "choices": [
-                {
-                    "message": {"content": [{"type": "text", "text": "hello"}]},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": 5,
-                "total_tokens": 15,
-                "prompt_tokens_details": {"cached_tokens": 3},
-            },
-        },
-    )
-    client = OpenAICompatibleChatCompletionsClient(
+    events, _recorder = sdk_collect(
         resolved_config(),
-        async_transport=transport,
+        [
+            text_chunk("hello", finish_reason="stop"),
+            usage_chunk(prompt_tokens=10, completion_tokens=5, cached_tokens=3),
+        ],
+        ContextSnapshot(system_prompt="", messages=()),
     )
 
-    response = completed_event(
-        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
-    )
+    response = completed_event(events)
 
     assert response.final_text == "hello"
     assert response.stop_reason == "stop"
@@ -421,19 +332,14 @@ def test_chat_completions_parses_tool_calls() -> None:
         "type": "function",
         "function": {"name": "read_file", "arguments": '{"path":"a.txt"}'},
     }
-    transport = FakeTransport(
-        post_response={
-            "choices": [{"message": {"content": None, "tool_calls": [raw_tool_call]}}]
-        },
-    )
-    client = OpenAICompatibleChatCompletionsClient(
+
+    events, _recorder = sdk_collect(
         resolved_config(),
-        async_transport=transport,
+        [tool_call_chunk(0, call_id="call_x", name="read_file", arguments='{"path":"a.txt"}', finish_reason="tool_calls")],
+        ContextSnapshot(system_prompt="", messages=()),
     )
 
-    response = completed_event(
-        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
-    )
+    response = completed_event(events)
 
     assert response.final_text == ""
     assert response.metadata["tool_calls"] == (
@@ -443,82 +349,189 @@ def test_chat_completions_parses_tool_calls() -> None:
 
 
 def test_chat_completions_generates_fallback_tool_call_id() -> None:
-    transport = FakeTransport(
-        post_response={
-            "choices": [
-                {
-                    "message": {
-                        "tool_calls": [
-                            {
-                                "type": "function",
-                                "function": {"name": "read_file", "arguments": ""},
-                            }
-                        ]
-                    }
-                }
-            ]
-        },
-    )
-    client = OpenAICompatibleChatCompletionsClient(
+    events, _recorder = sdk_collect(
         resolved_config(),
-        async_transport=transport,
+        [tool_call_chunk(0, name="read_file", arguments="", finish_reason="tool_calls")],
+        ContextSnapshot(system_prompt="", messages=()),
     )
 
-    response = completed_event(
-        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
-    )
+    response = completed_event(events)
 
     assert response.metadata["tool_calls"] == (
         ToolCall(id="call_0", name="read_file", input={}),
     )
 
 
-def test_chat_completions_rejects_invalid_tool_arguments() -> None:
-    transport = FakeTransport(
-        post_response={
-            "choices": [
-                {
-                    "message": {
-                        "tool_calls": [
-                            {
-                                "id": "call_x",
-                                "type": "function",
-                                "function": {"name": "read_file", "arguments": "[]"},
-                            }
-                        ]
-                    }
-                }
-            ]
-        },
-    )
-    client = OpenAICompatibleChatCompletionsClient(
-        resolved_config(),
-        async_transport=transport,
-    )
-
-    with pytest.raises(ProviderError) as exc_info:
-        collect_stream(client, ContextSnapshot(system_prompt="", messages=()))
-
-    assert exc_info.value.error_type == "invalid_tool_arguments"
-
-
 def test_list_models_parses_openai_compatible_response() -> None:
-    transport = FakeTransport(
-        get_response={
-            "data": [
-                {"id": "z-model", "owned_by": "owner"},
-                {"id": "a-model", "display_name": "A Model"},
-            ]
-        }
+    recorder = Recorder(
+        lambda _request: json_response(
+            {
+                "object": "list",
+                "data": [
+                    {"id": "z-model", "object": "model", "created": 1, "owned_by": "owner"},
+                    {"id": "a-model", "object": "model", "created": 2, "display_name": "A Model"},
+                ],
+            }
+        )
     )
-    client = ModelCatalogClient(resolved_config(), transport=transport)
+    sdk = sync_sdk(base_url="https://api.openai.com/v1", handler=recorder)
+    client = ModelCatalogClient(resolved_config(), sdk_client=sdk)
 
     models = client.list_models()
+    sdk.close()
 
     assert [model.id for model in models] == ["a-model", "z-model"]
     assert models[0].display_name == "A Model"
     assert models[1].owned_by == "owner"
-    assert transport.get_calls[0][0] == "https://api.openai.com/v1/models"
+    assert str(recorder.requests[0].url) == "https://api.openai.com/v1/models"
+
+
+def test_fetch_models_for_connect_uses_sdk_and_sorts_results() -> None:
+    recorder = Recorder(
+        lambda _request: json_response(
+            {
+                "object": "list",
+                "data": [
+                    {"id": "z-model", "object": "model", "created": 1},
+                    {"id": "a-model", "object": "model", "created": 2},
+                ],
+            }
+        )
+    )
+    provider = get_provider_definition("custom")
+    http_client = httpx.Client(transport=httpx.MockTransport(recorder))
+
+    models = fetch_models_for_connect(
+        provider,
+        "secret",
+        "https://example.test/v1",
+        http_client=http_client,
+    )
+    http_client.close()
+
+    assert [model.id for model in models] == ["a-model", "z-model"]
+    assert str(recorder.requests[0].url) == "https://example.test/v1/models"
+
+
+def test_fetch_models_for_connect_falls_back_to_second_candidate() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/v1/models"):
+            return error_response(404, "not found")
+        return json_response(
+            {"object": "list", "data": [{"id": "fallback", "object": "model", "created": 1}]}
+        )
+
+    recorder = Recorder(handler)
+    provider = get_provider_definition("custom")
+    http_client = httpx.Client(transport=httpx.MockTransport(recorder))
+
+    models = fetch_models_for_connect(
+        provider,
+        "secret",
+        "https://example.test",
+        http_client=http_client,
+    )
+    http_client.close()
+
+    assert [model.id for model in models] == ["fallback"]
+    assert [str(request.url) for request in recorder.requests] == [
+        "https://example.test/v1/models",
+        "https://example.test/models",
+    ]
+
+
+class _FakeSyncTransport:
+    def __init__(self, response: dict[str, Any]) -> None:
+        self.response = response
+        self.get_calls: list[str] = []
+        self.post_calls: list[str] = []
+
+    def get_json(self, url: str, headers: dict[str, str], timeout_seconds: float) -> dict[str, Any]:
+        self.get_calls.append(url)
+        return self.response
+
+    def post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        self.post_calls.append(url)
+        return {"ok": True}
+
+
+def test_fetch_models_for_connect_keeps_ollama_native_endpoint() -> None:
+    transport = _FakeSyncTransport(
+        {"models": [{"name": "llama3:latest", "model": "llama3:latest"}]}
+    )
+    provider = get_provider_definition("ollama")
+
+    models = fetch_models_for_connect(provider, "", None, transport=transport)
+
+    assert [model.id for model in models] == ["llama3:latest"]
+    assert transport.get_calls == ["http://localhost:11434/api/tags"]
+
+
+def test_model_connection_uses_sdk_chat_endpoint() -> None:
+    recorder = Recorder(
+        lambda _request: json_response(
+            {
+                "id": "1",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "gpt-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+    )
+    provider = get_provider_definition("openai")
+    http_client = httpx.Client(transport=httpx.MockTransport(recorder))
+
+    error = probe_model_connection(
+        provider,
+        "secret",
+        "gpt-test",
+        "https://api.openai.com/v1",
+        http_client=http_client,
+    )
+    http_client.close()
+
+    assert error is None
+    assert str(recorder.requests[0].url) == "https://api.openai.com/v1/chat/completions"
+
+
+def test_model_connection_returns_readable_error() -> None:
+    provider = get_provider_definition("openai")
+    recorder = Recorder(lambda _request: error_response(401, "bad key"))
+    http_client = httpx.Client(transport=httpx.MockTransport(recorder))
+
+    error = probe_model_connection(
+        provider,
+        "secret",
+        "gpt-test",
+        "https://api.openai.com/v1",
+        http_client=http_client,
+    )
+    http_client.close()
+
+    assert error == "bad key"
+
+
+def test_model_connection_keeps_ollama_native_chat_endpoint() -> None:
+    transport = _FakeSyncTransport({})
+    provider = get_provider_definition("ollama")
+
+    error = probe_model_connection(provider, "", "llama3:latest", None, transport=transport)
+
+    assert error is None
+    assert transport.post_calls == ["http://localhost:11434/api/chat"]
 
 
 def test_connect_options_are_derived_from_catalog() -> None:

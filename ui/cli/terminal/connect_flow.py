@@ -198,7 +198,17 @@ async def run_connect_flow(
             base_url=base_url,
         ),
     )
-    new_runtime = runtime.with_model_config()
+    # 热重载：先构建新 client，成功安装后释放旧 client；失败时释放新 client。
+    from infrastructure.providers.factory import close_model_client, create_model_client
+
+    old_client = getattr(runtime, "model_client", None)
+    new_client = create_model_client(env_path)
+    try:
+        new_runtime = runtime.with_model_config(model_client=new_client)
+    except Exception:
+        await close_model_client(new_client)
+        raise
+    await close_model_client(old_client)
     return ConnectFlowResult(
         cancelled=False,
         runtime=new_runtime,
