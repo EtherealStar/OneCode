@@ -12,7 +12,7 @@ buffer.complete_state 实现；本模块只需计算正确的 start_position，
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
@@ -51,7 +51,9 @@ class InlineCompleter(Completer):
                 style="class:completion",
                 selected_style="class:completion-selected",
             )
-            setattr(completion, "_suggestion_item", item)
+            # Completion 没有声明该属性；调用方（prompt_session）用 getattr
+            # 读取它，因此保持与既有动态属性约定一致。
+            completion._suggestion_item = item  # type: ignore[attr-defined]
             yield completion
 
     @property

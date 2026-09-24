@@ -9,6 +9,8 @@ Rich 的 ``Markdown`` 在构造时进行语法解析，因此缓存其实例即�
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.markdown import CodeBlock, Markdown
 from rich.padding import Padding
@@ -41,7 +43,7 @@ class _InsetCodeBlock(CodeBlock):
 class OneCodeMarkdown(Markdown):
     """将 TUI 设计令牌应用于围栏代码块和缩进代码块的 Markdown 渲染器。"""
 
-    elements = {
+    elements: ClassVar[dict[str, type]] = {
         **Markdown.elements,
         "code_block": _InsetCodeBlock,
         "fence": _InsetCodeBlock,
@@ -105,7 +107,7 @@ class MarkdownBlockCache:
         if blocks[: len(self._closed)] != self._closed:
             self._closed = []
             self._blocks = []
-        for block in blocks[len(self._blocks):]:
+        for block in blocks[len(self._blocks) :]:
             self._blocks.append(OneCodeMarkdown(block, code_theme=MARKDOWN_CODE_THEME))
         self._closed = blocks
         renderables: list[Markdown | Text] = [*self._blocks]

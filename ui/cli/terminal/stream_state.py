@@ -43,7 +43,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from core.stream_events import AgentEvent
     from services.tools.types import ToolExecutionResult
 
 
@@ -174,8 +173,8 @@ class CliStreamUiState:
     #: 同一 ``assistant_call_id`` 下,按 ``declared_index`` 收集的
     #: 已完成 tool_result bucket。reducer 决定哪些可以按声明顺序释
     #: 放成 :class:`StaticCommit`。
-    completed_tool_results_by_assistant: dict[str, dict[int, "ToolExecutionResult"]] = field(
-        default_factory=dict
+    completed_tool_results_by_assistant: dict[str, dict[int, ToolExecutionResult]] = (
+        field(default_factory=dict)
     )
     #: 同一 ``assistant_call_id`` 下,下一个可释放的
     #: ``declared_index``。reducer 自增。
@@ -256,7 +255,9 @@ class CliStreamUiState:
                 ready.append(commit)
         return ready
 
-    def visible_active_tools(self, *, limit: int = VISIBLE_ACTIVE_TOOL_LIMIT) -> list[StreamingToolUseState]:
+    def visible_active_tools(
+        self, *, limit: int = VISIBLE_ACTIVE_TOOL_LIMIT
+    ) -> list[StreamingToolUseState]:
         """为动态面板返回最多 limit 个活跃工具。
 
         tool_name 为空的工具（模型发出无名工具调用的罕见情况）会被过滤掉，
@@ -266,8 +267,7 @@ class CliStreamUiState:
         ordered = [
             tool
             for tool in self.tools.values()
-            if tool.tool_name
-            and tool.status in (ToolStatus.QUEUED, ToolStatus.RUNNING)
+            if tool.tool_name and tool.status in (ToolStatus.QUEUED, ToolStatus.RUNNING)
         ]
         if len(ordered) <= limit:
             return ordered
@@ -279,8 +279,7 @@ class CliStreamUiState:
         ordered = [
             tool
             for tool in self.tools.values()
-            if tool.tool_name
-            and tool.status in (ToolStatus.QUEUED, ToolStatus.RUNNING)
+            if tool.tool_name and tool.status in (ToolStatus.QUEUED, ToolStatus.RUNNING)
         ]
         if len(ordered) <= limit:
             return 0
@@ -295,6 +294,7 @@ class CliStreamUiState:
 
 
 __all__ = [
+    "VISIBLE_ACTIVE_TOOL_LIMIT",
     "CliStreamUiState",
     "CommitKind",
     "CompletedToolCommit",
@@ -302,5 +302,4 @@ __all__ = [
     "StreamMode",
     "StreamingToolUseState",
     "ToolStatus",
-    "VISIBLE_ACTIVE_TOOL_LIMIT",
 ]

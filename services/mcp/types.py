@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 McpTransport = Literal["stdio", "sse", "http"]
 McpServerState = Literal["pending", "connected", "failed", "disabled", "untrusted"]
 

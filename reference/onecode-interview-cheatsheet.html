@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ONE CodeAgent 简历亮点面试指南</title>
+  <link rel="stylesheet" href="../assets/teaching.css">
+</head>
+<body>
+  <p class="eyebrow">Reference · Resume-aligned</p>
+  <h1>ONE CodeAgent 面试回答</h1>
+  <p class="lede">严格对应简历中的六项技术亮点。每项包含推荐简历措辞、背景痛点、实现机制、兜底保障、权衡边界、口述稿和高频追问。</p>
+
+  <div class="notice">
+    <strong>真实性审计：</strong>当前实现没有真正路由到低成本 SubAgent 模型；仓库内也没有“SubAgent 吞吐提升 40%”的基准证据。`400ms → 125ms`约为 3.2 倍，而不是 3.5 倍。没有原始基准记录时，建议从简历删除这两个未经验证的数字。
+  </div>
+
+  <nav>
+    <a href="#summary">项目介绍</a><a href="#security">工具安全与并发</a><a href="#context">上下文工程</a><a href="#hooks">生命周期 Hook</a><a href="#plan">计划模式</a><a href="#subagent">SubAgent</a><a href="#records">持久化与观测</a><a href="#rewrite">推荐简历版本</a>
+  </nav>
+
+  <section id="summary">
+    <h2>项目介绍</h2>
+    <h3>STAR 拆解</h3>
+    <div class="grid">
+      <div class="card">
+        <p class="label">S · Situation 背景</p>
+        <p>我在使用 AI Coding 工具完成真实开发任务时发现，很多 Code Agent 原型虽然能调用文件和命令工具，但一进入长链路任务，就容易出现上下文不断膨胀、危险操作依赖 Prompt 自觉、工具和模型协议耦合、失败后无法恢复等问题。它们解决了“模型能不能行动”，却没有真正解决“行动是否可控”。</p>
+      </div>
+      <div class="card">
+        <p class="label">T · Task 目标</p>
+        <p>因此我希望实现一个 Python Code Agent 运行时：既保留模型自主规划和 Function Calling 的能力，又用确定性的工程机制治理上下文、工具副作用、权限、恢复和审计，使 Agent 能在真实项目目录中持续完成代码检索、编辑和命令执行。</p>
+      </div>
+      <div class="card">
+        <p class="label">A · Action 行动</p>
+        <p>基础 ReAct 循环跑通后，我发现核心难点并不在 AI 接口调用，而在运行时治理。围绕这个问题，我设计了薄主循环和统一工具管线；用路径 Guard、deny-first 权限和用户确认承接副作用；用动态 Prompt、记忆、附件和多级压缩治理上下文；再通过 Hook、计划模式、SubAgent、后台任务、MCP/Skills 和结构化记录扩展长任务能力。</p>
+      </div>
+      <div class="card">
+        <p class="label">R · Result 结果</p>
+        <p>最终项目形成了一个可运行、可扩展的 Code Agent runtime：能够在受控工作区内自主完成开发任务，支持长会话压缩与恢复、工具并发、计划审批、受限 SubAgent、后台任务和外部能力接入；同时用 transcript、trace 和 error log 保留会话与运行证据。项目以开源仓库持续维护，量化成果只使用可复现基准或真实仓库数据。</p>
+      </div>
+    </div>
+
+    <div class="script">
+      <p class="label">STAR 项目介绍 · 2–3 分钟</p>
+      <p>“ONE CodeAgent 是我在实践 AI Coding 过程中设计和实现的一个 Python Code Agent 运行时。做这个项目的起因是，我发现很多 Code Agent Demo 虽然已经能通过 Function Calling 搜索代码、编辑文件和执行命令，但一旦让它连续完成真实开发任务，问题很快就暴露出来：上下文会越积越多，危险操作往往只靠 Prompt 约束，模型或工具失败容易污染后续状态，新增能力也会不断侵入主循环。</p>
+      <p>所以我的目标不是再做一个聊天界面，而是实现一个能够承接模型副作用的 Harness：模型负责基于 ReAct 思路进行推理和选择行动，运行时负责保证这些行动可控、可恢复、可审计。</p>
+      <p>基础的模型调用和工具循环完成后，我发现项目真正的难点其实不在 AI API 本身，而在运行时治理。比如模型生成的路径和 Shell 命令不能直接相信，我设计了输入感知的工具分类、路径规范化、Guard 和 deny-first 权限链，高风险操作必须经过用户确认；长任务里历史消息和工具输出会持续挤占上下文，我把 System Prompt、长期记忆、项目附件和会话工作内存分层管理，再用大结果外置、滑动窗口、会话记忆和动态摘要压缩控制规模；为了避免功能越多主循环越复杂，我又通过生命周期 Hook、工具注册表和 Provider-neutral 协议接入计划模式、SubAgent、后台任务、Skills 和 MCP。</p>
+      <p>最终项目形成了一个完整可运行的 Code Agent runtime：能够在受控工作区中完成代码检索、文件修改和命令执行，长会话可以压缩和恢复，复杂任务可以先生成计划等待用户审批，也可以把探索和记忆任务交给受限 SubAgent。运行过程中，会话事实、工具结果、状态转换和异常分别由 JSONL transcript、trace 和 error log 记录，便于恢复和定位问题。这个项目让我最大的收获是，Code Agent 的核心竞争力并不只是模型能力，而是外围 Harness 能否把模型的不确定性收敛成可治理的工程行为。”</p>
+    </div>
+
+    <div class="notice">
+      <strong>结果数据怎么补：</strong>如果你有真实 GitHub Star、测试用例数量、任务完成率或可复现性能基准，可以放在 Result 最后一段。建议表述为“在固定任务集/固定并发数下，端到端耗时由 X 降至 Y”，并准备测试环境和统计口径；不要用无法复现的模拟数字代替真实项目结果。
+    </div>
+
+    <div class="script">
+      <p class="label">90 秒项目开场</p>
+      <p>“ONE CodeAgent 是一个基于 ReAct 思路和模型原生 Function Calling 实现的 Python Code Agent 运行时。模型负责在思考、工具行动和环境反馈之间迭代，运行时负责把模型的不确定行为约束在确定性的工程框架中。它能够完成代码搜索、文件编辑和命令执行，并支持动态上下文重建、MCP、Skills、记忆、SubAgent 和后台任务。这个项目的重点不是工具数量，而是怎样用统一工具管线、分层权限、上下文治理、状态恢复和结构化观测，保证 Agent 在真实代码库中执行长链路任务时仍然可控、可恢复、可审计。”</p>
+    </div>
+    <details><summary>追问：ReAct 和 Function Calling 分别解决什么？</summary><p>ReAct 描述的是循环范式：模型根据当前观察决定下一步行动，工具结果再成为新的观察。Function Calling 是行动的结构化承载方式，让模型输出工具名和参数，而不是让运行时从自然语言里猜命令。真正的安全、权限和恢复仍由运行时负责，Function Calling 本身不提供这些保证。</p></details>
+    <details><summary>追问：它和普通聊天机器人接几个工具有什么区别？</summary><p>普通原型通常只完成“模型能调用工具”。ONE CodeAgent 进一步治理工具可见性、输入分类、资源边界、权限确认、错误反馈、上下文预算、会话持久化和状态恢复，核心目标是承接真实副作用，而不是只演示一次工具调用。</p></details>
+  </section>
+
+  <section id="security">
+    <h2>1. 内置工具、安全沙箱与并发调度</h2>
+    <p><strong>推荐简历措辞：</strong>设计统一工具运行时，将文件与命令操作纳入基于资源目标的 Guard 和 deny-first 权限链；通过 Bash AST 与语义分析保守识别危险命令，高风险调用需用户确认。基于调用元数据和资源冲突进行并发调度，并通过有界重试、最大轮次和压缩熔断避免恢复死循环。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>模型生成的路径和命令不可信：可能越过项目边界、访问符号链接指向的外部位置、执行动态 Shell 结构，或因重复失败进入无限重试。多个工具盲目并发还可能同时读写同一资源。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>工具先通过结构校验和业务校验，再根据本次输入分类为读写属性、并发安全性和资源目标。文件目标经过绝对化、Windows 路径归一、realpath 和工作区边界判断；命令通过 AST 和语义规则区分可证明只读、需确认和拒绝的形态。权限按 deny-first 合并，只有明确安全且目标不冲突的调用才并发。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>分类失败按可能写入、不可并发处理；整工具 deny 会从模型可见工具中隐藏，执行入口仍重复校验；Hook 改写输入后全链重检；文件工具内部再检查目标。模型重试有次数上限，主循环有最大轮次，自动压缩连续失败后打开断路器。</p></div>
+      <div class="card"><p class="label">权衡边界</p><p>保守分类会增加用户确认和串行执行，但换来可解释性。系统并非简单“命令黑名单”：更准确的描述是 AST 结构分析、只读语义白名单和动态执行形态拒绝。生产装配以项目工作区为默认边界，架构上仍支持显式外部目录询问。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“文件和命令工具的难点不是执行，而是怎样把模型输出变成可控副作用。我让每次调用先经过结构校验，再按具体输入判断是读还是写、访问哪些资源、是否可以并发。文件路径会规范化为稳定绝对路径，处理 Windows 等价路径和符号链接，再做项目边界判断；Shell 不是只靠关键词黑名单，而是先解析 AST，对动态执行、替换、复杂控制结构等无法可靠理解的形态 fail closed，再对白名单只读命令做语义分类。权限层坚持 deny-first，高风险操作才进入用户确认。并发方面，所有 preflight 先串行完成，只有明确并发安全且资源不冲突的 handler 才并行，结果仍按原顺序回填。重试次数、最大轮次和压缩失败熔断共同防止死循环。”</p></div>
+
+    <details><summary>追问：为什么执行前隐藏工具，执行时还要检查？</summary><p>隐藏工具只能处理整工具级别的 deny，无法提前知道某次调用的具体路径或命令；历史上下文也可能包含旧的工具调用。因此可见性裁剪负责最小化能力，执行入口重检才是最终安全边界。</p></details>
+    <details><summary>追问：并发为什么更快，又为什么不全部并发？</summary><p>I/O 型工具的大部分时间在等待，多个互不冲突的调用并行可以把总时延接近最长单次调用，而不是耗时求和。但权限交互、状态修改和同一文件读写存在冲突，所以先串行 preflight，再按资源冲突分批执行，保留确定性。</p></details>
+    <details><summary>性能数字应该怎样回答？</summary><p>必须给出工具数量、单次模拟或真实 I/O 延迟、预热次数、样本量、均值或 P95、并发上限和测试机器。若原始数据就是 400ms 与 125ms，只能说约 3.2 倍；若要说 3.5 倍，应提供接近 438ms 与 125ms 的原始均值。没有这些信息，建议只说“显著降低独立 I/O 工具的批处理时延”。</p></details>
+  </section>
+
+  <section id="context">
+    <h2>2. Context Engineering：四类信息与多级压缩</h2>
+    <p><strong>推荐简历措辞：</strong>构建动态 System Prompt、指令/长期记忆、项目附件与会话工作内存协同的上下文体系；每轮根据运行状态重建模型快照，并通过大结果外置、滑动窗口、微压缩、会话记忆和动态摘要控制上下文规模。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>长任务会积累大量历史消息、工具输出、规则和文件内容。无限追加既浪费 Token，也会稀释注意力；简单截断又可能丢掉目标、约束、关键发现和工具调用配对。</p></div>
+      <div class="card"><p class="label">四类信息</p><p>动态 System Prompt 提供当前身份、行为、可见工具和规则；持久记忆分为项目指令与跨会话长期记忆；项目附件把文件、变更、技能和后台通知投影进当前轮；会话层保存消息链、transcript、当前工作内存和单会话摘要。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>每轮不直接复用旧 Prompt，而是从当前状态重建快照。低成本阶段先外置大工具结果、滑动窗口保留最近消息和工具配对、把旧结果替换为可恢复占位；接近阈值后优先用会话记忆压缩，必要时由受限子 Agent 生成完整摘要。相关长期记忆按需选择，不一次性全部注入。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>完整 transcript 和外置结果保留恢复来源；自动压缩有阈值和连续失败断路器；Provider 真正返回上下文超限时触发响应式压缩；摘要边界和引用写入结构化元数据。当前大文件和超大目录的底层读取仍存在进一步流式化空间。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“我没有把上下文当作无限增长的聊天记录，而是当作每轮重建的工作内存。System Prompt 根据当前工具、技能、项目规则和运行状态动态生成；持久记忆只放索引和必要指令，相关主题正文按需选择；文件、技能和后台通知通过附件临时投影；完整会话则持续写 transcript。压缩采用分级策略：先把大工具结果外置，做滑动窗口和旧结果微压缩，这些操作不改写事实来源；接近上下文阈值时再利用 session memory 或生成动态摘要。如果 Provider 仍报上下文超限，再触发一次响应式压缩。这样用较低成本维持高信息密度，同时保留重新读取细节的路径。”</p></div>
+
+    <details><summary>追问：为什么不是固定四段拼接？</summary><p>四层是信息来源的心智模型，不是固定文本拼接顺序。实际系统要根据当前可见工具、已读文件、记忆相关性、会话预算和 transition 动态生成 Prompt 与消息快照，否则“动态上下文”会退化成另一个巨型静态 Prompt。</p></details>
+    <details><summary>追问：怎样保证关键信息不丢？</summary><p>不能承诺绝对不丢，摘要本身有损。工程上通过完整 transcript、大结果外置、工具调用与结果配对、会话记忆、摘要边界和可重新读取引用降低损失风险。面试中应说“降低丢失风险并保留恢复来源”，不要说“保证完全不丢”。</p></details>
+  </section>
+
+  <section id="hooks">
+    <h2>3. PreToolUse、TurnStopped 等生命周期 Hook</h2>
+    <p><strong>推荐简历措辞：</strong>设计覆盖工具前后、回合结束、消息完成、压缩和任务状态的生命周期 Hook；支持阻断、输入改写、元数据补充与审计，将记忆提取、压缩定制和任务约束等横切能力从主循环解耦。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>权限审计、记忆提取、任务约束等逻辑如果散落在主循环和各工具中，会形成大量重复分支，并且执行顺序和失败影响范围不清晰。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>在用户提交、模型消息完成、回合自然结束、工具执行前后、压缩前后和任务创建完成等稳定节点发布事件。Hook 可以观察、返回阻断错误、改写工具输入或累积元数据；同步和异步回调使用统一接口。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>普通 Hook 异常被捕获并记录，不中断其他回调和主流程；只有显式 blocking error 才阻断。PreToolUse 改写输入后重新走 schema、业务校验、调用分类、Guard 和 Permission，不能绕过 deny。</p></div>
+      <div class="card"><p class="label">权衡边界</p><p>Hook 过多会导致行为难追踪，因此只为稳定生命周期节点开放，并用 trace 记录。权限的最终事实来源是 Guard 和 Permission Policy；压缩本身属于上下文准备链，Hook 只负责定制或观察，不能说它们主要由 Hook 实现。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“Hook 主要解决横切能力侵入主循环的问题。我在工具调用前后、消息完成、回合结束、压缩和任务状态变化等稳定节点发布事件。比如 PreToolUse 可以额外阻断或调整输入，TurnStopped 可以启动长期记忆的后台提取，压缩前 Hook 可以补充摘要指令，任务 Hook 可以在违反约束时回滚或阻止状态变化。Hook 自身异常会隔离并进入 trace；更重要的是，它不是安全边界。输入一旦被 Hook 改写，必须重新走完整校验和权限链，底层 deny 永远优先。这样既获得扩展性，也不会让插件改变安全模型。”</p></div>
+
+    <details><summary>追问：为什么 Prompt 约束不够？</summary><p>Prompt 只能提高模型遵守规则的概率，不能阻止历史工具调用、提示注入或模型误判真正触发副作用。Hook 可以提供确定性阻断和审计，但最终安全还要由 Guard、权限策略和 handler 兜底共同保证。</p></details>
+    <details><summary>追问：为什么 Hook 异常默认不中断？</summary><p>观察和审计类扩展不应因为自身故障让用户任务失败。需要强制阻断的规则必须显式返回 blocking error；这让“扩展故障”和“策略拒绝”语义分离，也更容易观测。</p></details>
+  </section>
+
+  <section id="plan">
+    <h2>4. Spec Coding 风格的计划模式</h2>
+    <p><strong>推荐简历措辞：</strong>参考 Spec Coding 的“先探索、再对齐、后实施”流程，将计划模式实现为正式运行时状态：进入后强制只读探索，仅允许写当前计划文件，通过结构化提问澄清需求，并在用户审批后恢复普通权限进入编码阶段。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>复杂需求如果直接让 Agent 改代码，模型容易在信息不足时自行假设，导致方案偏离、改动范围失控，用户也很难在代码已经产生后低成本纠正方向。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>计划模式是正式权限状态而不是一句 Prompt。进入时保存原权限模式并创建稳定计划文件；Agent 只读探索代码库，通过结构化提问收集用户决策，并持续更新计划 Markdown；提交计划后等待明确批准，批准才恢复原权限，拒绝则保持计划模式继续修改。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>权限层在计划模式下只暴露和允许读取、提问、探索子 Agent、退出计划模式，以及对唯一计划文件的写入；其他业务代码写操作在执行入口硬拒绝。探索子 Agent 被强制只读，不能依赖 Prompt 自觉。</p></div>
+      <div class="card"><p class="label">权衡边界</p><p>简单任务进入计划模式会增加交互成本，所以适合需求模糊、跨模块或高风险任务。当前落地产物是一份可审批的计划 Markdown，不是固定生成独立需求文档和设计文档；可在计划内容中包含需求、方案、风险和验收标准。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“计划模式解决的是复杂任务直接编码造成的需求偏离。我没有把它做成一段‘请先规划’的 Prompt，而是正式的运行时状态机。进入后保存原权限模式，创建当前计划文件，并在权限层把 Agent 限制为只读探索、结构化提问、受限 Explore 子 Agent，以及只写这一份计划文件。Agent 根据代码库事实和用户回答持续完善计划，调用退出工具提交审批；用户批准后才恢复原权限并进入实现，拒绝则继续留在计划模式修改。这样把需求对齐变成可验证的状态转换，而不是依赖模型是否愿意先规划。”</p></div>
+
+    <details><summary>追问：为什么计划模式必须进入权限系统？</summary><p>如果只靠 Prompt 要求“不写代码”，模型仍可能误调用写工具，历史消息也可能携带旧调用。计划阶段的只读约束属于安全和流程事实，必须同时影响工具可见性和执行入口。</p></details>
+    <details><summary>追问：怎么证明降低了出错率或偏离率？</summary><p>当前仓库没有对照实验数据，因此不要给出量化下降比例。可以解释机制上的风险降低：编码前增加事实探索、显式用户决策、可审阅计划和权限闸门。若要量化，需要准备相同任务集、直接编码组与计划模式组，并定义返工次数、需求遗漏率和一次验收通过率。</p></details>
+  </section>
+
+  <section id="subagent">
+    <h2>5. SubAgent 协作与后台执行</h2>
+    <p><strong>推荐简历措辞：</strong>实现独立子运行时的 SubAgent 机制，主 Agent 可将探索、规划和记忆提取等任务委派给受限 Agent；子任务拥有独立消息链和工具视图，可前台或后台执行，并通过权限层强制只读或限定写入范围。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>复杂任务把所有探索和中间结果都放进主上下文，会放大上下文污染和注意力竞争；专门任务还可能只需要很窄的工具权限，不应继承主 Agent 的完整能力。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>SubAgent 对父级表现为普通工具，内部创建独立状态、临时消息存储、工具注册表、上下文和循环。干净模式只接收任务指令；fork 模式继承父级已渲染上下文。子 Agent 最终只把摘要结果返回父链，中间消息不污染主会话。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>子 Agent 默认隐藏 agent 工具，防止递归委派；Explore/Plan 和记忆提取 Agent 的只读或路径限制由权限层强制；后台 Agent 不挂交互权限提示，遇到需要确认的操作直接失败，避免后台任务悬挂等待。</p></div>
+      <div class="card"><p class="label">权衡边界</p><p>子 Agent 中间消息当前是临时状态，不支持独立恢复；没有 worktree 隔离。虽然定义预留模型字段，但当前运行仍复用父级模型客户端，因此不能声称已路由低成本模型。agent 工具当前也不是同批并发候选，40% 吞吐提升缺少实现和基准证据。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“SubAgent 的目标是隔离专门任务，而不是简单多开一段对话。父 Agent 通过普通工具委派任务，运行时为每个 child 创建独立状态、消息链、工具表、上下文和循环。它可以使用干净上下文，也可以 fork 父级当前快照；完成后只把最终摘要作为工具结果回到父会话，所以中间探索不会不断污染主上下文。不同类型的 child 会裁剪工具，Explore 强制只读，记忆提取只能写指定路径，后台 child 遇到需要人工确认的操作直接失败。当前实现复用父模型，因此我不会把‘低成本模型路由’写成已完成能力；这是适配层进一步支持多模型选择后的演进方向。”</p></div>
+
+    <details><summary>追问：上下文互不干扰是怎样实现的？</summary><p>每个 child 使用独立的运行状态和临时消息存储，工具执行结果只进入 child 链；父链只收到最终 SubAgent 工具结果。需要父上下文时采用深拷贝后的 fork 快照，而不是让父子共享同一可变 message list。</p></details>
+    <details><summary>追问：为什么当前不能说吞吐提升 40%？</summary><p>吞吐提升需要任务可并行、调度器实际并发以及可复现基准。当前 agent 工具分类为不可并发，后台执行只能说明不阻塞当前交互；仓库中也没有 40% 的原始测量。若未来实现并行 SubAgent，应以固定任务集、并发数、模型、Token 用量和端到端完成时间重新测量。</p></details>
+  </section>
+
+  <section id="records">
+    <h2>6. JSONL transcript、trace 与 error log</h2>
+    <p><strong>推荐简历措辞：</strong>将会话事实、运行决策和失败证据分层持久化：JSONL transcript 保存可恢复消息链与工具结果引用，结构化 trace 记录模型、工具、权限和状态转换，独立 error log 保存脱敏后的异常上下文，支持会话恢复、历史重放和链路定位。</p>
+
+    <div class="grid">
+      <div class="card"><p class="label">背景痛点</p><p>Agent 问题通常跨越模型、工具、权限和恢复链路。只保存最终回复无法恢复会话；把所有信息混进一个日志又会膨胀、泄露敏感数据，并难以区分事实与诊断证据。</p></div>
+      <div class="card"><p class="label">核心机制</p><p>Transcript 以 append-only JSONL 保存用户、模型、工具结果和附件的内部消息链；大结果写到独立文件并保留引用。Trace 用事件和 span 记录模型调用、工具批次、权限等待、压缩和状态转换。Error log 单独保存错误分类、安全消息与短堆栈。</p></div>
+      <div class="card"><p class="label">兜底保障</p><p>同一工具调用 ID 的不同内容使用稳定哈希分流，避免覆盖；外置文件缺失时保留预览并标记；trace 和 error log 统一限制长度、嵌套深度并脱敏密钥、Header、Prompt、工具内容和外部路径；观测写入失败不影响主流程。</p></div>
+      <div class="card"><p class="label">权衡边界</p><p>当前支持从 transcript 恢复会话并在 CLI 静态重放历史，也能用 trace 回溯运行路径；但这不是把所有外部副作用确定性地重新执行一遍。更准确的简历用词是“历史重放与链路回溯”，而不是无限制的“运行回放”。</p></div>
+    </div>
+
+    <div class="script"><p class="label">90 秒口述</p><p>“我把持久化分成三类事实。Transcript 是恢复事实源，按 JSONL 追加保存内部消息链；大工具结果外置，消息中保留预览、路径和恢复元数据。Trace 只记录短小的运行决策，例如模型调用、工具执行、权限等待、压缩和状态转换，用于分析一条任务为什么这样运行。真正未恢复的异常写入独立 error log，包含错误分类和脱敏后的调试证据。三者分离后，CLI 可以恢复会话并重放历史，开发者也能按 session 定位链路问题，同时避免把完整 Prompt、源码或密钥塞进 trace。”</p></div>
+
+    <details><summary>追问：为什么用 JSONL？</summary><p>会话天然是追加事件流，JSONL 单次写入小、便于增量 flush，崩溃时通常只影响尾部，也便于流式扫描和重建索引。相比每次重写一个大 JSON，对长会话更稳定。</p></details>
+    <details><summary>追问：三种记录为什么不能合并？</summary><p>Transcript 追求可恢复的完整消息事实；trace 追求低成本的流程与耗时事实；error log 追求失败诊断证据。合并会让恢复文件膨胀、trace 泄露内容，也让正常事件和异常堆栈难以分别治理。</p></details>
+  </section>
+
+  <section id="rewrite">
+    <h2>推荐的简历改写</h2>
+    <div class="card">
+      <p><strong>ONE CodeAgent</strong>：基于 ReAct 思路与模型原生 Function Calling 实现的 Python Code Agent 运行时，可在受控工作区内完成代码检索、文件编辑和命令执行；支持动态上下文重建、MCP/Skills、记忆、SubAgent、计划模式与后台任务。</p>
+      <ul>
+        <li>设计统一工具运行时，将文件与命令操作纳入资源目标分类、路径 Guard 和 deny-first 权限链；利用 Bash AST/语义分析保守识别危险操作，高风险调用需用户确认，并通过有界重试、最大轮次和压缩熔断避免恢复死循环。</li>
+        <li>构建动态 System Prompt、指令/长期记忆、项目附件与会话工作内存协同的上下文体系；结合大结果外置、滑动窗口、微压缩、会话记忆和动态摘要控制上下文规模。</li>
+        <li>实现覆盖工具前后、消息完成、回合结束、压缩和任务状态的生命周期 Hook，支持阻断、输入改写、审计和元数据扩展，将记忆提取与任务约束等横切能力从主循环解耦。</li>
+        <li>将计划模式实现为正式权限状态：复杂任务编码前只读探索并通过结构化问题对齐需求，产出可审批计划；批准后恢复普通权限进入实施，降低需求假设和返工风险。</li>
+        <li>实现独立子运行时的 SubAgent 机制，支持干净上下文与父上下文 fork、受限工具集、只读/限定路径权限和前后台执行；子任务仅将最终结果回填父会话，减少主上下文污染。</li>
+        <li>通过 JSONL transcript、结构化 trace 和独立 error log 分层记录会话事实、运行决策与失败证据，支持会话恢复、历史重放和链路问题定位。</li>
+      </ul>
+    </div>
+    <p class="good"><strong>性能数字保留条件：</strong>补充可复现 benchmark 后，可在相应条目末尾添加“在 N 个独立 I/O 工具、并发上限 M 的基准中，平均时延由 Xms 降至 Yms，提升 Z 倍”。不要把模拟数据写成真实生产收益。</p>
+  </section>
+
+  <section>
+    <h2>面试回答的统一收尾</h2>
+    <p>每个亮点最后都可以回到同一句话：“这个设计不是为了堆功能，而是把模型的不确定性收敛到可验证的状态、权限、上下文和记录边界里。”它能把六项亮点重新连成一个完整系统，而不是六个独立模块。</p>
+  </section>
+
+  <footer>
+    主要依据：<a href="../architecture.md">根架构</a>、<a href="../docs/design-docs/core-beliefs.md">核心信念</a>、<a href="../docs/exec-plans/active/plan-mode-full-implementation.md">计划模式 ExecPlan</a>、<a href="../docs/tech-debt/tech-debt-tracker.md">技术债台账</a>及各模块设计文档。<br>
+    建议下一步：进行模拟面试，随机抽取一项，用 90 秒回答，再连续追问两轮。
+  </footer>
+</body>
+</html>

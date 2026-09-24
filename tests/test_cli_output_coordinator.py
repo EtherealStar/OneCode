@@ -33,7 +33,7 @@ def _captured_console() -> io.StringIO:
 
     buffer = io.StringIO()
     so.reset_static_console()
-    so._STATIC_CONSOLE = Console(  # noqa: SLF001
+    so._STATIC_CONSOLE = Console(
         file=buffer,
         force_terminal=True,
         color_system="standard",
@@ -118,13 +118,20 @@ def test_flush_preserves_queue_order() -> None:
     from services.tools.types import ToolExecutionResult
 
     first = ToolExecutionResult(
-        tool_call_id="c1", tool_name="read_file", content="x", metadata={"line_count": 1}
+        tool_call_id="c1",
+        tool_name="read_file",
+        content="x",
+        metadata={"line_count": 1},
     )
     second = ToolExecutionResult(
         tool_call_id="c2", tool_name="bash", content="y", metadata={"command": "ls"}
     )
-    coord.queue_commit(_make_commit(kind=CommitKind.TOOL_RESULT, payload=first, sequence=0))
-    coord.queue_commit(_make_commit(kind=CommitKind.TOOL_RESULT, payload=second, sequence=1))
+    coord.queue_commit(
+        _make_commit(kind=CommitKind.TOOL_RESULT, payload=first, sequence=0)
+    )
+    coord.queue_commit(
+        _make_commit(kind=CommitKind.TOOL_RESULT, payload=second, sequence=1)
+    )
     asyncio.run(coord.flush_ready_checkpoints())
     output = buffer.getvalue()
     # ``read_file`` is queued first, so its line must appear before
@@ -218,9 +225,7 @@ def test_dynamic_app_marker_flushes_through_run_in_terminal(monkeypatch) -> None
     calls: list[str] = []
 
     async def fake_run_in_terminal(func, render_cli_done=False, in_executor=False):
-        calls.append(
-            f"render_cli_done={render_cli_done};in_executor={in_executor}"
-        )
+        calls.append(f"render_cli_done={render_cli_done};in_executor={in_executor}")
         return func()
 
     import ui.cli.terminal.output_coordinator as coordinator_module

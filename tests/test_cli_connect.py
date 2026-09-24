@@ -8,7 +8,11 @@ from infrastructure.config.env import load_provider_config
 from services.context.message_store import MessageStore
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.registry import ToolRegistry
-from ui.cli.connect import ProviderEnvUpdate, existing_key_for_provider, write_provider_env
+from ui.cli.connect import (
+    ProviderEnvUpdate,
+    existing_key_for_provider,
+    write_provider_env,
+)
 from ui.cli.types import CliRuntime
 
 
@@ -60,21 +64,17 @@ def test_write_provider_env_updates_provider_block_without_overwriting_others(
 ) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "\n".join(
-            [
-                "# keep this",
-                "OTHER_SETTING=yes",
-                "ONECODE_PROVIDER_ID=openai",
-                "#openai",
-                "OPENAI_BASE_URL=https://api.openai.com/v1",
-                "OPENAI_MODEL=gpt-test",
-                "OPENAI_API_KEY=openai-secret",
-                "#deepseek",
-                "DEEPSEEK_BASE_URL=https://old.example",
-                "DEEPSEEK_MODEL=old",
-                "DEEPSEEK_API_KEY=old-secret",
-            ]
-        ),
+        "# keep this\n"
+        "OTHER_SETTING=yes\n"
+        "ONECODE_PROVIDER_ID=openai\n"
+        "#openai\n"
+        "OPENAI_BASE_URL=https://api.openai.com/v1\n"
+        "OPENAI_MODEL=gpt-test\n"
+        "OPENAI_API_KEY=openai-secret\n"
+        "#deepseek\n"
+        "DEEPSEEK_BASE_URL=https://old.example\n"
+        "DEEPSEEK_MODEL=old\n"
+        "DEEPSEEK_API_KEY=old-secret",
         encoding="utf-8",
     )
 
@@ -123,17 +123,15 @@ def test_write_provider_env_writes_required_base_url(tmp_path: Path) -> None:
     assert config.api_key == "secret"
 
 
-def test_existing_key_for_provider_reads_provider_specific_block(tmp_path: Path) -> None:
+def test_existing_key_for_provider_reads_provider_specific_block(
+    tmp_path: Path,
+) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "\n".join(
-            [
-                "ONECODE_PROVIDER_ID=openai",
-                "#deepseek",
-                "DEEPSEEK_MODEL=deepseek-chat",
-                "DEEPSEEK_API_KEY=deepseek-secret",
-            ]
-        ),
+        "ONECODE_PROVIDER_ID=openai\n"
+        "#deepseek\n"
+        "DEEPSEEK_MODEL=deepseek-chat\n"
+        "DEEPSEEK_API_KEY=deepseek-secret",
         encoding="utf-8",
     )
 

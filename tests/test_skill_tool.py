@@ -92,7 +92,9 @@ def test_skill_tool_inline_returns_short_result_and_skill_attachment(
     assert "Follow this review checklist." in projected[0]["content"]
 
 
-def test_skill_tool_fork_returns_child_summary_without_attachment(tmp_path: Path) -> None:
+def test_skill_tool_fork_returns_child_summary_without_attachment(
+    tmp_path: Path,
+) -> None:
     runner = FakeForkRunner()
     provider = FakeSkillProvider(
         (

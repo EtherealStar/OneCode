@@ -6,9 +6,9 @@ TTY 启动时会针对每个未信任的 stdio 服务器提示确认 MCP 信任
 
 from __future__ import annotations
 
-import sys
-from typing import Callable, TextIO
+from collections.abc import Callable
 
+from application.runtime import TrustChoice
 from ui.cli.app import McpTrustPromptRequest
 from ui.cli.input import ConfirmOption, read_confirm_sync
 
@@ -18,7 +18,7 @@ def default_trust_prompt(
     *,
     input_func: Callable[[str], str] | None = None,
     output_func: Callable[[str], None] | None = None,
-) -> str:
+) -> TrustChoice:
     """阻塞等待 stdin，直到用户信任或跳过 MCP 服务器。
 
     与旧版 build_runtime 辅助函数在委托给 read_confirm_sync 之前打印的 stdout 面板对应。
@@ -33,14 +33,18 @@ def default_trust_prompt(
     out(f"  explicit env keys: {request.explicit_env_keys}")
     out(f"  base env keys: {request.base_env_keys}")
     if input_func is not None:
-        return input_func("Trust this project MCP server? [t] trust / [s] skip: ")
+        answer = input_func("Trust this project MCP server? [t] trust / [s] skip: ")
+        return (
+            "trust" if answer.strip().lower() in {"t", "trust", "y", "yes"} else "skip"
+        )
     try:
-        return read_confirm_sync(
+        result = read_confirm_sync(
             "Trust this project MCP server?",
             (
-                ConfirmOption("t", "t trust", aliases=("y", "yes")),
-                ConfirmOption("s", "s skip", aliases=("n", "no")),
+                ConfirmOption("trust", "t trust", aliases=("t", "y", "yes")),
+                ConfirmOption("skip", "s skip", aliases=("s", "n", "no")),
             ),
         )
     except (EOFError, KeyboardInterrupt):
         return "skip"
+    return "trust" if result == "trust" else "skip"

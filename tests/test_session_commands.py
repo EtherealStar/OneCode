@@ -96,7 +96,7 @@ class FakeRuntime:
         state: Any,
         message_store: Any,
         file_state_cache: Any = None,
-    ) -> "FakeRuntime":
+    ) -> FakeRuntime:
         clone = copy.copy(self)
         clone.state = state
         clone.message_store = message_store

@@ -22,8 +22,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Deque, Literal
-
+from typing import Literal
 
 # 队列可承载的输入类型。prompt 为常规用户轮次；slash 为以 / 开头的行，必须通过命令分发器路由而非走 agent 循环。
 QueuedInputKind = Literal["prompt", "slash"]
@@ -50,7 +49,7 @@ class QueuedInput:
 class InputQueue:
     """等待分发的 QueuedInput 记录的先进先出（FIFO）队列。"""
 
-    _items: Deque[QueuedInput] = field(default_factory=deque)
+    _items: deque[QueuedInput] = field(default_factory=deque)
     _next_sequence: int = 0
 
     def push(self, line: str) -> QueuedInput | None:
@@ -63,7 +62,9 @@ class InputQueue:
         normalized = line.rstrip()
         if not normalized.strip():
             return None
-        kind: QueuedInputKind = "slash" if normalized.lstrip().startswith("/") else "prompt"
+        kind: QueuedInputKind = (
+            "slash" if normalized.lstrip().startswith("/") else "prompt"
+        )
         item = QueuedInput(
             text=normalized,
             kind=kind,

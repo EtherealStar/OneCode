@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import ClassVar
 
 from rich.console import RenderableType
 from textual.app import ComposeResult
@@ -13,7 +13,7 @@ from textual.widgets import Label, Static
 
 
 class CommandOutputModal(ModalScreen[None]):
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "close", "", priority=True),
         Binding("q", "close", "", priority=False),
     ]

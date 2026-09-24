@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +17,7 @@ from services.context.message_store import MessageStore
 from services.context.snapshot import ContextSnapshot
 from services.model.retry import ModelRetryRunner, RetryPolicy
 from services.model.stream import ModelStreamEvent
-from services.model.types import LLMResponse, ModelUsage
-from services.model.types import ProviderError
+from services.model.types import LLMResponse, ModelUsage, ProviderError
 from services.observability import JsonlTraceSink, TraceRecorder
 from services.tools.executor import ToolExecutionUpdate
 from services.tools.types import ToolCall, ToolExecutionResult
@@ -58,9 +57,9 @@ class FakeToolExecutor:
             yield ToolExecutionUpdate(
                 type="result",
                 result=ToolExecutionResult(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                content=f"result for {tool_call.name}",
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    content=f"result for {tool_call.name}",
                 ),
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
@@ -408,7 +407,10 @@ def test_loop_appends_successful_tool_followup_attachments(tmp_path: Path) -> No
         message.get("role") != "attachment"
         for message in model_client.snapshots[1].messages
     )
-    assert "[skill loaded: code-review]" in model_client.snapshots[1].messages[-1]["content"]
+    assert (
+        "[skill loaded: code-review]"
+        in model_client.snapshots[1].messages[-1]["content"]
+    )
 
 
 def test_loop_uses_tool_calls_not_stop_reason(tmp_path: Path) -> None:

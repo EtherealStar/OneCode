@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _WINDOWS_DRIVE_REWRITES = (
     re.compile(r"^/([a-zA-Z]):(?:[\\/](.*))?$"),
     re.compile(r"^/([a-zA-Z])(?:[\\/](.*))?$"),
@@ -110,7 +109,9 @@ def resolve_write_target(
         missing_parts.append(current.name)
         parent = current.parent
         if parent == current:
-            raise FileNotFoundError(f"No existing parent for write target: {input_path}")
+            raise FileNotFoundError(
+                f"No existing parent for write target: {input_path}"
+            )
         current = parent
 
     existing_parent_realpath = current.resolve(strict=True)

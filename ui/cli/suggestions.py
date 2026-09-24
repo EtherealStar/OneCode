@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-import time
-from typing import Iterable, Literal
+from typing import Literal
 
 from services.attachments.ignore import is_ignored_attachment_dir
 from ui.cli.commands import visible_commands
@@ -153,9 +154,7 @@ def _matching_file_candidates(
 ) -> tuple[_FileCandidate, ...]:
     _base_part, separator, leaf = normalized_prefix.rpartition("/")
     base_prefix = f"{_base_part}/" if separator and _base_part else ""
-    allow_basename_search = bool(
-        leaf and len(leaf) >= GLOBAL_BASENAME_SEARCH_MIN_CHARS
-    )
+    allow_basename_search = bool(leaf and len(leaf) >= GLOBAL_BASENAME_SEARCH_MIN_CHARS)
     matches: list[_FileCandidate] = []
     for candidate in _cached_file_candidates(workspace):
         if _matches_file_prefix(
@@ -265,7 +264,5 @@ def _candidate_for_path(path: Path, workspace: Path) -> _FileCandidate | None:
 
 def _should_descend_file_suggestion_dir(path: Path) -> bool:
     return (
-        not is_ignored_attachment_dir(path)
-        and not path.is_symlink()
-        and path.is_dir()
+        not is_ignored_attachment_dir(path) and not path.is_symlink() and path.is_dir()
     )

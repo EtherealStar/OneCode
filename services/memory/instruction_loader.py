@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import fnmatch
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
 from core.runtime_state import RuntimeState
 from infrastructure.filesystem.paths import resolve_path
@@ -42,7 +41,11 @@ class InstructionMemoryLoader:
         trace_recorder: TraceRecorder | None = None,
     ) -> None:
         self.workspace = resolve_path(Path(workspace))
-        self.home = resolve_path(Path(home).expanduser()) if home is not None else Path.home().resolve()
+        self.home = (
+            resolve_path(Path(home).expanduser())
+            if home is not None
+            else Path.home().resolve()
+        )
         self.onecode_home = self.home / ".onecode"
         self.trace_recorder = trace_recorder or TraceRecorder.noop()
 
@@ -74,7 +77,9 @@ class InstructionMemoryLoader:
             )
             if file is not None:
                 loaded.append(file)
-        rendered = "\n\n".join(_format_file(file) for file in loaded if file.content.strip())
+        rendered = "\n\n".join(
+            _format_file(file) for file in loaded if file.content.strip()
+        )
         return InstructionMemoryResult(
             files=tuple(loaded),
             rendered_text=rendered,
@@ -161,7 +166,9 @@ class InstructionMemoryLoader:
         try:
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            warnings.append(f"Skipped unreadable instruction file {path}: {type(exc).__name__}")
+            warnings.append(
+                f"Skipped unreadable instruction file {path}: {type(exc).__name__}"
+            )
             return None
         metadata, body = split_frontmatter(raw)
         globs = string_list(metadata.get("paths"))
@@ -185,7 +192,9 @@ class InstructionMemoryLoader:
         rendered_parts: list[str] = []
         for include in includes:
             if depth >= _MAX_INCLUDE_DEPTH:
-                warnings.append(f"Skipped include beyond depth {_MAX_INCLUDE_DEPTH}: {include}")
+                warnings.append(
+                    f"Skipped include beyond depth {_MAX_INCLUDE_DEPTH}: {include}"
+                )
                 continue
             child_path = (path.parent / include).resolve()
             child = self._load_file(
@@ -206,7 +215,9 @@ class InstructionMemoryLoader:
         return InstructionMemoryFile(
             path=path,
             source_layer=layer,
-            content="\n\n".join(part for part in rendered_parts if part.strip()).strip(),
+            content="\n\n".join(
+                part for part in rendered_parts if part.strip()
+            ).strip(),
             globs=globs,
             parent=parent,
             transformed=transformed != body.strip() or bool(includes),
@@ -313,7 +324,9 @@ def _glob_matches(value: str, pattern: str) -> bool:
     if "/" not in pattern:
         return fnmatch.fnmatchcase(Path(value).name, pattern)
     if pattern.startswith("**/"):
-        return fnmatch.fnmatchcase(value, pattern[3:]) or fnmatch.fnmatchcase(value, pattern)
+        return fnmatch.fnmatchcase(value, pattern[3:]) or fnmatch.fnmatchcase(
+            value, pattern
+        )
     return False
 
 

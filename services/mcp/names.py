@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 import re
+from hashlib import sha256
 
 from services.mcp.types import McpToolName
 
@@ -11,7 +11,9 @@ MAX_PROVIDER_TOOL_NAME_CHARS = 64
 _DISALLOWED_CHARS_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
-def normalize_mcp_name(name: str, *, max_length: int = MAX_PROVIDER_TOOL_NAME_CHARS) -> str:
+def normalize_mcp_name(
+    name: str, *, max_length: int = MAX_PROVIDER_TOOL_NAME_CHARS
+) -> str:
     """返回符合提供商安全规范的 MCP 名称组件。
 
     工具提供商通常将函数名称限制为字母、数字、下划线和连字符。
@@ -59,7 +61,7 @@ def _shorten_prefixed_name(
     server_component: str,
     tool_component: str,
 ) -> tuple[str, str, str]:
-    suffix = "_" + sha256(f"{server_name}\0{tool_name}".encode("utf-8")).hexdigest()[:8]
+    suffix = "_" + sha256(f"{server_name}\0{tool_name}".encode()).hexdigest()[:8]
     fixed_chars = len("mcp__") + len("__") + len(suffix)
     budget = MAX_PROVIDER_TOOL_NAME_CHARS - fixed_chars
     server_budget = min(len(server_component), max(1, min(24, budget // 3)))

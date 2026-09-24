@@ -23,9 +23,9 @@ from ui.tui.renderers.tool import (
 )
 
 __all__ = [
+    "SPINNER_FRAMES",
     "MarkdownCaches",
     "RunState",
-    "SPINNER_FRAMES",
     "ToolPresentation",
     "ToolPresentationRegistry",
     "build_tool_presentation_registry",

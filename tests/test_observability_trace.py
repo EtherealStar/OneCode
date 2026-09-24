@@ -32,9 +32,8 @@ def test_jsonl_sink_writes_event_and_span_records(tmp_path: Path) -> None:
     )
 
     recorder.event("transition", {"transition": "completed"})
-    with recorder.span("model_call") as parent:
-        with recorder.span("child") as child:
-            assert child.parent_span_id == parent.span_id
+    with recorder.span("model_call") as parent, recorder.span("child") as child:
+        assert child.parent_span_id == parent.span_id
     recorder.flush()
 
     records = read_jsonl(sink.trace_path)
@@ -54,9 +53,8 @@ def test_span_records_error_and_reraises(tmp_path: Path) -> None:
     sink = JsonlTraceSink(sessions_dir(tmp_path), "session-error")
     recorder = TraceRecorder(session_id="session-error", sink=sink)
 
-    with pytest.raises(RuntimeError):
-        with recorder.span("model_call"):
-            raise RuntimeError("provider failed")
+    with pytest.raises(RuntimeError), recorder.span("model_call"):
+        raise RuntimeError("provider failed")
     recorder.flush()
 
     records = read_jsonl(sink.trace_path)

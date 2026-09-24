@@ -126,7 +126,9 @@ def test_interrupt_keeps_real_pair_and_removes_unpaired_declaration(
     assert [call["id"] for call in assistant["message"]["tool_calls"]] == ["call-a"]
     tool_results = [r for r in disk if r["message"]["role"] == "tool_result"]
     assert [r["message"]["tool_call_id"] for r in tool_results] == ["call-a"]
-    assert all(r["message"].get("metadata", {}).get("synthetic") is not True for r in disk)
+    assert all(
+        r["message"].get("metadata", {}).get("synthetic") is not True for r in disk
+    )
     assert store.current_messages()[1]["tool_calls"] == [
         {"id": "call-a", "function": {"name": "read_file"}}
     ]
@@ -601,7 +603,11 @@ def test_loop_retains_result_before_batch_append(tmp_path: Path) -> None:
     disk = read_jsonl(store.transcript_store.messages_path)
     assistant = next(r for r in disk if r["message"]["role"] == "assistant")
     assert [call["id"] for call in assistant["message"]["tool_calls"]] == ["call-a"]
-    results = [r["message"]["tool_call_id"] for r in disk if r["message"]["role"] == "tool_result"]
+    results = [
+        r["message"]["tool_call_id"]
+        for r in disk
+        if r["message"]["role"] == "tool_result"
+    ]
     assert results == ["call-a"]
     # The assistant record keeps the stable assistant_call_id association.
     assert assistant.get("assistant_call_id") == facts.assistant_call_id

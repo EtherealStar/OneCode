@@ -8,13 +8,13 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
-from typing import Any
+from typing import Any, cast
 
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Static
 
 from ui.tui.conversation.layout_index import VirtualLayoutIndex
@@ -254,8 +254,8 @@ class MessageViewport(VerticalScroll):
         widget = self._widgets.get(key)
         item = self._document_item(key)
         if isinstance(widget, MessageWidget) and isinstance(item, UiMessage):
-            anchor = None if self._at_bottom() else self._index.locate(
-                int(self.scroll_y)
+            anchor = (
+                None if self._at_bottom() else self._index.locate(int(self.scroll_y))
             )
             widget.update_message(item, target)
             self.call_after_refresh(
@@ -313,9 +313,7 @@ class MessageViewport(VerticalScroll):
         self._follow_bottom = True
         self._auto_scroll_generation += 1
         generation = self._auto_scroll_generation
-        tail_y = max(
-            0, self._index.total_height - max(1, self.size.height)
-        )
+        tail_y = max(0, self._index.total_height - max(1, self.size.height))
         start, end = self._index.visible_range(
             tail_y, max(1, self.size.height), overscan=self._overscan
         )
@@ -333,34 +331,27 @@ class MessageViewport(VerticalScroll):
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
-        if not self._issuing_internal_scroll and int(old_value) != int(
-            new_value
-        ):
+        if not self._issuing_internal_scroll and int(old_value) != int(new_value):
             self._invalidate_scroll_intent()
             self._follow_bottom = new_value >= max(
                 0, self._index.total_height - self.size.height - 1
             )
-        if int(old_value) != int(new_value):
-            if self._restore_anchor is None and self._resize_anchor is None:
-                self.call_later(
-                    self._sync_visible_range, self._auto_scroll_generation
-                )
+        if (
+            int(old_value) != int(new_value)
+            and self._restore_anchor is None
+            and self._resize_anchor is None
+        ):
+            self.call_later(self._sync_visible_range, self._auto_scroll_generation)
         self._sync_new_content_button()
 
     def on_resize(self) -> None:
         self._reposition_new_content_button()
         width_changed = self.size.width != self._last_width
         self._last_width = self.size.width
-        if (
-            self._projection is not None
-            and self._documents
-            and width_changed
-        ):
+        if self._projection is not None and self._documents and width_changed:
             if self._resize_anchor is None:
                 self._resize_anchor = self._index.locate(int(self.scroll_y))
-            self.call_later(
-                self._sync_visible_range, self._auto_scroll_generation
-            )
+            self.call_later(self._sync_visible_range, self._auto_scroll_generation)
             self.call_after_refresh(self._finish_resize)
 
     # --- 内部实现方法 -----------------------------------------------------
@@ -497,7 +488,7 @@ class MessageViewport(VerticalScroll):
             bottom_height = (
                 self._index.total_height
                 - self._index.prefix_height(last)
-                - self._height_of(last)
+                - self._height_of(cast(LayoutKey, last))
             )
         else:
             bottom_height = self._index.total_height
@@ -542,9 +533,7 @@ class MessageViewport(VerticalScroll):
             self._scroll_end_internal()
             self._follow_bottom = True
         elif anchor is not None and anchor[0] in self._index.ids:
-            self._scroll_to_internal(
-                self._index.prefix_height(anchor[0]) + anchor[1]
-            )
+            self._scroll_to_internal(self._index.prefix_height(anchor[0]) + anchor[1])
             self._follow_bottom = False
         self._sync_new_content_button()
 
@@ -571,12 +560,8 @@ class MessageViewport(VerticalScroll):
     def _prune_state(self, live_keys: set[LayoutKey]) -> None:
         if self._projection is None:
             return
-        live_messages = {
-            message.message_id for message in self._projection.messages
-        }
-        for key in [
-            key for key in self._md_caches if key[0] not in live_messages
-        ]:
+        live_messages = {message.message_id for message in self._projection.messages}
+        for key in [key for key in self._md_caches if key[0] not in live_messages]:
             del self._md_caches[key]
         self._message_expanded = {
             key: value
@@ -589,9 +574,7 @@ class MessageViewport(VerticalScroll):
                 del self._widgets[key]
 
     def _at_bottom(self) -> bool:
-        return self.scroll_y >= max(
-            0, self._index.total_height - self.size.height - 1
-        )
+        return self.scroll_y >= max(0, self._index.total_height - self.size.height - 1)
 
     def _sync_new_content_button(self) -> None:
         if self.parent is None:
@@ -605,15 +588,16 @@ class MessageViewport(VerticalScroll):
             self.call_after_refresh(self._reposition_new_content_button)
 
     def _reposition_new_content_button(self) -> None:
-        if self.parent is None:
+        parent = self.parent
+        if not isinstance(parent, Widget):
             return
         try:
-            button = self.parent.query_one(NewContentButton)
+            button = parent.query_one(NewContentButton)
         except NoMatches:
             return
         button.styles.offset = (
-            max(0, self.parent.size.width - button.outer_size.width - 2),
-            max(0, self.parent.size.height - button.outer_size.height - 1),
+            max(0, parent.size.width - button.outer_size.width - 2),
+            max(0, parent.size.height - button.outer_size.height - 1),
         )
 
 

@@ -41,7 +41,9 @@ class PermissionModal:
             self.selected_index = index
 
 
-def build_permission_choices(request: PermissionRequest) -> tuple[PermissionChoice, ...]:
+def build_permission_choices(
+    request: PermissionRequest,
+) -> tuple[PermissionChoice, ...]:
     """根据策略提供的选项构建三个瞬态选择项。"""
 
     if len(request.options) != 3:
@@ -85,15 +87,24 @@ def render_permission_modal_ansi(modal: PermissionModal, *, width: int) -> ANSI:
         width=max(width, 20),
         theme=RICH_THEME,
     )
-    console.print(Text(render_permission_request_summary(modal.request), style="onecode.metric"))
+    console.print(
+        Text(render_permission_request_summary(modal.request), style="onecode.metric")
+    )
     console.print()
     console.print(Text("Do you want to proceed?", style="onecode.permission"))
     for index, choice in enumerate(modal.choices):
         marker = "> " if index == modal.selected_index else "  "
-        style = "onecode.permission" if index == modal.selected_index else "onecode.metric"
+        style = (
+            "onecode.permission" if index == modal.selected_index else "onecode.metric"
+        )
         console.print(Text(f"{marker}{choice.shortcut}. {choice.label}", style=style))
     console.print()
-    console.print(Text("Esc to cancel - Up/Down to select - Enter to confirm", style="onecode.subtle"))
+    console.print(
+        Text(
+            "Esc to cancel - Up/Down to select - Enter to confirm",
+            style="onecode.subtle",
+        )
+    )
     return ANSI(out.getvalue())
 
 

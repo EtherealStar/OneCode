@@ -103,9 +103,8 @@ def _project_file(
     attachment: dict[str, Any],
     message: dict[str, Any],
 ) -> tuple[dict[str, Any], ...]:
-    metadata = (
-        message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-    )
+    raw_metadata = message.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     attachment_id = str(
         metadata.get("attachment_id") or attachment.get("id") or "unknown"
     )
@@ -128,9 +127,7 @@ def _project_file(
         f"{attachment.get('content', '')}"
     )
     if attachment.get("truncated") is True:
-        notice += (
-            "\n\n[Attachment content was truncated; use read_file if more detail is needed.]"
-        )
+        notice += "\n\n[Attachment content was truncated; use read_file if more detail is needed.]"
     return (
         {
             "role": "user",
@@ -147,9 +144,7 @@ def _project_file(
 def _project_directory(attachment: dict[str, Any]) -> dict[str, Any]:
     entries = attachment.get("entries")
     names = (
-        "\n".join(f"- {name}" for name in entries)
-        if isinstance(entries, list)
-        else ""
+        "\n".join(f"- {name}" for name in entries) if isinstance(entries, list) else ""
     )
     truncated = "\n[Directory listing truncated]" if attachment.get("truncated") else ""
     return _notice(
@@ -174,10 +169,7 @@ def _project_skill(attachment: dict[str, Any]) -> dict[str, Any]:
     return {
         "role": "user",
         "content": (
-            f"[skill loaded: {name}]\n"
-            f"Arguments: {args}\n"
-            f"Source: {source}\n\n"
-            f"{content}"
+            f"[skill loaded: {name}]\nArguments: {args}\nSource: {source}\n\n{content}"
         ),
         "metadata": {
             "synthetic": True,

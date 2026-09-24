@@ -72,7 +72,12 @@ def test_task_create_get_list_and_update_dependencies(tmp_path: Path) -> None:
         executor,
         state,
         "task_update",
-        {"taskId": "2", "status": "in_progress", "owner": "main", "addBlockedBy": ["1"]},
+        {
+            "taskId": "2",
+            "status": "in_progress",
+            "owner": "main",
+            "addBlockedBy": ["1"],
+        },
     )
 
     assert created.is_error is False
@@ -118,7 +123,9 @@ def test_missing_task_get_and_delete_status_are_recoverable(tmp_path: Path) -> N
     store.create_task("task-session", subject="One", description="A")
 
     missing = execute_one(executor, state, "task_get", {"taskId": "9"})
-    deleted = execute_one(executor, state, "task_update", {"taskId": "1", "status": "deleted"})
+    deleted = execute_one(
+        executor, state, "task_update", {"taskId": "1", "status": "deleted"}
+    )
 
     assert missing.is_error is False
     assert "not found" in missing.content

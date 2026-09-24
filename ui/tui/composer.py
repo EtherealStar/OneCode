@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import TextArea
@@ -14,7 +16,7 @@ from ui.tui.completion import CompletionOverlay
 
 
 class Composer(TextArea):
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("enter", "submit_text", "提交", show=False),
         Binding("ctrl+enter", "insert_newline", "换行", show=False),
         Binding("ctrl+j", "insert_newline", "换行", show=False),
@@ -120,7 +122,7 @@ class Composer(TextArea):
     def _overlay(self) -> CompletionOverlay | None:
         try:
             return self.app.query_one(CompletionOverlay)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
 
 

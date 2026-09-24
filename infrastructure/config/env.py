@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -68,7 +68,9 @@ def load_provider_config(env_path: str | Path = ".env") -> ResolvedProviderConfi
         base_url,
         _required_string(values, f"{prefix}_MODEL"),
         secret,
-        timeout_seconds=_optional_float(values, "ONECODE_TIMEOUT_SECONDS", default=60.0),
+        timeout_seconds=_optional_float(
+            values, "ONECODE_TIMEOUT_SECONDS", default=60.0
+        ),
         headers=headers,
         default_params=_object_mapping(values, "ONECODE_DEFAULT_PARAMS"),
         models_path=provider.models_path,
@@ -104,7 +106,9 @@ def _optional_string(values: dict[str, str | None], key: str) -> str | None:
     return value or None
 
 
-def _optional_float(values: dict[str, str | None], key: str, *, default: float) -> float:
+def _optional_float(
+    values: dict[str, str | None], key: str, *, default: float
+) -> float:
     raw = _optional_string(values, key)
     if raw is None:
         return default

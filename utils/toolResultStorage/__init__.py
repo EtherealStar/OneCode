@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -123,7 +123,7 @@ class ToolResultStorage:
         self,
         ref: StoredToolResultRef,
         *,
-        max_result_size_chars: int | float,
+        max_result_size_chars: float,
     ) -> dict[str, object]:
         """返回模型可见工具结果引用所使用的元数据。"""
 

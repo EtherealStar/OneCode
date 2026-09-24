@@ -7,8 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Hashable
+from collections.abc import Callable, Hashable
 
 from textual.timer import Timer
 

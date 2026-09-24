@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, Self
 from uuid import uuid4
 
 from application.history import HistoryRecord, load_conversation_history
@@ -46,6 +45,7 @@ from application.types import (
     StatusChanged,
     SubmissionReceipt,
     ToolRunState,
+    ToolStatus,
     ToolUpdate,
     UsageChanged,
     UserMessageCommitted,
@@ -78,7 +78,7 @@ def _tool_input(tool: Any, metadata: Mapping[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class _Subscriber:
-    queue: "asyncio.Queue[object]" = field(
+    queue: asyncio.Queue[object] = field(
         default_factory=lambda: asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_SIZE)
     )
 
@@ -178,7 +178,7 @@ class SessionController:
         else:
             try:
                 self._runtime.permission_prompter = permission_adapter
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
         question_prompter = getattr(self._runtime, "user_question_prompter", None)
         if question_prompter is not None and hasattr(question_prompter, "target"):
@@ -186,17 +186,17 @@ class SessionController:
         else:
             try:
                 self._runtime.user_question_prompter = question_adapter
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
-    async def __aenter__(self) -> "SessionController":
+    async def __aenter__(self) -> Self:
         await self.start()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def start(self) -> "SessionController":
+    async def start(self) -> SessionController:
         if self._closed:
             raise RuntimeError("SessionController is closed")
         if self._bootstrap_task is None:
@@ -214,7 +214,7 @@ class SessionController:
             self._set_status("ready" if self.configured else "unconfigured")
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             self._record_error(exc, source="session_bootstrap")
             self._initialized = True
             self._set_status("error")
@@ -251,11 +251,17 @@ class SessionController:
         stripped = text.strip()
         if not stripped:
             return SubmissionReceipt(
-                input_id="", session_id=self.session_id, status="rejected", reason="empty"
+                input_id="",
+                session_id=self.session_id,
+                status="rejected",
+                reason="empty",
             )
         if self._closed:
             return SubmissionReceipt(
-                input_id="", session_id=self.session_id, status="rejected", reason="closed"
+                input_id="",
+                session_id=self.session_id,
+                status="rejected",
+                reason="closed",
             )
         if kind == "prompt" and not self.configured:
             return SubmissionReceipt(
@@ -336,7 +342,7 @@ class SessionController:
             await task
         except asyncio.CancelledError:
             pass
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             self._record_error(exc, source="session_cancel")
         if not self._closed:
             self._ensure_worker()
@@ -354,9 +360,7 @@ class SessionController:
         """
 
         if isinstance(kind, InteractionAnswer):
-            return await self._interactions.resolve(
-                request_id, kind.kind, kind.payload
-            )
+            return await self._interactions.resolve(request_id, kind.kind, kind.payload)
         return await self._interactions.resolve(request_id, kind, payload)
 
     async def request_interaction(
@@ -426,7 +430,7 @@ class SessionController:
             self._bootstrap_task.cancel()
             try:
                 await self._bootstrap_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                 pass
         task = self._worker_task
         if task is not None and not task.done():
@@ -435,7 +439,7 @@ class SessionController:
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                 self._record_error(exc, source="session_close")
         self._worker_task = None
         self._queue.clear()
@@ -447,14 +451,14 @@ class SessionController:
         if message_store is not None:
             try:
                 message_store.flush_transcript()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                 self._record_error(exc, source="session_close_flush")
         for name in ("trace_recorder", "error_log_recorder"):
             recorder = getattr(self._runtime, name, None)
             if recorder is not None:
                 try:
                     recorder.flush()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
 
     async def _close_runtime_resources(self) -> None:
@@ -462,13 +466,13 @@ class SessionController:
         if mcp_manager is not None:
             try:
                 await mcp_manager.close_all()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                 self._record_error(exc, source="session_close_mcp")
         # 前台 worker、子任务与正在消费的流此前已取消；此时才关闭应用拥有的
         # SDK client，确保运行中请求不被提前关闭。重复 close 安全。
         try:
             await close_model_client(getattr(self._runtime, "model_client", None))
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             self._record_error(exc, source="session_close_model_client")
 
     # --- worker -----------------------------------------------------------
@@ -518,23 +522,25 @@ class SessionController:
         try:
             try:
                 attachments = await self._collect_attachments(item)
-                async for event in self._runtime.loop.stream(
-                    item.text, attachments=attachments
-                ):
+                loop = self._runtime.loop
+                if loop is None:
+                    raise RuntimeError("Session runtime has no agent loop.")
+                async for event in loop.stream(item.text, attachments=attachments):
                     self._handle_event(run, event)
             except asyncio.CancelledError:
                 self._finalize_cancel(run)
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._active = None
                 self._record_error(exc, source="session_turn")
                 self._paused = True
+                error_text = str(exc)
                 self._emit(
                     lambda generation, sequence: RunFailed(
                         generation=generation,
                         sequence=sequence,
                         input_id=item.input_id,
-                        error=str(exc),
+                        error=error_text,
                         recoverable=True,
                     )
                 )
@@ -558,13 +564,15 @@ class SessionController:
         if callable(snapshot_facts):
             try:
                 facts = snapshot_facts(status="interrupted")
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                 self._record_error(exc, source="session_cancel_snapshot")
         cleanup_success = True
         error: str | None = None
         message_store = getattr(self._runtime, "message_store", None)
-        if facts is not None and message_store is not None and hasattr(
-            message_store, "finalize_interrupted_run"
+        if (
+            facts is not None
+            and message_store is not None
+            and hasattr(message_store, "finalize_interrupted_run")
         ):
             try:
                 result = message_store.finalize_interrupted_run(
@@ -572,7 +580,7 @@ class SessionController:
                 )
                 cleanup_success = bool(getattr(result, "success", True))
                 error = getattr(result, "error", None)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 cleanup_success = False
                 error = str(exc)
                 self._record_error(exc, source="session_cancel_cleanup")
@@ -598,9 +606,7 @@ class SessionController:
         # 使观察者替换其投影视图，而非猜测删除内容。
         self._publish_snapshot()
 
-    async def _collect_attachments(
-        self, item: QueueItem
-    ) -> tuple[dict[str, Any], ...]:
+    async def _collect_attachments(self, item: QueueItem) -> tuple[dict[str, Any], ...]:
         attachments: list[dict[str, Any]] = list(item.attachments)
         if self._pending_attachments:
             attachments.extend(self._pending_attachments)
@@ -615,7 +621,7 @@ class SessionController:
                     is_main_thread=True,
                 )
                 attachments.extend(collected)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._record_error(exc, source="session_attachments")
         plan_store = getattr(self._runtime, "plan_store", None)
         if plan_store is not None:
@@ -623,7 +629,7 @@ class SessionController:
                 attachments.extend(
                     build_plan_attachments_for_state(self._runtime.state, plan_store)
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._record_error(exc, source="session_plan_attachments")
         return tuple(attachments)
 
@@ -674,9 +680,9 @@ class SessionController:
             if event.text:
                 run.assistant_text = event.text
                 run.last_completed_text = event.text
-            message_uuid = getattr(
-                self._runtime.message_store, "last_record_uuid", None
-            ) or ""
+            message_uuid = (
+                getattr(self._runtime.message_store, "last_record_uuid", None) or ""
+            )
             self._emit(
                 lambda generation, sequence: MessageCommitted(
                     generation=generation,
@@ -712,18 +718,17 @@ class SessionController:
             if isinstance(model_turn_index, int):
                 run.model_turn_index = model_turn_index
             tool = event.metadata.get("tool_call")
-            tool_call_id = event.metadata.get("tool_call_id") or getattr(
-                tool, "id", ""
-            )
+            tool_call_id = event.metadata.get("tool_call_id") or getattr(tool, "id", "")
             tool_name = event.metadata.get("tool_name") or getattr(
                 tool, "name", "unknown_tool"
             )
             tool_input = _tool_input(tool, event.metadata)
-            status = {
+            status_map: dict[str, ToolStatus] = {
                 "tool_call_ready": "declared",
                 "tool_started": "started",
                 "tool_progress": "progress",
-            }[event_type]
+            }
+            status = status_map[event_type]
             if not tool_call_id:
                 return
             current = run.tools.get(tool_call_id)
@@ -739,16 +744,18 @@ class SessionController:
                 metadata=dict(event.metadata),
             )
             self._emit(
-                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: ToolUpdate(
-                    generation=generation,
-                    sequence=sequence,
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    status=status,
-                    text=event.text or "",
-                    assistant_call_id=call_id,
-                    model_turn_index=index,
-                    input=tool_input,
+                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: (
+                    ToolUpdate(
+                        generation=generation,
+                        sequence=sequence,
+                        tool_call_id=tool_call_id,
+                        tool_name=tool_name,
+                        status=status,
+                        text=event.text or "",
+                        assistant_call_id=call_id,
+                        model_turn_index=index,
+                        input=tool_input,
+                    )
                 )
             )
             return
@@ -766,18 +773,20 @@ class SessionController:
                 metadata=dict(result.metadata),
             )
             self._emit(
-                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: ToolUpdate(
-                    generation=generation,
-                    sequence=sequence,
-                    tool_call_id=result.tool_call_id,
-                    tool_name=result.tool_name,
-                    status="error" if result.is_error else "completed",
-                    text=result.content,
-                    is_error=result.is_error,
-                    result=result,
-                    assistant_call_id=call_id,
-                    model_turn_index=index,
-                    input=tool_input,
+                lambda generation, sequence, call_id=run.assistant_call_id, index=run.model_turn_index: (
+                    ToolUpdate(
+                        generation=generation,
+                        sequence=sequence,
+                        tool_call_id=result.tool_call_id,
+                        tool_name=result.tool_name,
+                        status="error" if result.is_error else "completed",
+                        text=result.content,
+                        is_error=result.is_error,
+                        result=result,
+                        assistant_call_id=call_id,
+                        model_turn_index=index,
+                        input=tool_input,
+                    )
                 )
             )
             return
@@ -829,7 +838,6 @@ class SessionController:
     async def clear_session(self) -> SessionSnapshot:
         await self._quiesce()
         runtime = self._runtime
-        old_session_id = runtime.state.session_id
         runtime.message_store.flush_transcript()
         new_session_id = runtime.state.start_new_session()
         runtime.message_store.clear_for_new_session(new_session_id)
@@ -879,13 +887,13 @@ class SessionController:
         runtime = self._runtime
         try:
             new_client = create_model_client(runtime.workspace / ".env")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._record_error(exc, source="session_model_config")
             return False
         old_client = getattr(runtime, "model_client", None)
         try:
             new_runtime = runtime.with_model_config(model_client=new_client)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # 装配失败：关闭新 client，保留旧配置与旧 client。
             await close_model_client(new_client)
             self._record_error(exc, source="session_model_config")
@@ -930,7 +938,7 @@ class SessionController:
                 loaded = load_conversation_history(store)
                 history = loaded.records
                 diagnostics = loaded.diagnostics
-            except Exception:
+            except Exception:  # noqa: BLE001
                 diagnostics = ("history_unavailable",)
         run = self._active.to_run_state() if self._active is not None else RunState()
         return SessionSnapshot(
@@ -1029,7 +1037,7 @@ class SessionController:
                 source=source,
                 attributes={"session_id": self.session_id},
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 

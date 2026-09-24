@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -15,7 +17,7 @@ from textual.widgets import Button, Label, Static
 
 
 class PlanApprovalModal(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "", priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "", priority=True)]
 
     DEFAULT_CSS = """
     PlanApprovalModal { align: center middle; }

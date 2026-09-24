@@ -180,11 +180,7 @@ def test_model_turn_events_share_assistant_call_id(tmp_path: Path) -> None:
     first_completion_idx = next(
         i for i, e in enumerate(events) if e.type == "assistant_message_completed"
     )
-    first_turn = [
-        e
-        for e in attributed
-        if events.index(e) <= first_completion_idx
-    ]
+    first_turn = [e for e in attributed if events.index(e) <= first_completion_idx]
     distinct_call_ids = {
         event.metadata.get("assistant_call_id") for event in first_turn
     }
@@ -250,10 +246,9 @@ def test_next_model_turn_gets_new_assistant_call_id(tmp_path: Path) -> None:
     second_id = second_completion.metadata.get("assistant_call_id")
     assert first_id and second_id
     assert first_id != second_id
-    assert (
-        first_completion.metadata.get("model_turn_index")
-        < second_completion.metadata.get("model_turn_index")
-    )
+    assert first_completion.metadata.get(
+        "model_turn_index"
+    ) < second_completion.metadata.get("model_turn_index")
     # First turn's tool events share the first completion's id; the
     # second turn's assistant_delta also shares the second id.
     first_turn_tool_events = [
@@ -266,7 +261,8 @@ def test_next_model_turn_gets_new_assistant_call_id(tmp_path: Path) -> None:
     second_turn_assistant = [
         e
         for e in events
-        if e.type == "assistant_delta" and events.index(e) > events.index(first_completion)
+        if e.type == "assistant_delta"
+        and events.index(e) > events.index(first_completion)
     ]
     for e in second_turn_assistant:
         assert e.metadata.get("assistant_call_id") == second_id

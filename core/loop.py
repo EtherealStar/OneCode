@@ -23,15 +23,15 @@ provider 流中断并重试，而不是静默回退用户已经看到的文本�
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any, Protocol
 
 from core.context_engine import ContextEngine
 from core.runtime_state import RuntimeState
 from core.stream_events import AgentEvent, mint_assistant_call_id
 from core.transitions import TransitionReason
-from services.context.message_store import MessageStore
 from services.context.current_model_context import CurrentModelContext
+from services.context.message_store import MessageStore
 from services.context.run_facts import InterruptedRunFacts, RunFactsAccumulator
 from services.hooks import HookEvent, HookRegistry
 from services.model.client import ModelClient
@@ -57,8 +57,7 @@ class ReactiveCompactor(Protocol):
         state: RuntimeState,
         *,
         error: ProviderError,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 class SessionMemoryUpdaterProtocol(Protocol):
@@ -66,8 +65,7 @@ class SessionMemoryUpdaterProtocol(Protocol):
         self,
         messages: tuple[dict[str, Any], ...],
         state: RuntimeState,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class SessionMemoryExtractorProtocol(Protocol):
@@ -79,8 +77,7 @@ class SessionMemoryExtractorProtocol(Protocol):
         assistant_message: dict[str, Any],
         tool_calls: tuple[Any, ...],
         usage: Any | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class AgentLoop:
@@ -124,7 +121,9 @@ class AgentLoop:
         self.session_memory_updater = session_memory_updater
         self._run_facts: RunFactsAccumulator | None = None
 
-    def snapshot_run_facts(self, *, status: str | None = None) -> InterruptedRunFacts | None:
+    def snapshot_run_facts(
+        self, *, status: str | None = None
+    ) -> InterruptedRunFacts | None:
         """返回当前前台运行事实的不可变快照。
 
         主循环会在运行正常完成前持续维护这些事实，因此即使结果尚未追加到
@@ -199,6 +198,36 @@ class AgentLoop:
     def _complete_run_facts(self) -> None:
         self._run_facts = None
 
+    def _make_on_retry(
+        self,
+        retry_events: list[AgentEvent],
+        turn_index: int,
+        call_id: str,
+        stream_state: dict[str, bool],
+    ) -> Callable[[ProviderError, RetryDecision], Awaitable[None]]:
+        """构造本轮的重试回调，避免在循环内闭包捕获会变化的循环变量。"""
+
+        async def on_retry(error: ProviderError, decision: RetryDecision) -> None:
+            self.state.set_transition(TransitionReason.RATE_LIMIT_RETRY)
+            self._record_transition(TransitionReason.RATE_LIMIT_RETRY)
+            retry_events.append(
+                AgentEvent(
+                    type="transition",
+                    transition=TransitionReason.RATE_LIMIT_RETRY.value,
+                    metadata={
+                        "model_turn_index": turn_index,
+                        "assistant_call_id": call_id,
+                        "attempt": decision.attempt,
+                        "max_retries": decision.max_retries,
+                        "delay_seconds": decision.delay_seconds,
+                        "error_type": error.error_type,
+                        "partial_output_visible": stream_state["any_text"],
+                    },
+                )
+            )
+
+        return on_retry
+
     async def _run_loop_async(self) -> AsyncIterator[AgentEvent]:
         while True:
             self.state.turn_count += 1
@@ -268,30 +297,15 @@ class AgentLoop:
             pending_retry_events: list[AgentEvent] = []
             # 跟踪 provider 已完成的工具调用，以便在尝试完成后由执行器运行。
             completed_tool_calls: tuple = ()
-            streamed_any_text = False
-            streamed_any_tool_call = False
-
-            async def on_retry(
-                error: ProviderError,
-                decision: RetryDecision,
-            ) -> None:
-                self.state.set_transition(TransitionReason.RATE_LIMIT_RETRY)
-                self._record_transition(TransitionReason.RATE_LIMIT_RETRY)
-                pending_retry_events.append(
-                    AgentEvent(
-                        type="transition",
-                        transition=TransitionReason.RATE_LIMIT_RETRY.value,
-                        metadata={
-                            "model_turn_index": model_turn_index,
-                            "assistant_call_id": assistant_call_id,
-                            "attempt": decision.attempt,
-                            "max_retries": decision.max_retries,
-                            "delay_seconds": decision.delay_seconds,
-                            "error_type": error.error_type,
-                            "partial_output_visible": streamed_any_text,
-                        },
-                    )
-                )
+            # 使用可变容器承载本轮的流式状态：on_retry 必须读取重试前是否已有
+            # 部分输出，按值绑定会冻结为 False，因此这里按引用共享。
+            stream_state: dict[str, bool] = {"any_text": False}
+            on_retry = self._make_on_retry(
+                pending_retry_events,
+                model_turn_index,
+                assistant_call_id,
+                stream_state,
+            )
 
             try:
                 with self.trace_recorder.span(
@@ -299,13 +313,13 @@ class AgentLoop:
                     model_attributes,
                 ) as model_span:
                     async for model_event in self.model_retry_runner.stream(
-                        lambda: self.model_client.stream(snapshot),
+                        lambda snapshot=snapshot: self.model_client.stream(snapshot),
                         on_retry=on_retry,
                     ):
                         # 实时转发每个事件。我们不追加到缓冲区；
                         # 由调用方（CLI）决定如何渲染。
                         if model_event.type == "content_delta":
-                            streamed_any_text = True
+                            stream_state["any_text"] = True
                             if self._run_facts is not None:
                                 self._run_facts.add_text(model_event.text or "")
                             yield AgentEvent(
@@ -319,7 +333,6 @@ class AgentLoop:
                             )
                             continue
                         if model_event.type == "tool_call_delta":
-                            streamed_any_tool_call = True
                             yield AgentEvent(
                                 type="tool_call_delta",
                                 metadata={
@@ -330,7 +343,10 @@ class AgentLoop:
                             )
                             continue
                         if model_event.type == "tool_call_completed":
-                            if self._run_facts is not None and model_event.tool_call is not None:
+                            if (
+                                self._run_facts is not None
+                                and model_event.tool_call is not None
+                            ):
                                 self._run_facts.declare(
                                     model_event.tool_call.id,
                                     model_event.tool_call.name,
@@ -462,7 +478,9 @@ class AgentLoop:
                 self._run_facts.note_assistant_record(
                     self.message_store.last_record_uuid
                 )
-            tool_calls = completed_tool_calls or self._event_tool_calls(completed_message)
+            tool_calls = completed_tool_calls or self._event_tool_calls(
+                completed_message
+            )
             yield AgentEvent(
                 type="assistant_message_completed",
                 text=completed_message.final_text,
@@ -666,10 +684,13 @@ class AgentLoop:
             return TransitionReason.MAX_OUTPUT_TOKENS_ESCALATE
 
         if self.state.max_output_recovery_count < MAX_OUTPUT_RECOVERY_RETRIES:
+            assistant_message = completed_message.assistant_message
+            if assistant_message is None:
+                return None
             # 续写恢复会持久化被截断的 assistant 消息（用户已经看到该内容），
             # 随后追加简短的用户提示词以便模型继续生成。
             self.message_store.append_assistant(
-                completed_message.assistant_message,
+                assistant_message,
                 assistant_call_id=assistant_call_id,
                 model_turn_index=model_turn_index,
             )

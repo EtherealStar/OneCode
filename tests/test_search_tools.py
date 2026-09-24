@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,7 +20,9 @@ from tools.grep.tool import RipgrepResult, SubprocessRipgrepRunner, _handle_with
 
 
 class FakeRipgrepRunner:
-    def __init__(self, result: RipgrepResult | None = None, *, raises: Exception | None = None) -> None:
+    def __init__(
+        self, result: RipgrepResult | None = None, *, raises: Exception | None = None
+    ) -> None:
         self.result = result or RipgrepResult(returncode=0, stdout="", stderr="")
         self.raises = raises
         self.calls: list[tuple[list[str], Path]] = []
@@ -77,7 +79,10 @@ def test_registry_generates_search_tool_schemas_and_prompts() -> None:
     assert [schema["function"]["name"] for schema in schemas] == ["glob", "grep"]
     assert schemas[0]["function"]["parameters"]["additionalProperties"] is False
     assert schemas[1]["function"]["parameters"]["properties"]["-i"]["type"] == "boolean"
-    assert [prompt.split(":", 1)[0] for prompt in prompts] == ["glob", "grep"]
+    assert prompts[0].startswith("Purpose:")
+    assert "Find files by pathname pattern" in prompts[0]
+    assert prompts[1].startswith("Purpose:")
+    assert "Search file contents" in prompts[1]
 
 
 def test_search_tools_classify_as_read_only_with_result_budgets() -> None:
@@ -275,7 +280,9 @@ def test_grep_ripgrep_errors_are_structured(tmp_path: Path) -> None:
     bad_regex = _handle_with_runner(
         {"pattern": "[", "path": "."},
         runtime,
-        FakeRipgrepRunner(RipgrepResult(returncode=2, stdout="", stderr="regex parse error")),
+        FakeRipgrepRunner(
+            RipgrepResult(returncode=2, stdout="", stderr="regex parse error")
+        ),
     )
 
     assert json.loads(missing.content)["error"] == "ripgrep_not_found"

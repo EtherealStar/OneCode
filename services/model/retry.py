@@ -25,7 +25,6 @@ import inspect
 import random
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
 from services.errors import RetryExhaustedError
 from services.model.stream import ModelStreamEvent
@@ -56,9 +55,11 @@ def retry_delay_seconds(
     attempt: int,
     *,
     retry_after_seconds: float | None = None,
-    policy: RetryPolicy = RetryPolicy(),
+    policy: RetryPolicy | None = None,
     random_fraction: Callable[[], float] | None = None,
 ) -> float:
+    if policy is None:
+        policy = RetryPolicy()
     if retry_after_seconds is not None:
         return max(0.0, retry_after_seconds)
     base = min(

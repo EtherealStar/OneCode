@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-import shlex
 from threading import Thread
-from typing import Any, Callable, Iterable
+from typing import Any
 
-from services.plans import (
-    PlanStore,
-    build_plan_attachments_for_state,
-    enter_plan_mode,
-    exit_plan_mode,
-)
-from services.tasks import TaskStoreError, resolve_task_list_id
 from infrastructure.filesystem.onecode_paths import sessions_dir
 from services.permissions import (
     PermissionBehavior,
@@ -23,10 +17,16 @@ from services.permissions import (
     PermissionUpdateType,
     permission_rule_value_from_string,
 )
+from services.plans import (
+    PlanStore,
+    build_plan_attachments_for_state,
+    enter_plan_mode,
+    exit_plan_mode,
+)
+from services.tasks import TaskStoreError, resolve_task_list_id
 from ui.cli import renderer
-from ui.cli.resume import list_session_summaries
+from ui.cli.resume import list_session_summaries, restore_runtime_from_target
 from ui.cli.resume import resolve_resume_target as _resolve_resume_target
-from ui.cli.resume import restore_runtime_from_target
 from ui.cli.types import CliRuntime, CommandResult
 
 CommandHandler = Callable[["CliRuntime", "CommandInvocation"], CommandResult]
@@ -72,7 +72,9 @@ def command_registry() -> tuple[CommandSpec, ...]:
         CommandSpec("skills", "Show visible skills.", _skills),
         CommandSpec("tasks", "Show durable and background tasks.", _tasks),
         CommandSpec("mcp", "Show MCP servers and discovered tools.", _mcp),
-        CommandSpec("compact", "Compact the active session context.", _compact, "[focus]"),
+        CommandSpec(
+            "compact", "Compact the active session context.", _compact, "[focus]"
+        ),
         CommandSpec(
             "plan",
             "Enter plan mode, show the current plan, or open the plan file.",
@@ -103,7 +105,9 @@ def dispatch_command(runtime: CliRuntime, line: str) -> CommandResult:
         return CommandResult()
     spec = _spec_by_name().get(invocation.name)
     if spec is None:
-        return CommandResult(renderable=renderer.render_unknown_command(invocation.name))
+        return CommandResult(
+            renderable=renderer.render_unknown_command(invocation.name)
+        )
     return spec.handler(runtime, invocation)
 
 
@@ -147,7 +151,9 @@ def _strip_matching_quotes(value: str) -> str:
 
 def _status(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     _ = invocation
-    return CommandResult(renderable=renderer.render_status(runtime), presentation="page")
+    return CommandResult(
+        renderable=renderer.render_status(runtime), presentation="page"
+    )
 
 
 def _usage(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
@@ -157,7 +163,9 @@ def _usage(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
 
 def _memory(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     _ = invocation
-    return CommandResult(renderable=renderer.render_memory(runtime), presentation="page")
+    return CommandResult(
+        renderable=renderer.render_memory(runtime), presentation="page"
+    )
 
 
 def _permissions(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
@@ -198,8 +206,7 @@ def _permissions(runtime: CliRuntime, invocation: CommandInvocation) -> CommandR
         )
     try:
         rules = tuple(
-            permission_rule_value_from_string(raw_rule)
-            for raw_rule in raw_rules
+            permission_rule_value_from_string(raw_rule) for raw_rule in raw_rules
         )
         update = PermissionUpdate(
             type=update_type,
@@ -208,14 +215,16 @@ def _permissions(runtime: CliRuntime, invocation: CommandInvocation) -> CommandR
             destination="projectSettings",
         )
         project_store.apply_update(update)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return CommandResult(renderable=renderer.render_error(str(exc)))
     return CommandResult(renderable=_render_permission_update(update))
 
 
 def _skills(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     _ = invocation
-    return CommandResult(renderable=renderer.render_skills(runtime), presentation="page")
+    return CommandResult(
+        renderable=renderer.render_skills(runtime), presentation="page"
+    )
 
 
 def _mcp(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
@@ -313,9 +322,7 @@ def _plan_show(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
     if not content.strip():
         content = "(empty - write the plan to this file using write_file or edit_file.)"
     return CommandResult(
-        renderable=renderer.render_text(
-            f"Plan file: {plan_file.path}\n\n{content}"
-        ),
+        renderable=renderer.render_text(f"Plan file: {plan_file.path}\n\n{content}"),
         presentation="inline",
     )
 
@@ -329,7 +336,7 @@ def _plan_approve(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
         )
     exit_plan_mode(runtime.state, plan_store, approved=True)
     # 立即注入退出后的附件，使用户可见轮次在 transcript 中同样携带 approved 消息。
-    attachments = build_plan_attachments_for_state(runtime.state, plan_store)
+    attachments = tuple(build_plan_attachments_for_state(runtime.state, plan_store))
     return CommandResult(
         renderable=renderer.render_text(
             f"Plan approved. Exited plan mode (now in {runtime.state.permission_mode.value})."
@@ -346,7 +353,7 @@ def _plan_reject(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
             )
         )
     exit_plan_mode(runtime.state, plan_store, approved=False)
-    attachments = build_plan_attachments_for_state(runtime.state, plan_store)
+    attachments = tuple(build_plan_attachments_for_state(runtime.state, plan_store))
     return CommandResult(
         renderable=renderer.render_text(
             "Plan rejected. The agent remains in plan mode and can update the plan."
@@ -358,14 +365,16 @@ def _plan_reject(runtime: CliRuntime, plan_store: PlanStore) -> CommandResult:
 def _compact(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult:
     if runtime.compaction_service is None:
         return CommandResult(
-            renderable=renderer.render_error("Compaction is not enabled for this runtime.")
+            renderable=renderer.render_error(
+                "Compaction is not enabled for this runtime."
+            )
         )
     focus = invocation.arg_text.strip() or None
     try:
         result = _run_async_blocking(
             runtime.compaction_service.manual_compact(runtime.state, focus=focus)
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return CommandResult(renderable=renderer.render_error(str(exc)))
     runtime.message_store.flush_transcript()
     runtime.trace_recorder.flush()
@@ -426,17 +435,21 @@ def _resume(runtime: CliRuntime, invocation: CommandInvocation) -> CommandResult
     if not invocation.args:
         return CommandResult(interaction="resume_selector")
     if len(invocation.args) != 1:
-        return CommandResult(renderable=renderer.render_error("Usage: /resume [target]"))
+        return CommandResult(
+            renderable=renderer.render_error("Usage: /resume [target]")
+        )
 
     try:
         target = _resolve_resume_argument(runtime, invocation.args[0])
         resumed = restore_runtime_from_target(runtime, target)
     except _MultipleResumeMatches as exc:
         return CommandResult(
-            renderable=renderer.render_session_summaries(exc.matches, runtime.workspace),
+            renderable=renderer.render_session_summaries(
+                exc.matches, runtime.workspace
+            ),
             presentation="page",
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return CommandResult(renderable=renderer.render_error(str(exc)))
     return CommandResult(
         runtime=resumed,
@@ -473,14 +486,19 @@ def _resume_candidates(runtime: CliRuntime, text: str) -> Iterable[str]:
     prefix = text.strip()
     candidates: list[str] = []
     summaries_by_id = {
-        summary.session_id: summary for summary in list_session_summaries(runtime.workspace)
+        summary.session_id: summary
+        for summary in list_session_summaries(runtime.workspace)
     }
     for messages_path in sorted(root.glob("*/messages.jsonl")):
         session_id = messages_path.parent.name
         if not prefix or session_id.startswith(prefix):
             candidates.append(session_id)
         summary = summaries_by_id.get(session_id)
-        if summary is not None and prefix and summary.title.lower().startswith(prefix.lower()):
+        if (
+            summary is not None
+            and prefix
+            and summary.title.lower().startswith(prefix.lower())
+        ):
             candidates.append(summary.title)
         display_path = str(messages_path)
         if prefix and display_path.startswith(prefix):
@@ -498,17 +516,17 @@ def _resolve_resume_argument(runtime: CliRuntime, target: str) -> str:
     try:
         _resolve_resume_target(runtime.workspace, target)
         return target
-    except ValueError as direct_error:
+    except ValueError:
         if _looks_like_path_target(target):
-            raise direct_error
+            raise
 
     needle = target.casefold()
-    matches = tuple(
+    matches: tuple[Any, ...] = tuple(
         summary
         for summary in list_session_summaries(runtime.workspace)
         if needle in summary.title.casefold()
     )
-    if not matches:
+    if len(matches) == 0:
         raise ValueError(f"No session title matches: {target}")
     if len(matches) > 1:
         raise _MultipleResumeMatches(matches)
@@ -518,10 +536,7 @@ def _resolve_resume_argument(runtime: CliRuntime, target: str) -> str:
 def _looks_like_path_target(target: str) -> bool:
     lowered = target.lower()
     return (
-        lowered.endswith(".jsonl")
-        or "/" in target
-        or "\\" in target
-        or ":" in target
+        lowered.endswith(".jsonl") or "/" in target or "\\" in target or ":" in target
     )
 
 
@@ -536,7 +551,7 @@ def _run_async_blocking(awaitable: Any) -> Any:
     def runner() -> None:
         try:
             result["value"] = asyncio.run(awaitable)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001
             result["error"] = exc
 
     thread = Thread(target=runner, daemon=True)
@@ -608,6 +623,7 @@ def _permission_behavior(value: str) -> PermissionBehavior | None:
 
 def _render_permission_update(update: PermissionUpdate):
     from rich.text import Text
+
     from services.permissions import permission_rule_value_to_string
     from ui.cli.theme import SYMBOLS
 

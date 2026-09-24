@@ -20,16 +20,17 @@ view 读与渲染，循环单向。StreamingSession 把三个组件串联起来�
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 
 from ui.cli.terminal.markdown_rendering import render_cached_markdown
 from ui.cli.terminal.queue import QueuedInput
 from ui.cli.terminal.stream_state import (
+    VISIBLE_ACTIVE_TOOL_LIMIT,
     StreamMode,
     ToolStatus,
-    VISIBLE_ACTIVE_TOOL_LIMIT,
 )
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ QUEUED_PREVIEW_LIMIT = 3
 QUEUED_PREVIEW_TEXT_LIMIT = 60
 
 
-def _format_active_tool_line(tool: "StreamingToolUseState") -> str:
+def _format_active_tool_line(tool: StreamingToolUseState) -> str:
     """为动态区域格式化单条活跃工具行。
 
     三种可见状态与参考实现对应：
@@ -115,7 +116,7 @@ def render_queued_inputs(
 
 
 def render_stream_body_ansi(
-    state: "CliStreamUiState",
+    state: CliStreamUiState,
     *,
     width: int,
     active_tool_limit: int = VISIBLE_ACTIVE_TOOL_LIMIT,
@@ -179,7 +180,7 @@ def render_stream_body_ansi(
     return ANSI("\n".join(out_lines))
 
 
-def render_status_fragments(state: "CliStreamUiState") -> FormattedText:
+def render_status_fragments(state: CliStreamUiState) -> FormattedText:
     """为动态区域渲染底部状态行。
 
     状态文本由 state.stream_mode 与活跃工具池推导。

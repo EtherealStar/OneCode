@@ -9,11 +9,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from tree_sitter import Language, Parser
 import tree_sitter_bash
+from tree_sitter import Language, Parser
 
-from tools.bash.ast_model import BashAnalysis, BashParseError, EnvVar, Redirect, SimpleCommand
-
+from tools.bash.ast_model import (
+    BashAnalysis,
+    BashParseError,
+    EnvVar,
+    Redirect,
+    SimpleCommand,
+)
 
 STRUCTURAL_TYPES = {"program", "list", "pipeline", "redirected_statement"}
 SEPARATOR_TYPES = {"&&", "||", "|", ";", "\n"}
@@ -81,8 +86,9 @@ def _parser() -> Parser:
     # tree-sitter-bash 当前绑定返回 PyCapsule；较旧的
     # 绑定直接接受 Language。显式包装以保持代码清晰。
     language = Language(language_value)
-    if hasattr(parser, "set_language"):
-        parser.set_language(language)
+    set_language = getattr(parser, "set_language", None)
+    if callable(set_language):
+        set_language(language)
     else:
         parser.language = language
     _PARSER = parser
@@ -197,7 +203,9 @@ def _command(node: Any, source: bytes) -> SimpleCommand | BashParseError:
             if isinstance(value, BashParseError):
                 return value
             if BRACE_EXPANSION_RE.search(value):
-                return BashParseError("too_complex", "Contains brace expansion", child.type)
+                return BashParseError(
+                    "too_complex", "Contains brace expansion", child.type
+                )
             argv.append(value)
             continue
         if child.type in {"file_redirect", "redirected_statement"}:
@@ -220,10 +228,14 @@ def _command(node: Any, source: bytes) -> SimpleCommand | BashParseError:
 def _env_var(node: Any, source: bytes) -> EnvVar | BashParseError:
     text = _text(node, source)
     if "=" not in text:
-        return BashParseError("too_complex", "Unsupported variable assignment", node.type)
+        return BashParseError(
+            "too_complex", "Unsupported variable assignment", node.type
+        )
     name, value = text.split("=", 1)
     if not name:
-        return BashParseError("too_complex", "Empty variable assignment name", node.type)
+        return BashParseError(
+            "too_complex", "Empty variable assignment name", node.type
+        )
     return EnvVar(name=name, value=_strip_static_quotes(value))
 
 
@@ -240,7 +252,9 @@ def _redirect(node: Any, source: bytes) -> Redirect | BashParseError:
             try:
                 fd = int(text)
             except ValueError:
-                return BashParseError("too_complex", "Unsupported redirect fd", child.type)
+                return BashParseError(
+                    "too_complex", "Unsupported redirect fd", child.type
+                )
             continue
         if child.type in {
             "word",
@@ -257,14 +271,18 @@ def _redirect(node: Any, source: bytes) -> Redirect | BashParseError:
         if child.is_named:
             return _too_complex(child)
     if op in {"<<", "<<<"}:
-        return BashParseError("too_complex", "Heredoc/herestring redirects are unsupported", op)
+        return BashParseError(
+            "too_complex", "Heredoc/herestring redirects are unsupported", op
+        )
     if op is None:
         return BashParseError("too_complex", "Redirect operator is missing", node.type)
     if target is None:
         if op in {">&", "<&"}:
             target = ""
         else:
-            return BashParseError("too_complex", "Redirect target is missing", node.type)
+            return BashParseError(
+                "too_complex", "Redirect target is missing", node.type
+            )
     return Redirect(op=op, target=target, fd=fd)  # type: ignore[arg-type]
 
 
@@ -279,7 +297,9 @@ def _argument(node: Any, source: bytes) -> str | BashParseError:
     if node.type in {"word", "number"}:
         text = _text(node, source)
         if any(ch in text for ch in "$`"):
-            return BashParseError("too_complex", "Runtime expansion is unsupported", node.type)
+            return BashParseError(
+                "too_complex", "Runtime expansion is unsupported", node.type
+            )
         return _unescape_word(text)
     if node.type == "raw_string":
         return _strip_raw_string(_text(node, source))
@@ -299,7 +319,9 @@ def _argument(node: Any, source: bytes) -> str | BashParseError:
 def _string(node: Any, source: bytes) -> str | BashParseError:
     value = _text(node, source)
     if any(ch in value for ch in "$`"):
-        return BashParseError("too_complex", "Runtime expansion is unsupported", node.type)
+        return BashParseError(
+            "too_complex", "Runtime expansion is unsupported", node.type
+        )
     if len(value) >= 2 and value[0] == value[-1] == '"':
         return _unescape_double(value[1:-1])
     return _strip_static_quotes(value)

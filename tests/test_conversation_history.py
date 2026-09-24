@@ -30,7 +30,10 @@ def read_records(store: MessageStore) -> list[dict]:
 
 
 def history_texts(store: MessageStore) -> list[str]:
-    return [record.text for record in load_conversation_history(store.transcript_store).records]
+    return [
+        record.text
+        for record in load_conversation_history(store.transcript_store).records
+    ]
 
 
 def test_history_preserves_repeated_identical_user_text(tmp_path: Path) -> None:
@@ -44,7 +47,10 @@ def test_history_preserves_repeated_identical_user_text(tmp_path: Path) -> None:
     history = load_conversation_history(store.transcript_store)
 
     user_records = [record for record in history.records if record.role == "user"]
-    assert [record.text for record in user_records] == ["same question", "same question"]
+    assert [record.text for record in user_records] == [
+        "same question",
+        "same question",
+    ]
     assert len({record.uuid for record in user_records}) == 2
 
 
@@ -179,19 +185,25 @@ def test_model_active_chain_and_history_are_separate(tmp_path: Path) -> None:
         ),
         state,
     )
-    active_texts = [
-        message.get("content") for message in restored.current_messages()
-    ]
+    active_texts = [message.get("content") for message in restored.current_messages()]
     history_texts_value = [
-        record.text for record in load_conversation_history(restored.transcript_store).records
+        record.text
+        for record in load_conversation_history(restored.transcript_store).records
     ]
 
-    assert active_texts == ["[Compact boundary]", "Summary", "old answer", "new question"]
+    assert active_texts == [
+        "[Compact boundary]",
+        "Summary",
+        "old answer",
+        "new question",
+    ]
     assert history_texts_value == ["old question", "old answer", "new question"]
 
     disk = read_records(store)
     copies = [record for record in disk if record.get("source_uuid")]
-    assert copies and all(record.get("record_kind") == "compaction" for record in copies)
+    assert copies and all(
+        record.get("record_kind") == "compaction" for record in copies
+    )
 
 
 def test_history_skips_legacy_compaction_copies_without_source(
@@ -230,7 +242,11 @@ def test_history_skips_legacy_compaction_copies_without_source(
             "metadata": {"is_compact_summary": True, "compaction": compaction},
         },
     )
-    add("c2", "s1", {"role": "user", "content": "q2", "metadata": {"compaction": compaction}})
+    add(
+        "c2",
+        "s1",
+        {"role": "user", "content": "q2", "metadata": {"compaction": compaction}},
+    )
     add(
         "ca2",
         "c2",
@@ -299,7 +315,9 @@ def test_history_preserves_real_tool_failure(tmp_path: Path) -> None:
     history = load_conversation_history(store.transcript_store)
 
     assistant = next(record for record in history.records if record.role == "assistant")
-    tool_result = next(record for record in history.records if record.role == "tool_result")
+    tool_result = next(
+        record for record in history.records if record.role == "tool_result"
+    )
     assert assistant.tool_calls[0].tool_call_id == "call-1"
     assert tool_result.tool_call_id == "call-1"
     assert tool_result.is_error is True

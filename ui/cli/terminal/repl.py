@@ -27,29 +27,27 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-import sys
-from typing import Awaitable, Callable
 
 from rich.console import Console
 from rich.text import Text
 
-from core.runtime_state import RuntimeState
 from services.plans import build_plan_attachments_for_state
 from ui.cli import renderer
 from ui.cli.commands import dispatch_command
 from ui.cli.resume import list_session_summaries, restore_runtime_from_target
-from ui.cli.suggestions import SuggestionItem
 from ui.cli.terminal.connect_flow import run_connect_flow
 from ui.cli.terminal.detect import detect_terminal_brightness
 from ui.cli.terminal.interaction_host import TerminalInteractionHost
 from ui.cli.terminal.page import TransientPage
 from ui.cli.terminal.permission_prompt import TtyPermissionPrompter
-from ui.cli.terminal.prompt_session import PromptSession, PromptSubmission, SubmissionKind
+from ui.cli.terminal.prompt_session import (
+    PromptSession,
+    SubmissionKind,
+)
 from ui.cli.terminal.queue import InputQueue
 from ui.cli.terminal.selector import SelectorItem, TransientSelector
 from ui.cli.terminal.static_output import print_user_submitted
 from ui.cli.terminal.stream_session import StreamingSession
-from ui.cli.terminal.trust_prompt import default_trust_prompt
 from ui.cli.terminal.transcript_replay import replay_messages_to_static
 from ui.cli.theme import rich_theme_for
 from ui.cli.types import CliRuntime, CommandResult
@@ -72,6 +70,8 @@ class InlineRepl:
         self._prompt = PromptSession(runtime, self._queue)
         self._agent_running = False
         self._cancel_requested = False
+        self._exiting = False
+        self._shutdown_done = False
         self._pending_attachments: list[dict[str, object]] = []
         self._permission_prompter = permission_prompter or TtyPermissionPrompter(
             self._interaction_host
@@ -135,7 +135,7 @@ class InlineRepl:
                         )
                         continue
                 await self._handle_command(text)
-                if self._runtime is None:
+                if self._exiting:
                     return
                 # 某些命令（如 /clear）会变更 runtime；
                 # _handle_command 已处理提示词会话重置，因此直接继续循环。
@@ -181,13 +181,13 @@ class InlineRepl:
             replay_messages_to_static(
                 result.replay_messages,
                 brightness=self._brightness,
-                workspace=self._runtime.workspace if self._runtime else None,
+                workspace=self._runtime.workspace,
             )
         if result.attachments:
             self._pending_attachments.extend(result.attachments)
         if result.should_exit:
             self._shutdown()
-            self._runtime = None
+            self._exiting = True
             return
         if result.queued_prompt:
             if not self._runtime.configured:
@@ -231,8 +231,10 @@ class InlineRepl:
             return CommandResult()
         assert chosen.value is not None
         try:
-            resumed = restore_runtime_from_target(self._runtime, chosen.value.session_id)
-        except Exception as exc:
+            resumed = restore_runtime_from_target(
+                self._runtime, chosen.value.session_id
+            )
+        except Exception as exc:  # noqa: BLE001
             return CommandResult(renderable=renderer.render_error(str(exc)))
         return CommandResult(
             runtime=resumed,
@@ -250,11 +252,12 @@ class InlineRepl:
         result = await run_connect_flow(self._runtime)
         if result.cancelled or result.runtime is None:
             return CommandResult(renderable=result.renderable)
-            
+
         runtime = result.runtime
         if not was_configured:
             from ui.cli.app import build_runtime
             from ui.cli.terminal.trust_prompt import default_trust_prompt
+
             try:
                 runtime = build_runtime(
                     self._runtime.workspace,
@@ -262,8 +265,12 @@ class InlineRepl:
                     permission_prompter=self._permission_prompter,
                     mcp_trust_mode="prompt",
                 )
-            except Exception as exc:
-                return CommandResult(renderable=renderer.render_error(f"Failed to initialize runtime: {exc}"))
+            except Exception as exc:  # noqa: BLE001
+                return CommandResult(
+                    renderable=renderer.render_error(
+                        f"Failed to initialize runtime: {exc}"
+                    )
+                )
 
         return CommandResult(
             runtime=runtime,
@@ -324,7 +331,7 @@ class InlineRepl:
         try:
             events = self._agent_events(line)
             await session.run(events)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._runtime.error_log_recorder.record_error(
                 exc,
                 source="cli_main_loop",
@@ -354,7 +361,7 @@ class InlineRepl:
             print_user_submitted(item.text, brightness=self._brightness)
             if item.kind == "slash":
                 await self._handle_command(item.text)
-                if self._runtime is None:
+                if self._exiting:
                     # 某些命令（例如 /exit）关闭了 REPL。
                     return
                 continue
@@ -388,10 +395,13 @@ class InlineRepl:
                 )
             )
         attachments = (*attachments, *command_attachments, *plan_attachments)
+        loop = self._runtime.loop
+        if loop is None:
+            raise RuntimeError("REPL runtime has no agent loop.")
         try:
-            async for event in self._runtime.loop.stream(line, attachments=attachments):
+            async for event in loop.stream(line, attachments=attachments):
                 yield event
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._runtime.error_log_recorder.record_error(
                 exc,
                 source="cli_main_loop",
@@ -403,9 +413,10 @@ class InlineRepl:
     # --- shutdown ---------------------------------------------------------
 
     def _shutdown(self) -> None:
-        runtime = self._runtime
-        if runtime is None:
+        if self._shutdown_done:
             return
+        self._shutdown_done = True
+        runtime = self._runtime
         runtime.message_store.flush_transcript()
         runtime.trace_recorder.flush()
         runtime.error_log_recorder.flush()

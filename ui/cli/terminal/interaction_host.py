@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 from prompt_toolkit import Application
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -117,7 +117,7 @@ class TerminalInteractionHost:
         def body_text():  # type: ignore[no-untyped-def]
             try:
                 width = app.output.get_size().columns  # type: ignore[union-attr]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 width = 80
             body = self.render_body(width=width)
             return body if body is not None else ""

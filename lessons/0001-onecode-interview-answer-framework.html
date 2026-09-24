@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OneCode 面试回答框架</title>
+  <link rel="stylesheet" href="../assets/teaching.css">
+</head>
+<body>
+  <p class="eyebrow">Lesson 0001 · 10 分钟</p>
+  <h1>把“功能清单”讲成“工程决策”</h1>
+  <p class="lede">本课的目标不是记住 OneCode 有多少模块，而是掌握一个能反复套用的口述框架：先说明不确定性从哪里来，再说明运行时怎样用确定性机制吸收它。</p>
+
+  <div class="notice">
+    <strong>材料状态：</strong>回答已严格对应简历中的六项技术亮点；完整回答、推荐改写与真实性审计见<a href="../reference/onecode-interview-cheatsheet.html">面试速查表</a>。
+  </div>
+
+  <h2>一条总主线</h2>
+  <p>OneCode 的本质不是“给模型接了很多工具”，而是一个 Harness 风格的运行时：模型负责提出下一步行动，运行时负责上下文、权限、副作用、恢复和审计。面试中所有亮点都可以回到这条主线。</p>
+
+  <div class="flow" aria-label="回答顺序">
+    <span>背景痛点</span><b>→</b><span>设计目标</span><b>→</b><span>核心机制</span><b>→</b><span>兜底保障</span><b>→</b><span>权衡边界</span>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <p class="label">背景痛点</p>
+      <p>说明为什么普通做法不够。优先描述失控方式，例如上下文无限增长、工具副作用不可控、模型厂商字段污染核心流程。</p>
+    </section>
+    <section class="card">
+      <p class="label">设计目标</p>
+      <p>用一句话给出稳定性质：核心编排不随能力增加而膨胀；拒绝不能被更上层授权覆盖；失败可以恢复且不污染历史。</p>
+    </section>
+    <section class="card">
+      <p class="label">核心机制</p>
+      <p>讲“运行顺序”和“事实来源”，少报类名。面试官更关心输入经过哪些阶段、每层负责什么、为何不会相互越权。</p>
+    </section>
+    <section class="card">
+      <p class="label">兜底保障</p>
+      <p>回答异常、恶意输入、旧消息重放、并发冲突、上下文超限时系统怎么办。兜底必须落在代码路径，不依赖提示词。</p>
+    </section>
+    <section class="card">
+      <p class="label">权衡边界</p>
+      <p>主动承认代价和当前限制。边界讲得准，比把目标架构说成已落地更有说服力。</p>
+    </section>
+  </div>
+
+  <h2>示范：薄主循环</h2>
+  <div class="script">
+    <p class="label">60–90 秒口述</p>
+    <p>“普通 Agent 项目很容易把工具判断、权限、压缩、重试和 UI 都写进循环，功能一多，核心流程就越来越难改、难测。我的目标是让主循环只保留思考—行动—观察这条生命周期：每轮重建模型上下文，调用模型，有真实工具请求就统一执行并回填，没有就结束。工具、权限、上下文压缩和 Provider 适配分别通过注册表、执行管线、上下文准备链和协议适配接入。异常不会靠散落的 try-catch 处理，而是归一成明确状态转换，例如限流重试、上下文超限后压缩重试、输出截断后续写。最后还有最大轮次和重试上限，避免无限恢复。这样新增能力通常不需要修改核心循环，代价是外围契约要设计得更严格。”</p>
+  </div>
+
+  <details>
+    <summary>追问：薄主循环是不是把复杂度藏到别处？</summary>
+    <p>是把复杂度放进有明确契约的模块，而不是假装复杂度不存在。判断标准是：核心循环只理解生命周期事实；工具层理解输入分类和执行；权限层理解 allow/ask/deny；上下文层理解消息投影和预算。每层都能单测，依赖方向也能自动检查。</p>
+  </details>
+
+  <h2>示范：分层安全</h2>
+  <div class="script">
+    <p class="label">60–90 秒口述</p>
+    <p>“Code Agent 的风险在于模型既不稳定又能产生真实副作用，所以安全不能只写在 prompt 里。我把一次工具调用先分类成读写属性和资源目标，再经过路径规范化、沙箱边界判断、deny-first 权限合并、必要的用户确认、执行前 Hook 和工具内部兜底。最关键的原则是 deny 不可被 Hook、会话授权或人工确认覆盖；如果 Hook 改了输入，必须重新校验、重新分类并重新走权限链。路径判断也不用字符串前缀，而是处理绝对路径、Windows 等价路径、符号链接和不存在的写目标。失败会变成结构化工具结果回给模型，让它调整方案，而不是让主循环崩溃。”</p>
+  </div>
+
+  <details>
+    <summary>追问：为什么暴露工具时裁剪一次，执行时还要再检查？</summary>
+    <p>暴露阶段只能裁掉整工具级别的 deny，无法提前知道某次调用的具体路径和命令；历史消息也可能包含旧工具调用。因此“能力最小化”降低误调用概率，“执行入口重检”才是最终安全边界，两者解决的问题不同。</p>
+  </details>
+
+  <h2>立即练习：闭卷回忆</h2>
+  <div class="question">
+    <p class="label">请先不看速查表，口头回答</p>
+    <ol>
+      <li>为什么 OneCode 不把上下文看成不断增长的聊天记录？</li>
+      <li>Hook 改写工具输入后，为什么必须重新走完整校验链？</li>
+      <li>限流重试为什么要先缓冲一次尝试的流式输出？</li>
+    </ol>
+    <p>答完后把你的版本发给我。我会按“结论是否先行、机制是否闭环、边界是否准确”三个维度逐句反馈。</p>
+  </div>
+
+  <h2>复习方法</h2>
+  <p>不要逐字背稿。每个亮点只记五个关键词，再用自己的话复述。第一次看完立即回忆；隔一天随机抽三个亮点；第三次练习时交错回答安全、上下文和工具运行时，避免只会按固定顺序背诵。</p>
+
+  <p><strong>首要来源：</strong><a href="../architecture.md">OneCode 根架构</a>。它定义了项目定位、运行流程和模块边界；具体机制可继续查阅<a href="../docs/design-docs/core-beliefs.md">Core Beliefs</a>及各模块设计文档。</p>
+
+  <footer>有任何概念不清楚，直接把你的口述版本或面试官追问发给我。下一步可以进行模拟面试，把六项答案进一步压缩成 30 秒、90 秒和深挖版。</footer>
+</body>
+</html>

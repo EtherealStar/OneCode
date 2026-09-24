@@ -13,5 +13,4 @@ class UserQuestionPrompter(Protocol):
     async def ask_questions(
         self,
         questions: tuple[QuestionRequest, ...],
-    ) -> QuestionResponse:
-        ...
+    ) -> QuestionResponse: ...

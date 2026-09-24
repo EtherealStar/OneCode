@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
-from collections.abc import Iterable
 from threading import RLock
 from typing import TYPE_CHECKING, Any
-import uuid
 
 from services.context.message_shapes import (
     assistant_declarations,
     message_has_body,
     prune_assistant_declarations,
 )
+from services.context.recovery import restore_transcript_active_chain
 from services.context.run_facts import InterruptedRunFacts
 from services.context.transcript import (
     InMemoryTranscriptStore,
     JsonlTranscriptStore,
     LoadedTranscriptMessage,
 )
-from services.context.recovery import restore_transcript_active_chain
 from services.tools.types import ToolExecutionResult
 
 if TYPE_CHECKING:
@@ -219,8 +219,10 @@ class MessageStore:
         replacement = [deepcopy(message) for message in messages]
         if not replacement:
             raise ValueError("cannot replace active messages with an empty chain")
-        sources = list(source_uuids) if source_uuids is not None else [None] * len(
-            replacement
+        sources = (
+            list(source_uuids)
+            if source_uuids is not None
+            else [None] * len(replacement)
         )
         if len(sources) != len(replacement):
             raise ValueError("source_uuids must align with replacement messages")
@@ -304,16 +306,15 @@ class MessageStore:
         并原子重写实际的 transcript。仅在磁盘重写成功后才提交内存和终端状态。
         """
 
-        with self._state_lock:
-            with self._transcript_store.write_guard():
-                return self._finalize_locked(facts, error_log_recorder)
+        with self._state_lock, self._transcript_store.write_guard():
+            return self._finalize_locked(facts, error_log_recorder)
 
     @classmethod
     def ephemeral(
         cls,
         *,
         session_id: str,
-    ) -> "MessageStore":
+    ) -> MessageStore:
         """创建其 transcript 绝不写入磁盘的消息存储。"""
 
         return cls(transcript_store=InMemoryTranscriptStore(session_id))
@@ -323,7 +324,7 @@ class MessageStore:
         cls,
         transcript_store: JsonlTranscriptStore,
         state: RuntimeState,
-    ) -> "MessageStore":
+    ) -> MessageStore:
         """从 JSONL transcript 恢复内存消息存储。
 
         参数:
@@ -427,9 +428,7 @@ class MessageStore:
             for meta, message in prior
         ]
         parent_uuid = (
-            prior[-1][0].uuid
-            if prior
-            else (prefix[-1].uuid if prefix else None)
+            prior[-1][0].uuid if prior else (prefix[-1].uuid if prefix else None)
         )
         for meta, message in region:
             role = message.get("role")
@@ -562,7 +561,9 @@ class MessageStore:
     ) -> tuple[dict[str, Any] | None, StoredRecordMeta | None]:
         candidate = facts.assistant_message
         if candidate is None:
-            if not facts.assistant_text.strip() and not (facts.declared_ids & paired_ids):
+            if not facts.assistant_text.strip() and not (
+                facts.declared_ids & paired_ids
+            ):
                 return None, None
             candidate = {"role": "assistant", "content": facts.assistant_text}
         pruned = prune_assistant_declarations(candidate, paired_ids)

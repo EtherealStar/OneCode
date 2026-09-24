@@ -55,9 +55,11 @@ def test_pre_tool_use_hook_can_block_edit_file(tmp_path: Path) -> None:
     hooks = HookRegistry()
     hooks.register(
         HookEvent.PRE_TOOL_USE,
-        lambda payload: HookResult(blocking_error="edits are disabled")
-        if payload["descriptor"].name == "edit_file"
-        else None,
+        lambda payload: (
+            HookResult(blocking_error="edits are disabled")
+            if payload["descriptor"].name == "edit_file"
+            else None
+        ),
     )
     executor, state = make_executor(workspace, hooks)
     execute_one(executor, state, "read_file", {"file_path": "a.txt"})
@@ -83,9 +85,11 @@ def test_pre_tool_use_hook_can_update_input_before_handler(
     hooks = HookRegistry()
     hooks.register(
         HookEvent.PRE_TOOL_USE,
-        lambda payload: HookResult(updated_input={"offset": 2, "limit": 1})
-        if payload["descriptor"].name == "read_file"
-        else None,
+        lambda payload: (
+            HookResult(updated_input={"offset": 2, "limit": 1})
+            if payload["descriptor"].name == "read_file"
+            else None
+        ),
     )
     executor, state = make_executor(workspace, hooks)
 
@@ -142,7 +146,6 @@ def test_pre_tool_use_updated_input_is_reclassified(
 
     def observe(payload):
         observed_subjects.append(payload["classification"].permission_subject)
-        return None
 
     hooks.register(HookEvent.POST_TOOL_USE, observe)
     executor, state = make_executor(workspace, hooks)
@@ -168,7 +171,6 @@ def test_post_tool_use_hook_observes_successful_result(tmp_path: Path) -> None:
 
     def observe(payload):
         observed.append(payload["result"])
-        return None
 
     hooks.register(HookEvent.POST_TOOL_USE, observe)
     executor, state = make_executor(workspace, hooks)
@@ -195,7 +197,6 @@ def test_tool_error_hook_observes_guard_denial_and_validation_failure(
 
     def observe(payload):
         observed_errors.append(payload["result"].metadata["error"])
-        return None
 
     hooks.register(HookEvent.TOOL_ERROR, observe)
     executor, state = make_executor(
@@ -307,7 +308,9 @@ def test_task_hook_events_can_register_and_run() -> None:
     )
 
     created = asyncio.run(hooks.run(HookEvent.TASK_CREATED, {"task_list_id": "tasks"}))
-    completed = asyncio.run(hooks.run(HookEvent.TASK_COMPLETED, {"task_list_id": "tasks"}))
+    completed = asyncio.run(
+        hooks.run(HookEvent.TASK_COMPLETED, {"task_list_id": "tasks"})
+    )
 
     assert observed == ["tasks"]
     assert created.blocking_error is None

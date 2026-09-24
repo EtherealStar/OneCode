@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -59,7 +59,9 @@ def key_value_table(*, title: str | None = None) -> Table:
     return table
 
 
-def titled_section(title: str, body: object, *, style: str = "onecode.title") -> Group:
+def titled_section(
+    title: str, body: RenderableType, *, style: str = "onecode.title"
+) -> Group:
     """渲染“仅顶部一条全宽横线 + 彩色标题 + 默认正文”的区块（替代旧的四边框 Panel）。"""
 
     heading = Rule(
@@ -71,12 +73,16 @@ def titled_section(title: str, body: object, *, style: str = "onecode.title") ->
     return Group(heading, body)
 
 
-def titled_panel(title: str, renderable: object, *, style: str = "onecode.info") -> Group:
+def titled_panel(
+    title: str, renderable: RenderableType, *, style: str = "onecode.info"
+) -> Group:
     return titled_section(title, renderable, style=style)
 
 
 def empty_panel(title: str, message: str) -> Group:
-    return titled_section(title, Text(f"{SYMBOLS.info} {message}", style="onecode.subtle"))
+    return titled_section(
+        title, Text(f"{SYMBOLS.info} {message}", style="onecode.subtle")
+    )
 
 
 def strip_ansi(text: str) -> str:
@@ -103,5 +109,5 @@ def render_to_text(renderable: object | None, *, width: int = 120) -> str:
     return console.export_text(styles=True).rstrip()
 
 
-def section_group(*renderables: object) -> Group:
+def section_group(*renderables: RenderableType) -> Group:
     return Group(*renderables)

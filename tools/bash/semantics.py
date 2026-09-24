@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 from tools.bash.ast_model import BashAnalysis
-
 
 SHELL_KEYWORDS = {
     "if",
@@ -75,7 +74,9 @@ def check_semantics(analysis: BashAnalysis) -> SemanticResult:
             return SemanticResult(False, "Empty command.")
         name = stripped[0]
         if name == "" or name.startswith(("-", "|", "&")):
-            return SemanticResult(False, "Command appears to be an incomplete fragment.")
+            return SemanticResult(
+                False, "Command appears to be an incomplete fragment."
+            )
         if name in SHELL_KEYWORDS:
             return SemanticResult(False, f"Shell keyword '{name}' is not executable.")
         if name in EVAL_LIKE:
@@ -95,10 +96,14 @@ def check_semantics(analysis: BashAnalysis) -> SemanticResult:
                 return SemanticResult(False, "jq system() executes shell commands.")
             if any(
                 arg in {"-f", "-L", "--from-file", "--rawfile", "--slurpfile"}
-                or arg.startswith(("--from-file=", "--rawfile=", "--slurpfile=", "--library-path="))
+                or arg.startswith(
+                    ("--from-file=", "--rawfile=", "--slurpfile=", "--library-path=")
+                )
                 for arg in stripped[1:]
             ):
-                return SemanticResult(False, "jq file-loading flags are not auto-allowed.")
+                return SemanticResult(
+                    False, "jq file-loading flags are not auto-allowed."
+                )
     return SemanticResult(True)
 
 
@@ -160,13 +165,16 @@ def _strip_timeout(args: tuple[str, ...]) -> tuple[str, ...] | WrapperError:
     index = 1
     while index < len(args):
         arg = args[index]
-        if arg in {"--foreground", "--preserve-status", "--verbose", "-v"}:
+        if arg in {"--foreground", "--preserve-status", "--verbose", "-v"} or re.match(
+            r"^--(?:kill-after|signal)=[A-Za-z0-9_.+-]+$", arg
+        ):
             index += 1
-        elif re.match(r"^--(?:kill-after|signal)=[A-Za-z0-9_.+-]+$", arg):
-            index += 1
-        elif arg in {"--kill-after", "--signal"} and index + 1 < len(args):
-            index += 2
-        elif arg in {"-k", "-s"} and index + 1 < len(args):
+        elif (
+            arg in {"--kill-after", "--signal"}
+            and index + 1 < len(args)
+            or arg in {"-k", "-s"}
+            and index + 1 < len(args)
+        ):
             index += 2
         elif re.match(r"^-[ks][A-Za-z0-9_.+-]+$", arg):
             index += 1
@@ -177,7 +185,9 @@ def _strip_timeout(args: tuple[str, ...]) -> tuple[str, ...] | WrapperError:
     if index >= len(args):
         return args
     if not re.match(r"^\d+(?:\.\d+)?[smhd]?$", args[index]):
-        return WrapperError(f"timeout duration '{args[index]}' cannot be statically analyzed.")
+        return WrapperError(
+            f"timeout duration '{args[index]}' cannot be statically analyzed."
+        )
     return args[index + 1 :]
 
 
@@ -195,9 +205,7 @@ def _strip_env(args: tuple[str, ...]) -> tuple[str, ...] | WrapperError:
     index = 1
     while index < len(args):
         arg = args[index]
-        if "=" in arg and not arg.startswith("-"):
-            index += 1
-        elif arg in {"-i", "-0", "-v"}:
+        if "=" in arg and not arg.startswith("-") or arg in {"-i", "-0", "-v"}:
             index += 1
         elif arg == "-u" and index + 1 < len(args):
             index += 2
@@ -214,7 +222,9 @@ def _strip_stdbuf(args: tuple[str, ...]) -> tuple[str, ...] | WrapperError:
         arg = args[index]
         if arg in {"-i", "-o", "-e"} and index + 1 < len(args):
             index += 2
-        elif re.match(r"^-[ioe].+", arg) or re.match(r"^--(?:input|output|error)=", arg):
+        elif re.match(r"^-[ioe].+", arg) or re.match(
+            r"^--(?:input|output|error)=", arg
+        ):
             index += 1
         elif arg.startswith("-"):
             return WrapperError(f"stdbuf with {arg} cannot be statically analyzed.")

@@ -21,7 +21,6 @@ from typing import Any, Literal
 
 from services.tools.types import ToolExecutionResult
 
-
 AgentEventType = Literal[
     "interaction_started",
     "assistant_delta",
@@ -62,13 +61,15 @@ _ATTRIBUTED_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
-def event_requires_attribution(event: "AgentEvent") -> bool:
+def event_requires_attribution(event: AgentEvent) -> bool:
     """当事件必须携带稳定归属 ID 时返回 True。"""
 
     return event.type in _ATTRIBUTED_EVENT_TYPES
 
 
-def mint_assistant_call_id(session_id: str, turn_count: int, model_turn_index: int) -> str:
+def mint_assistant_call_id(
+    session_id: str, turn_count: int, model_turn_index: int
+) -> str:
     """为单次模型调用生成会话内稳定唯一的 ID。
 
     该 ID 是由 session_id 的前 8 位十六进制字符、运行时 turn_count

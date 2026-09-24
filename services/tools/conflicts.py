@@ -68,7 +68,8 @@ def build_conflict_batches(
     current_classifications: list[ToolCallClassification] = []
     for classification, index in items:
         if not any(
-            classifications_conflict(classification, other) for other in current_classifications
+            classifications_conflict(classification, other)
+            for other in current_classifications
         ):
             current.append(index)
             current_classifications.append(classification)
@@ -110,18 +111,14 @@ def _file_pair_conflicts(left: ToolTarget, right: ToolTarget) -> bool:
         # 相同文件：任意一侧的任何写入或删除操作均与另一侧冲突。
         # 读读操作有意被允许：执行器的预检（以及描述符的 concurrency_safe 标志）
         # 已经决定了读取处理器是否可以安全地并行运行。
-        if _is_write(left) or _is_write(right):
-            return True
-        return False
+        return _is_write(left) or _is_write(right)
     # 文件 A 位于目录 B 内（或反之）：对 A 的读取意味着父目录列表的存在，
     # 且对目录的写入可能会在另一个调用执行期间重命名或删除 A。
     left_path = Path(left.value)
     right_path = Path(right.value)
     if _path_contains_str(left.value, right_path.parent):
         return True
-    if _path_contains_str(right.value, left_path.parent):
-        return True
-    return False
+    return _path_contains_str(right.value, left_path.parent)
 
 
 def _directory_pair_conflicts(left: ToolTarget, right: ToolTarget) -> bool:

@@ -77,7 +77,7 @@ class ModelUsage:
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
 
-    def add(self, other: "ModelUsage") -> None:
+    def add(self, other: ModelUsage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cache_read_input_tokens += other.cache_read_input_tokens

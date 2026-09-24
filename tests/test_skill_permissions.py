@@ -31,7 +31,9 @@ def execute_one(registry: ToolRegistry, policy: PermissionPolicy, call: ToolCall
 
 
 def command_descriptor() -> ToolDescriptor:
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         return ToolExecutionResult(
             tool_call_id=runtime.tool_call_id,
             tool_name="bash",
@@ -46,20 +48,28 @@ def command_descriptor() -> ToolDescriptor:
             read_only=False,
             modifies_filesystem=False,
             concurrency_safe=False,
-            targets=(ToolTarget(kind="command", operation="execute", value="npm test"),),
+            targets=(
+                ToolTarget(kind="command", operation="execute", value="npm test"),
+            ),
         )
 
     return ToolDescriptor(
         name="bash",
         description="Run command",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
         handler=handler,
         classify_input=classify,
     )
 
 
 def skill_descriptor_with_allowed_tools() -> ToolDescriptor:
-    def handler(tool_input: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+    def handler(
+        tool_input: dict[str, Any], runtime: ToolRuntime
+    ) -> ToolExecutionResult:
         return ToolExecutionResult(
             tool_call_id=runtime.tool_call_id,
             tool_name="skill",
@@ -70,7 +80,11 @@ def skill_descriptor_with_allowed_tools() -> ToolDescriptor:
     return ToolDescriptor(
         name="skill",
         description="Load skill",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
         handler=handler,
         classify_input=lambda tool_input, runtime: ToolCallClassification(
             read_only=True,
@@ -112,7 +126,9 @@ def test_skill_allowed_tools_metadata_does_not_create_session_tool_grant() -> No
         permission_policy=policy,
     )
 
-    result = execute_one(registry, policy, ToolCall(id="call-1", name="skill", input={}))
+    result = execute_one(
+        registry, policy, ToolCall(id="call-1", name="skill", input={})
+    )
 
     assert result.is_error is False
     assert store.is_tool_allowed("bash") is False

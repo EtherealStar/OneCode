@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import (
@@ -32,7 +32,6 @@ from services.tools.types import (
 from tools.grep.prompt import PROMPT
 from utils.text_io import decode_text
 
-
 DEFAULT_HEAD_LIMIT = 250
 VCS_EXCLUDES = (".git", ".svn", ".hg", ".bzr", ".jj", ".sl")
 
@@ -45,8 +44,7 @@ class RipgrepResult:
 
 
 class RipgrepRunner(Protocol):
-    def run(self, args: list[str], cwd: Path) -> RipgrepResult:
-        ...
+    def run(self, args: list[str], cwd: Path) -> RipgrepResult: ...
 
 
 class SubprocessRipgrepRunner:
@@ -99,7 +97,7 @@ class GrepInput(BaseModel):
         return value.strip() if value is not None else value
 
     @model_validator(mode="after")
-    def _context_only_for_content(self) -> "GrepInput":
+    def _context_only_for_content(self) -> GrepInput:
         has_context = any(
             value is not None
             for value in (
@@ -208,13 +206,15 @@ def _handle_with_runner(
         rg_result = runner.run(args, cwd)
     except FileNotFoundError as exc:
         return _error_result("ripgrep_not_found", str(exc))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error_result("ripgrep_error", str(exc))
 
     if rg_result.returncode == 1:
         return _no_matches_result(parsed)
     if rg_result.returncode != 0:
-        message = rg_result.stderr.strip() or f"ripgrep exited with {rg_result.returncode}"
+        message = (
+            rg_result.stderr.strip() or f"ripgrep exited with {rg_result.returncode}"
+        )
         return _error_result(
             "ripgrep_error",
             message,
@@ -223,7 +223,9 @@ def _handle_with_runner(
 
     guard_cache: dict[Path, bool] = {}
     if parsed.output_mode == "files_with_matches":
-        return _files_with_matches_result(rg_result.stdout, cwd, parsed, runtime, guard_cache)
+        return _files_with_matches_result(
+            rg_result.stdout, cwd, parsed, runtime, guard_cache
+        )
     if parsed.output_mode == "count":
         return _count_result(rg_result.stdout, cwd, parsed, runtime, guard_cache)
     return _content_result(rg_result.stdout, cwd, parsed, runtime, guard_cache)
@@ -247,10 +249,14 @@ def _build_rg_args(parsed: GrepInput, search_target: str) -> list[str]:
     elif parsed.output_mode == "count":
         args.append("-c")
     else:
-        show_line_numbers = True if parsed.show_line_numbers is None else parsed.show_line_numbers
+        show_line_numbers = (
+            True if parsed.show_line_numbers is None else parsed.show_line_numbers
+        )
         if show_line_numbers:
             args.append("-n")
-        context_value = parsed.context if parsed.context is not None else parsed.context_flag
+        context_value = (
+            parsed.context if parsed.context is not None else parsed.context_flag
+        )
         if context_value is not None:
             args.extend(["-C", str(context_value)])
         else:
@@ -293,8 +299,7 @@ def _files_with_matches_result(
         return (-_mtime(path), _display_path(path, runtime))
 
     unique_paths = [
-        path
-        for _, path in sorted((sort_path(path), path) for path in set(paths))
+        path for _, path in sorted((sort_path(path), path) for path in set(paths))
     ]
     total = len(unique_paths)
     selected, limit, truncated = _paginate(unique_paths, parsed)
@@ -344,8 +349,7 @@ def _count_result(
         return (-_mtime(item[0]), _display_path(item[0], runtime))
 
     entries = [
-        entry
-        for _, entry in sorted((sort_entry(entry), entry) for entry in entries)
+        entry for _, entry in sorted((sort_entry(entry), entry) for entry in entries)
     ]
     total_matches = sum(count for _, count in entries)
     selected, limit, truncated = _paginate(entries, parsed)
@@ -381,7 +385,10 @@ def _content_result(
     matched_paths: set[Path] = set()
     for raw in output.splitlines():
         path_text = _extract_content_path(raw)
-        path = _resolve_rg_path(path_text, cwd) if path_text is not None else None
+        if path_text is None:
+            filtered += 1
+            continue
+        path = _resolve_rg_path(path_text, cwd)
         if path is None or not _path_allowed(path, runtime, guard_cache):
             filtered += 1
             continue
@@ -443,7 +450,7 @@ def _path_allowed(
             runtime.guard.check_path(key, operation="read", kind="file"),
             runtime,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         allowed = False
     cache[key] = allowed
     return allowed
@@ -466,19 +473,23 @@ def _extract_content_path(line: str) -> str | None:
 
 
 def _replace_line_prefix(line: str, old_prefix: str, new_prefix: str) -> str:
-    return f"{new_prefix}{line[len(old_prefix):]}"
+    return f"{new_prefix}{line[len(old_prefix) :]}"
 
 
 def _paginate(items, parsed: GrepInput):
     limit = _effective_limit(parsed.head_limit, DEFAULT_HEAD_LIMIT)
-    selected = items[parsed.offset :] if limit is None else items[
-        parsed.offset : parsed.offset + limit
-    ]
+    selected = (
+        items[parsed.offset :]
+        if limit is None
+        else items[parsed.offset : parsed.offset + limit]
+    )
     truncated = parsed.offset + len(selected) < len(items)
     return selected, limit, truncated
 
 
-def _append_pagination(lines: list[str], offset: int, limit: int | None, truncated: bool) -> None:
+def _append_pagination(
+    lines: list[str], offset: int, limit: int | None, truncated: bool
+) -> None:
     if not truncated and not offset:
         return
     limit_label = "unlimited" if limit is None else str(limit)

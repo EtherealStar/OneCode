@@ -34,7 +34,9 @@ def render_memory(runtime: CliRuntime) -> Group:
         table.add_row("long-term memory dir", "disabled")
     else:
         topics = store.scan()
-        table.add_row("long-term memory dir", display_path(store.memory_dir, runtime.workspace))
+        table.add_row(
+            "long-term memory dir", display_path(store.memory_dir, runtime.workspace)
+        )
         table.add_row(
             "long-term memory index",
             "present" if store.entrypoint_path.exists() else "missing",

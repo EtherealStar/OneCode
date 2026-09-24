@@ -28,10 +28,14 @@ class LongTermMemoryPromptProvider:
         if index_text.strip():
             lines.extend(["", "Current MEMORY.md index:", index_text.strip()])
         elif truncated:
-            lines.append("MEMORY.md index is truncated but currently empty after truncation.")
+            lines.append(
+                "MEMORY.md index is truncated but currently empty after truncation."
+            )
         return "\n".join(lines)
 
     def fingerprint(self) -> str:
         index_text, _ = self.store.truncated_entrypoint()
-        payload = "\0".join([PROMPT_VERSION, str(self.store.entrypoint_path), index_text])
+        payload = "\0".join(
+            [PROMPT_VERSION, str(self.store.entrypoint_path), index_text]
+        )
         return sha256(payload.encode("utf-8")).hexdigest()

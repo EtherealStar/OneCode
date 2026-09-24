@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 PermissionBehavior = Literal["allow", "deny", "ask"]
 PermissionUpdateType = Literal["addRules", "removeRules", "replaceRules"]
 PermissionUpdateDestination = Literal["projectSettings", "session"]
@@ -66,9 +65,13 @@ def _validate_tool_name(value: str) -> str:
     if not value:
         raise ValueError("Permission rule tool name must not be empty.")
     if any(char.isspace() for char in value):
-        raise ValueError(f"Permission rule tool name must not contain whitespace: {value}")
+        raise ValueError(
+            f"Permission rule tool name must not contain whitespace: {value}"
+        )
     if any(char in value for char in "()\\"):
-        raise ValueError(f"Permission rule tool name contains invalid characters: {value}")
+        raise ValueError(
+            f"Permission rule tool name contains invalid characters: {value}"
+        )
     return value
 
 

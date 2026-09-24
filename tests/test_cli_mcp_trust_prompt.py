@@ -17,7 +17,7 @@ def test_mcp_trust_prompt_uses_cli_input_layer(
     prompts: list[tuple[str, tuple[str, ...]]] = []
 
     def fake_read_confirm_sync(title: str, options: tuple[object, ...]) -> str:
-        prompts.append((title, tuple(getattr(option, "value") for option in options)))
+        prompts.append((title, tuple(option.value for option in options)))
         return "trust"
 
     config = McpServerConfig(

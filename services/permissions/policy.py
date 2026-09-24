@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import fnmatch
 import re
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from core.runtime_state import PermissionMode, RuntimeState
@@ -328,7 +329,7 @@ class PermissionPolicy:
         classification: ToolCallClassification,
         guard_policies: tuple[GuardPolicy, ...],
         state: RuntimeState,
-    ) -> PermissionDecision:
+    ) -> PermissionDecision | None:
         """在计划模式下将 write_file/edit_file 限制在活动计划文件内。"""
 
         plan_path = state.plan.plan_slug
@@ -359,24 +360,24 @@ class PermissionPolicy:
         if not targets:
             return PermissionDecision(
                 action="deny",
-                reason=(
-                    "Plan-mode write tools must target exactly one file path."
-                ),
+                reason=("Plan-mode write tools must target exactly one file path."),
                 source="plan_mode",
                 targets=targets,
                 guard_policies=guard_policies,
             )
         workspace = _workspace_from_plan_state(state)
         expected_path = (
-            workspace / ".onecode" / "plans" / f"{expected}.md"
-        ).resolve() if workspace is not None else None
+            (workspace / ".onecode" / "plans" / f"{expected}.md").resolve()
+            if workspace is not None
+            else None
+        )
         for target in targets:
             if target.kind != "file" or target.operation != "write":
                 continue
             raw = target.normalized_value or target.value
             try:
                 normalized = resolve_path(raw)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 normalized = Path(raw)
             if expected_path is None or normalized != expected_path:
                 return PermissionDecision(
@@ -632,7 +633,10 @@ class PermissionPolicy:
         # 写入工具特意保持可见：它们在执行入口处的拒绝逻辑强制实施仅限计划文件的规则，
         # 并且提示词部分解释了此项限制。
         if state.permission_mode == PermissionMode.PLAN:
-            return descriptor.name in PLAN_MODE_ALLOWED_TOOLS or descriptor.name in PLAN_MODE_WRITE_TOOLS
+            return (
+                descriptor.name in PLAN_MODE_ALLOWED_TOOLS
+                or descriptor.name in PLAN_MODE_WRITE_TOOLS
+            )
         return True
 
     def _denied_skill_name(
@@ -704,7 +708,9 @@ class PermissionPolicy:
                 reasons.append(policy.reason)
         return _dedupe(reasons)
 
-    def _project_rules(self, behavior: PermissionBehavior) -> tuple[PermissionRule, ...]:
+    def _project_rules(
+        self, behavior: PermissionBehavior
+    ) -> tuple[PermissionRule, ...]:
         if self.project_store is None:
             return ()
         return tuple(
@@ -859,7 +865,7 @@ def _workspace_from_project_store(
 ) -> Path | None:
     try:
         return resolve_path(project_store.settings_path.parent.parent)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -883,7 +889,7 @@ def _workspace_from_plan_state(state: RuntimeState) -> Path | None:
         return None
     try:
         return resolve_path(Path(workspace))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -903,10 +909,9 @@ def _names(value: object) -> set[str]:
         return set()
     if isinstance(value, str):
         return {value} if value else set()
-    try:
+    if isinstance(value, Iterable):
         return {str(item) for item in value if str(item)}
-    except TypeError:
-        return {str(value)} if str(value) else set()
+    return {str(value)} if str(value) else set()
 
 
 def _dedupe(values: list[str]) -> list[str]:

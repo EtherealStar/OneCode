@@ -20,6 +20,7 @@ import io
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from prompt_toolkit.completion import CompleteEvent
@@ -28,12 +29,12 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
+from test_cli_commands import make_runtime
 
-from ui.cli.terminal import static_output as so
 from ui.cli.terminal import repl as repl_module
+from ui.cli.terminal import static_output as so
 from ui.cli.terminal import transient
 from ui.cli.terminal.completer import InlineCompleter
-from ui.cli.terminal.repl import InlineRepl
 from ui.cli.terminal.prompt_session import (
     PromptSession,
     PromptSubmission,
@@ -41,10 +42,9 @@ from ui.cli.terminal.prompt_session import (
     strip_osc11_reply_fragments,
 )
 from ui.cli.terminal.queue import InputQueue, QueuedInput
+from ui.cli.terminal.repl import InlineRepl
 from ui.cli.theme import RICH_THEME
 from ui.cli.types import CommandResult
-
-from test_cli_commands import make_runtime
 
 
 class _FakeRuntime:
@@ -67,7 +67,7 @@ def captured_console() -> io.StringIO:
     # force_terminal + an explicit color system so Rich emits SGR
     # sequences even though StringIO isn't a real TTY (auto-detection
     # would otherwise strip color in the test environment).
-    so._STATIC_CONSOLE = Console(  # noqa: SLF001
+    so._STATIC_CONSOLE = Console(
         file=buffer,
         force_terminal=True,
         color_system="standard",
@@ -114,8 +114,6 @@ def test_replay_messages_reuse_normal_static_renderers(
     captured_console: io.StringIO,
     tmp_path: Path,
 ) -> None:
-    from services.tools.types import ToolExecutionResult
-    from ui.cli.terminal import static_output as so
     from ui.cli.terminal.transcript_replay import replay_messages_to_static
 
     messages = [
@@ -168,9 +166,7 @@ def test_assistant_markdown_strips_rich_line_padding(
 ) -> None:
     so.print_assistant_markdown("plain reply")
     output = captured_console.getvalue()
-    body_lines = [
-        line for line in output.splitlines() if "plain reply" in line
-    ]
+    body_lines = [line for line in output.splitlines() if "plain reply" in line]
 
     assert body_lines == ["plain reply"]
 
@@ -341,16 +337,17 @@ def test_alternate_screen_noop_on_non_tty() -> None:
 def test_transient_scope_exits_on_exception() -> None:
     transient.reset_for_tests()
     stream = _FakeTtyStream()
-    with pytest.raises(RuntimeError):
-        with transient.transient_terminal_scope(stream):
-            assert transient.is_alternate_screen_active()
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), transient.transient_terminal_scope(stream):
+        assert transient.is_alternate_screen_active()
+        raise RuntimeError("boom")
     # The scope must restore the primary buffer even on exception.
     assert not transient.is_alternate_screen_active()
     assert "\x1b[?1049l" in stream.getvalue()
 
 
-def test_terminal_brightness_skips_osc11_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_terminal_brightness_skips_osc11_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from ui.cli.terminal import detect
 
     monkeypatch.setattr(detect.platform, "system", lambda: "Windows")
@@ -471,7 +468,9 @@ def test_enter_completes_directory_mention_without_submitting(
     buffer.insert_text(" ")
 
     assert buffer.text == "@docs/ "
-    assert list(buffer.completer.get_completions(buffer.document, CompleteEvent())) == []
+    assert (
+        list(buffer.completer.get_completions(buffer.document, CompleteEvent())) == []
+    )
 
 
 def test_tab_fills_without_submitting_then_enter_submits(tmp_path: Path) -> None:
@@ -483,7 +482,9 @@ def test_tab_fills_without_submitting_then_enter_submits(tmp_path: Path) -> None
     assert submission.text == "/status"
 
 
-def test_suggestion_panel_fragments_include_command_descriptions(tmp_path: Path) -> None:
+def test_suggestion_panel_fragments_include_command_descriptions(
+    tmp_path: Path,
+) -> None:
     from prompt_toolkit.buffer import Buffer
 
     from ui.cli.terminal.completer import InlineCompleter
@@ -506,7 +507,7 @@ def test_prompt_hint_is_hidden_when_idle(tmp_path: Path) -> None:
     from prompt_toolkit.buffer import Buffer
 
     from ui.cli.terminal.completer import InlineCompleter
-    from ui.cli.terminal.prompt_session import _PromptHint, _hint_text
+    from ui.cli.terminal.prompt_session import _hint_text, _PromptHint
 
     buffer = Buffer(
         completer=InlineCompleter(_FakeRuntime(tmp_path)),
@@ -558,7 +559,10 @@ def test_idle_ctrl_c_second_press_after_window_does_not_exit(tmp_path: Path) -> 
 
 def test_strip_osc11_reply_fragments_is_narrow() -> None:
     assert strip_osc11_reply_fragments("]11;rgb:f8f8/f8f8/f8f8\\") == ""
-    assert strip_osc11_reply_fragments("keep ]12;rgb:f8f8/f8f8/f8f8\\") == "keep ]12;rgb:f8f8/f8f8/f8f8\\"
+    assert (
+        strip_osc11_reply_fragments("keep ]12;rgb:f8f8/f8f8/f8f8\\")
+        == "keep ]12;rgb:f8f8/f8f8/f8f8\\"
+    )
 
 
 # --- command handling -----------------------------------------------------
@@ -669,7 +673,7 @@ def test_reducer_tool_call_ready_updates_state_without_static_banner(
     class _Call:
         id = "call_9"
         name = "grep"
-        input = {"pattern": "TODO"}
+        input: ClassVar[dict[str, str]] = {"pattern": "TODO"}
 
     state = CliStreamUiState()
     reduce_stream_event(
@@ -1019,9 +1023,7 @@ def test_view_renders_queued_preview_with_limit() -> None:
     lines = render_queued_inputs(queue.snapshot())
     # Header + one line per visible entry + overflow summary.
     assert lines[0] == "queued:"
-    visible_rows = [
-        line for line in lines[1:] if line.startswith("  - ")
-    ]
+    visible_rows = [line for line in lines[1:] if line.startswith("  - ")]
     assert len(visible_rows) == QUEUED_PREVIEW_LIMIT
     summary_rows = [line for line in lines if "+" in line and "more queued" in line]
     assert summary_rows, "expected overflow summary line"
@@ -1121,7 +1123,7 @@ def test_repl_drain_stops_on_runtime_exit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """If a slash command nulls out the runtime (e.g. ``/exit``),
+    """If a slash command signals exit (e.g. ``/exit``),
     the drain loop bails out instead of launching a new turn.
     """
 
@@ -1134,8 +1136,8 @@ def test_repl_drain_stops_on_runtime_exit(
 
     async def fake_handle_command(line: str) -> None:
         observed.append(f"command:{line}")
-        # Simulate ``/exit`` clearing the runtime.
-        repl._runtime = None  # type: ignore[assignment]
+        # Simulate ``/exit`` signalling the REPL to stop draining.
+        repl._exiting = True
 
     monkeypatch.setattr(repl, "_run_turn", fake_run_turn)
     monkeypatch.setattr(repl, "_handle_command", fake_handle_command)

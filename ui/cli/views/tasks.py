@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
@@ -33,7 +33,9 @@ def render_tasks(
         durable_error=durable_error,
     )
     background = _background_tasks_table(runtime, tuple(background_tasks))
-    return titled_section("Tasks", Group(durable, Text(), background), style="onecode.info")
+    return titled_section(
+        "Tasks", Group(durable, Text(), background), style="onecode.info"
+    )
 
 
 def _durable_tasks_table(
@@ -43,24 +45,28 @@ def _durable_tasks_table(
     task_list_id: str | None,
     tasks_dir: Path | None,
     durable_error: str | None,
-) -> object:
+) -> RenderableType:
     if durable_error is not None:
-        return Text(f"{SYMBOLS.error} Durable tasks: {durable_error}", style="onecode.error")
+        return Text(
+            f"{SYMBOLS.error} Durable tasks: {durable_error}", style="onecode.error"
+        )
     if task_list_id is None:
         return Text(f"{SYMBOLS.info} Durable tasks: disabled", style="onecode.subtle")
     items = [task for task in tasks if task.metadata.get("_internal") is not True]
-    table = Table(title="Durable tasks", box=None, show_header=True, header_style="onecode.subtle")
+    table = Table(
+        title="Durable tasks", box=None, show_header=True, header_style="onecode.subtle"
+    )
     table.add_column("id", no_wrap=True)
     table.add_column("status")
     table.add_column("subject")
     table.add_column("owner")
     table.add_column("blocked by")
     if tasks_dir is not None:
-        table.caption = (
-            f"task list: {task_list_id}   path: {display_path(tasks_dir, runtime.workspace)}"
-        )
+        table.caption = f"task list: {task_list_id}   path: {display_path(tasks_dir, runtime.workspace)}"
     if not items:
-        table.add_row("-", "none", f"No tasks found for task list {task_list_id}.", "", "")
+        table.add_row(
+            "-", "none", f"No tasks found for task list {task_list_id}.", "", ""
+        )
         return table
     by_id = {task.id: task for task in items}
     for task in items:
@@ -83,8 +89,13 @@ def _durable_tasks_table(
 def _background_tasks_table(
     runtime: CliRuntime,
     tasks: tuple[BackgroundTaskState, ...],
-) -> object:
-    table = Table(title="Background tasks", box=None, show_header=True, header_style="onecode.subtle")
+) -> RenderableType:
+    table = Table(
+        title="Background tasks",
+        box=None,
+        show_header=True,
+        header_style="onecode.subtle",
+    )
     table.add_column("id")
     table.add_column("type")
     table.add_column("status")

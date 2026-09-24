@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import difflib
+from dataclasses import dataclass
 from pathlib import Path
 
 from utils.text_io import read_text_file
-
 
 MAX_DIFF_CHARS = 4_000
 

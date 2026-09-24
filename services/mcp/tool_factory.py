@@ -27,8 +27,7 @@ def build_mcp_tool_descriptors(
     manager: McpConnectionManager,
 ) -> tuple[ToolDescriptor, ...]:
     return tuple(
-        _descriptor_for_tool(manager, tool)
-        for tool in manager.snapshot().tools
+        _descriptor_for_tool(manager, tool) for tool in manager.snapshot().tools
     )
 
 

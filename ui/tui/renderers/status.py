@@ -45,8 +45,10 @@ def _middle_ellipsize(value: str, width: int) -> str:
         return "…"
     left_width = (width - 1 + 1) // 2
     right_width = width - 1 - left_width
-    return _take_cells(value, left_width) + "…" + _take_cells(
-        value, right_width, reverse=True
+    return (
+        _take_cells(value, left_width)
+        + "…"
+        + _take_cells(value, right_width, reverse=True)
     )
 
 

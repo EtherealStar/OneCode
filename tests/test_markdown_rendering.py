@@ -14,12 +14,7 @@ from ui.cli.terminal.markdown_rendering import (
 
 
 def test_parse_simple_table() -> None:
-    text = (
-        "| name | value |\n"
-        "| --- | --- |\n"
-        "| a | 1 |\n"
-        "| b | 2 |\n"
-    )
+    text = "| name | value |\n| --- | --- |\n| a | 1 |\n| b | 2 |\n"
     block = parse_markdown_table_block(text)
     assert block is not None
     assert block.headers == ("name", "value")
@@ -28,11 +23,7 @@ def test_parse_simple_table() -> None:
 
 
 def test_parse_alignment_tokens() -> None:
-    text = (
-        "| left | center | right |\n"
-        "| :--- | :---: | ---: |\n"
-        "| a | b | c |\n"
-    )
+    text = "| left | center | right |\n| :--- | :---: | ---: |\n| a | b | c |\n"
     block = parse_markdown_table_block(text)
     assert block is not None
     assert block.alignments == ("left", "center", "right")
@@ -49,12 +40,7 @@ def test_parse_returns_none_when_body_missing() -> None:
 
 
 def test_horizontal_table_fits_in_wide_terminal() -> None:
-    text = (
-        "| name | value |\n"
-        "| --- | --- |\n"
-        "| alpha | 1 |\n"
-        "| beta | 2 |\n"
-    )
+    text = "| name | value |\n| --- | --- |\n| alpha | 1 |\n| beta | 2 |\n"
     block = parse_markdown_table_block(text)
     assert block is not None
     lines = render_markdown_table_block(block, width=80)
@@ -97,18 +83,17 @@ def test_long_words_force_horizontal_to_warp_with_hard_wrap() -> None:
 
 
 def test_alignment_is_honored_in_horizontal_layout() -> None:
-    text = (
-        "| left | center | right |\n"
-        "| :--- | :---: | ---: |\n"
-        "| a | b | c |\n"
-    )
+    text = "| left | center | right |\n| :--- | :---: | ---: |\n| a | b | c |\n"
     block = parse_markdown_table_block(text)
     assert block is not None
     lines = render_markdown_table_block(block, width=80)
     # Find the data row (the second ``│ a │ b │ c │``-style line).
     data_lines = [
-        line for line in lines
-        if " a " in _strip_ansi(line) and " b " in _strip_ansi(line) and " c " in _strip_ansi(line)
+        line
+        for line in lines
+        if " a " in _strip_ansi(line)
+        and " b " in _strip_ansi(line)
+        and " c " in _strip_ansi(line)
     ]
     assert data_lines
     # Right alignment pushes the value to the right edge of its column.
@@ -118,11 +103,7 @@ def test_alignment_is_honored_in_horizontal_layout() -> None:
 
 
 def test_render_block_handles_wide_characters() -> None:
-    text = (
-        "| 名称 | 值 |\n"
-        "| --- | --- |\n"
-        "| 中文 | 1 |\n"
-    )
+    text = "| 名称 | 值 |\n| --- | --- |\n| 中文 | 1 |\n"
     block = parse_markdown_table_block(text)
     assert block is not None
     lines = render_markdown_table_block(block, width=80)

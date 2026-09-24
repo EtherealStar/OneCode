@@ -52,7 +52,7 @@ def restore_transcript_active_chain(
         session_id=chain[-1].session_id if chain else loaded[-1].session_id,
         messages=messages,
         last_uuid=kept[-1].uuid if kept else None,
-        records=kept,
+        records=tuple(kept),
         warnings=tuple(warnings),
     )
 
@@ -127,7 +127,9 @@ def _sanitize_chain(
             declarations = dict(assistant_tool_call_ids(item.message))
             matched: dict[str, LoadedTranscriptMessage] = {}
             index += 1
-            while index < len(chain) and chain[index].message.get("role") == "tool_result":
+            while (
+                index < len(chain) and chain[index].message.get("role") == "tool_result"
+            ):
                 result_item = chain[index]
                 tool_call_id = result_item.message.get("tool_call_id")
                 if (
@@ -157,9 +159,7 @@ def _sanitize_chain(
                 deleted.add(item.uuid)
                 for matched_item in matched.values():
                     deleted.add(matched_item.uuid)
-                    warnings.append(
-                        f"dropped_orphan_tool_result:{matched_item.uuid}"
-                    )
+                    warnings.append(f"dropped_orphan_tool_result:{matched_item.uuid}")
                 continue
             for call_id in declarations:
                 if call_id not in matched:
@@ -186,6 +186,6 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None

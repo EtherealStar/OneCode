@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from services.memory.frontmatter import clean_string, split_frontmatter
-from services.memory.paths import is_auto_memory_path, memory_paths, normalize_memory_path
+from services.memory.paths import (
+    is_auto_memory_path,
+    memory_paths,
+    normalize_memory_path,
+)
 from services.memory.types import LongTermMemoryFile, MemoryKind
 
 VALID_TYPES: tuple[MemoryKind, ...] = ("user", "feedback", "project", "reference")
@@ -47,7 +51,9 @@ class LongTermMemoryStore:
             rendered = rendered[:max_chars].rstrip()
             truncated = True
         if truncated:
-            rendered += "\n\n[Long-term memory index truncated. Move details into topic files.]"
+            rendered += (
+                "\n\n[Long-term memory index truncated. Move details into topic files.]"
+            )
         return rendered, truncated
 
     def scan(self) -> tuple[LongTermMemoryFile, ...]:
@@ -86,7 +92,9 @@ class LongTermMemoryStore:
             f"- [{memory.name}]({memory.relative_path}) - {memory.description}"
             for memory in sorted(self.scan(), key=lambda item: item.relative_path)
         ]
-        self.entrypoint_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        self.entrypoint_path.write_text(
+            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+        )
 
     def record_memory_write(self, state: Any, path: Path | str) -> None:
         writes = state.metadata.setdefault("long_term_memory_writes", [])
@@ -108,7 +116,9 @@ class LongTermMemoryStore:
             return None
         metadata, body = split_frontmatter(raw)
         name = clean_string(metadata.get("name")) or path.stem
-        description = clean_string(metadata.get("description")) or _first_body_line(body) or name
+        description = (
+            clean_string(metadata.get("description")) or _first_body_line(body) or name
+        )
         memory_type = clean_string(metadata.get("type")) or "project"
         if memory_type not in VALID_TYPES:
             memory_type = "project"

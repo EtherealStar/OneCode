@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-
 SkillSource = Literal["bundled", "user", "project"]
 SkillContext = Literal["inline", "fork"]
 

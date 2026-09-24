@@ -114,8 +114,7 @@ def test_grep_truncation_mentions_pagination(tmp_path: Path) -> None:
     )
 
     assert text == (
-        "[grep] Found 40 matches across 10 files, "
-        "showing first 5 after offset 2"
+        "[grep] Found 40 matches across 10 files, showing first 5 after offset 2"
     )
 
 
@@ -186,8 +185,7 @@ def test_background_bash_mentions_task_and_output_file(tmp_path: Path) -> None:
     )
 
     assert _slash(text) == (
-        "[bash] Started background task bg_1 (running), "
-        "output .onecode/tasks/bg_1.out"
+        "[bash] Started background task bg_1 (running), output .onecode/tasks/bg_1.out"
     )
 
 

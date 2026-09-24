@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from textual.app import App, ComposeResult
+
 from application.history import (
     HistoryAttachmentSummary,
     HistoryRecord,
     HistoryToolCall,
 )
 from application.types import RunState, SessionSnapshot
-from textual.app import App, ComposeResult
-
 from ui.tui.conversation import ConversationView, DetailRequested
 from ui.tui.projection import ConversationProjection
 from ui.tui.projection_types import ViewChange

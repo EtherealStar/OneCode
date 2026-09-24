@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Union
+from typing import Any, Literal
 
 from application.history import HistoryRecord
 from services.model.types import ModelUsage
@@ -290,23 +291,23 @@ class DetailLoaded:
     result: DetailResult
 
 
-SessionUpdate = Union[
-    SnapshotUpdate,
-    RunStarted,
-    UserMessageCommitted,
-    AssistantDelta,
-    MessageCommitted,
-    ToolUpdate,
-    RunCompleted,
-    RunFailed,
-    RunCancelled,
-    QueueChanged,
-    StatusChanged,
-    InteractionRequested,
-    InteractionResolved,
-    UsageChanged,
-    DetailLoaded,
-]
+SessionUpdate = (
+    SnapshotUpdate
+    | RunStarted
+    | UserMessageCommitted
+    | AssistantDelta
+    | MessageCommitted
+    | ToolUpdate
+    | RunCompleted
+    | RunFailed
+    | RunCancelled
+    | QueueChanged
+    | StatusChanged
+    | InteractionRequested
+    | InteractionResolved
+    | UsageChanged
+    | DetailLoaded
+)
 
 
 __all__ = [

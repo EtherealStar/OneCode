@@ -1,0 +1,222 @@
+Screen {
+    layout: vertical;
+    background: $background;
+}
+
+#chat-wrap {
+    width: 100%;
+    height: 1fr;
+    background: $background;
+}
+
+#message-viewport {
+    width: 100%;
+    height: 100%;
+    background: $background;
+}
+
+#todo-list {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 3;
+    padding: 0 1;
+    color: $text-muted;
+    background: $surface;
+}
+
+.run-notice {
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.message {
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Textual 没有 right/bottom 属性；MessageViewport 根据父容器尺寸设置 offset。 */
+#new-content {
+    display: none;
+    position: absolute;
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $primary;
+}
+
+#status-bar {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    padding: 0 1;
+}
+
+#status-left {
+    width: 1fr;
+}
+
+#status-right {
+    width: auto;
+}
+
+#composer-wrap {
+    width: 100%;
+    height: auto;
+    background: $background;
+}
+
+#composer {
+    width: 100%;
+    height: 5;
+    min-height: 3;
+    padding: 0 1;
+    border: none;
+    border-top: solid $surface;
+    background: $background;
+}
+
+#composer:focus {
+    border: none;
+    border-top: solid $primary;
+}
+
+#composer-hint {
+    position: absolute;
+    offset: 2 1;
+    width: auto;
+    height: 1;
+    color: $text-muted;
+    background: $background;
+}
+
+#completion-overlay {
+    display: none;
+    width: 100%;
+    height: auto;
+    max-height: 8;
+    border: solid $panel;
+    background: $surface;
+}
+
+ModelPickerModal,
+ProviderConnectModal,
+SessionPickerModal {
+    align: center middle;
+    background: rgba(26, 27, 32, 0.76);
+}
+
+StatusModal {
+    align: center middle;
+    background: rgba(26, 27, 32, 0.76);
+}
+
+#status-modal {
+    width: 76;
+    max-width: 94%;
+    height: auto;
+    max-height: 88%;
+    padding: 1 2;
+    background: $surface;
+    border: solid $panel;
+}
+
+#status-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.status-row {
+    width: 100%;
+    height: auto;
+}
+
+.status-label {
+    width: 14;
+    min-width: 14;
+    color: $text-muted;
+}
+
+.status-value {
+    width: 1fr;
+    height: auto;
+    color: $text;
+}
+
+#status-gap {
+    height: 1;
+}
+
+#model-picker,
+#provider-connect,
+#session-picker {
+    width: 72;
+    max-width: 92%;
+    height: auto;
+    max-height: 82%;
+    padding: 1 2;
+    background: $surface;
+    border: solid $panel;
+}
+
+#model-picker Label,
+#provider-connect Label,
+#session-picker Label {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* Modal 内不再套框线：列表选中态由主题蓝色块光标表达。 */
+#model-picker OptionList,
+#session-picker OptionList {
+    height: auto;
+    min-height: 3;
+    max-height: 16;
+    border: none;
+    padding: 0;
+    background: $surface;
+}
+
+#model-picker-state {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#manual-model,
+#provider-connect-input {
+    width: 100%;
+    height: 3;
+    margin-top: 1;
+}
+
+#provider-connect-step,
+#provider-connect-error {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+}
+
+#provider-connect-error {
+    color: $error;
+}
+
+#session-picker-header {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+}
+
+#model-picker Button {
+    width: auto;
+    min-width: 18;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-top: 1;
+}

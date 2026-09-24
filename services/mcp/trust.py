@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from services.mcp.types import McpServerConfig
-
 
 BASE_STDIO_ENV_ALLOWLIST: tuple[str, ...] = (
     "APPDATA",
@@ -45,28 +45,26 @@ def fingerprint_mcp_server(config: McpServerConfig, workspace: Path) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def build_stdio_child_env(parent_env: dict[str, str], config: McpServerConfig) -> dict[str, str]:
+def build_stdio_child_env(
+    parent_env: dict[str, str], config: McpServerConfig
+) -> dict[str, str]:
     """构建传递给 stdio MCP 子进程的已净化环境变量。"""
 
     allowed = {key.upper() for key in BASE_STDIO_ENV_ALLOWLIST}
-    env = {
-        key: value
-        for key, value in parent_env.items()
-        if key.upper() in allowed
-    }
+    env = {key: value for key, value in parent_env.items() if key.upper() in allowed}
     env.update(config.env)
     return env
 
 
 @dataclass(frozen=True)
 class McpTrustPolicy:
-    store: "McpTrustStore | None" = None
+    store: McpTrustStore | None = None
     session_trusted: frozenset[str] = frozenset()
     trust_all: bool = False
 
     def __init__(
         self,
-        store: "McpTrustStore | None" = None,
+        store: McpTrustStore | None = None,
         *,
         session_trusted: Iterable[str] = (),
         trust_all: bool = False,
@@ -76,7 +74,7 @@ class McpTrustPolicy:
         object.__setattr__(self, "trust_all", trust_all)
 
     @classmethod
-    def trust_all_servers(cls) -> "McpTrustPolicy":
+    def trust_all_servers(cls) -> McpTrustPolicy:
         return cls(trust_all=True)
 
     def is_trusted(self, config: McpServerConfig, workspace: Path) -> bool:
@@ -86,7 +84,9 @@ class McpTrustPolicy:
             return True
         if self.store is None:
             return False
-        return self.store.is_trusted(config.name, fingerprint_mcp_server(config, workspace))
+        return self.store.is_trusted(
+            config.name, fingerprint_mcp_server(config, workspace)
+        )
 
 
 class McpTrustStore:
@@ -96,7 +96,9 @@ class McpTrustStore:
         self.settings_path = settings_path
 
     def is_trusted(self, server_name: str, fingerprint: str) -> bool:
-        entry = self._trusted_servers(self._read_settings(), create=False).get(server_name)
+        entry = self._trusted_servers(self._read_settings(), create=False).get(
+            server_name
+        )
         return isinstance(entry, dict) and entry.get("fingerprint") == fingerprint
 
     def trust_server(
@@ -124,7 +126,7 @@ class McpTrustStore:
                 f"Invalid JSON in project settings: {self.settings_path}: {exc.msg}"
             ) from exc
         if not isinstance(data, dict):
-            raise ValueError(
+            raise TypeError(
                 f"Project settings must contain a JSON object: {self.settings_path}"
             )
         return data
@@ -149,7 +151,7 @@ class McpTrustStore:
             mcp = {}
             settings["mcp"] = mcp
         if not isinstance(mcp, dict):
-            raise ValueError("Project settings field 'mcp' must be an object.")
+            raise TypeError("Project settings field 'mcp' must be an object.")
         trusted = mcp.get("trustedServers")
         if trusted is None:
             if not create:
@@ -157,7 +159,7 @@ class McpTrustStore:
             trusted = {}
             mcp["trustedServers"] = trusted
         if not isinstance(trusted, dict):
-            raise ValueError(
+            raise TypeError(
                 "Project settings field 'mcp.trustedServers' must be an object."
             )
         return trusted

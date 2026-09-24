@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
-from core.runtime_state import RuntimeState
 from core.context_engine import ContextEngine
+from core.runtime_state import RuntimeState
 from services.compaction import ContextCompactionService
-from utils.toolResultStorage import ToolResultStorage
 from services.compaction.service import MICROCOMPACT_PLACEHOLDER
 from services.compaction.types import CompactionConfig, CompactionTrigger
 from services.context.message_store import MessageStore
 from services.tools.types import ToolExecutionResult
+from utils.toolResultStorage import ToolResultStorage
 
 
 def _prepare(
@@ -20,7 +20,9 @@ def _prepare(
     return asyncio.run(service.prepare_for_model(messages, state))
 
 
-def test_prepare_for_model_persists_large_tool_results_before_projection(tmp_path) -> None:
+def test_prepare_for_model_persists_large_tool_results_before_projection(
+    tmp_path,
+) -> None:
     state = RuntimeState(session_id="session-compact")
     store = ToolResultStorage(tmp_path / ".onecode" / state.session_id)
     service = ContextCompactionService(
@@ -51,7 +53,9 @@ def test_prepare_for_model_persists_large_tool_results_before_projection(tmp_pat
     assert result.trigger == CompactionTrigger.MICRO
     assert projected_result["metadata"]["result_stored"] is True
     assert "Preview:\nab" in projected_result["content"]
-    assert result.transcript_refs == (projected_result["metadata"]["stored_result_path"],)
+    assert result.transcript_refs == (
+        projected_result["metadata"]["stored_result_path"],
+    )
     assert (store.results_dir / "call-1.txt").read_text(encoding="utf-8") == "abcdef"
     assert messages[1]["content"] == "abcdef"
     assert state.metadata["last_compaction"]["trigger"] == "micro"
@@ -150,7 +154,9 @@ def test_prepare_method_can_be_used_as_context_preparer() -> None:
     assert prepared.messages[0]["content"] == MICROCOMPACT_PLACEHOLDER
 
 
-def test_compaction_preparer_populates_context_snapshot_refs_and_hints(tmp_path) -> None:
+def test_compaction_preparer_populates_context_snapshot_refs_and_hints(
+    tmp_path,
+) -> None:
     state = RuntimeState(session_id="session-compact")
     message_store = MessageStore(
         transcript_root=tmp_path / ".onecode",

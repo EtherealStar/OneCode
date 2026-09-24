@@ -13,7 +13,7 @@ from services.plans.prompts import (
 
 
 def build_plan_mode_attachment(
-    plan_path: Path,
+    plan_path: Path | str,
     *,
     plan_content: str = "",
 ) -> dict[str, Any]:
@@ -26,7 +26,7 @@ def build_plan_mode_attachment(
 
 
 def build_plan_mode_reentry_attachment(
-    plan_path: Path,
+    plan_path: Path | str,
     plan_content: str,
 ) -> dict[str, Any]:
     return {
@@ -38,7 +38,7 @@ def build_plan_mode_reentry_attachment(
 
 
 def build_plan_mode_exit_attachment(
-    plan_path: Path,
+    plan_path: Path | str,
     plan_content: str,
 ) -> dict[str, Any]:
     return {

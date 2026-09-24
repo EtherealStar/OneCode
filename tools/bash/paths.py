@@ -6,8 +6,18 @@ from services.tools.types import ToolTarget
 from tools.bash.ast_model import BashAnalysis, Redirect, SimpleCommand
 from tools.bash.semantics import strip_safe_wrappers
 
-
-READ_PATH_COMMANDS = {"cat", "head", "tail", "wc", "stat", "file", "diff", "grep", "sed", "jq"}
+READ_PATH_COMMANDS = {
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "stat",
+    "file",
+    "diff",
+    "grep",
+    "sed",
+    "jq",
+}
 LIST_PATH_COMMANDS = {"ls", "tree", "find", "rg"}
 WRITE_PATH_COMMANDS = {"touch", "cp", "mv"}
 DIR_WRITE_COMMANDS = {"mkdir", "rmdir"}
@@ -29,12 +39,18 @@ def _command_targets(command: SimpleCommand) -> list[ToolTarget]:
     name = stripped[0]
     args = list(stripped[1:])
     if name == "cd":
-        return [ToolTarget(kind="directory", operation="list", value=args[0] if args else ".")]
+        return [
+            ToolTarget(
+                kind="directory", operation="list", value=args[0] if args else "."
+            )
+        ]
     if name in LIST_PATH_COMMANDS:
         paths = _path_args(args)
         if not paths:
             paths = ["."]
-        return [ToolTarget(kind="directory", operation="list", value=path) for path in paths]
+        return [
+            ToolTarget(kind="directory", operation="list", value=path) for path in paths
+        ]
     if name in READ_PATH_COMMANDS:
         paths = _path_args(args)
         if name in {"grep", "rg"} and len(paths) <= 1:
@@ -42,14 +58,24 @@ def _command_targets(command: SimpleCommand) -> list[ToolTarget]:
         return [ToolTarget(kind="file", operation="read", value=path) for path in paths]
     if name in DIR_WRITE_COMMANDS:
         return [
-            ToolTarget(kind="directory", operation="delete" if name == "rmdir" else "write", value=path)
+            ToolTarget(
+                kind="directory",
+                operation="delete" if name == "rmdir" else "write",
+                value=path,
+            )
             for path in _path_args(args)
         ]
     if name in DELETE_COMMANDS:
-        return [ToolTarget(kind="file", operation="delete", value=path) for path in _path_args(args)]
+        return [
+            ToolTarget(kind="file", operation="delete", value=path)
+            for path in _path_args(args)
+        ]
     if name in WRITE_PATH_COMMANDS:
         operation = "delete" if name == "mv" else "write"
-        return [ToolTarget(kind="file", operation=operation, value=path) for path in _path_args(args)]
+        return [
+            ToolTarget(kind="file", operation=operation, value=path)
+            for path in _path_args(args)
+        ]
     return []
 
 
@@ -59,9 +85,13 @@ def _redirect_targets(redirects: tuple[Redirect, ...]) -> list[ToolTarget]:
         if not redirect.target:
             continue
         if redirect.op in {">", ">>", ">|", "&>", "&>>"}:
-            targets.append(ToolTarget(kind="file", operation="write", value=redirect.target))
+            targets.append(
+                ToolTarget(kind="file", operation="write", value=redirect.target)
+            )
         elif redirect.op == "<":
-            targets.append(ToolTarget(kind="file", operation="read", value=redirect.target))
+            targets.append(
+                ToolTarget(kind="file", operation="read", value=redirect.target)
+            )
     return targets
 
 
@@ -75,7 +105,13 @@ def _path_args(args: list[str]) -> list[str]:
         if arg == "--":
             continue
         if arg.startswith("--"):
-            if "=" not in arg and arg in {"--glob", "--type", "--context", "--after-context", "--before-context"}:
+            if "=" not in arg and arg in {
+                "--glob",
+                "--type",
+                "--context",
+                "--after-context",
+                "--before-context",
+            }:
                 skip_next = True
             continue
         if arg.startswith("-") and arg != "-":

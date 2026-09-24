@@ -21,7 +21,6 @@ from services.tools.types import (
 )
 from tools.glob.prompt import PROMPT
 
-
 DEFAULT_HEAD_LIMIT = 100
 
 
@@ -163,14 +162,15 @@ def _handle(
         return (-_mtime(path), _display_path(path, runtime))
 
     candidates = [
-        path
-        for _, path in sorted((sort_key(path), path) for path in candidates)
+        path for _, path in sorted((sort_key(path), path) for path in candidates)
     ]
     total_matches = len(candidates)
     limit = _effective_limit(parsed.head_limit, DEFAULT_HEAD_LIMIT)
-    selected = candidates[parsed.offset :] if limit is None else candidates[
-        parsed.offset : parsed.offset + limit
-    ]
+    selected = (
+        candidates[parsed.offset :]
+        if limit is None
+        else candidates[parsed.offset : parsed.offset + limit]
+    )
     truncated = parsed.offset + len(selected) < total_matches
 
     lines = [f"Found {total_matches} files"]
@@ -217,7 +217,7 @@ def _path_allowed(
             runtime.guard.check_path(key, operation="read", kind="file"),
             runtime,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         allowed = False
     cache[key] = allowed
     return allowed

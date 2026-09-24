@@ -14,10 +14,6 @@ from typing import Any
 
 import httpx
 import pytest
-
-from infrastructure.providers.chat_completions import (
-    OpenAICompatibleChatCompletionsClient,
-)
 from sdk_test_support import (
     Recorder,
     async_sdk,
@@ -25,6 +21,10 @@ from sdk_test_support import (
     resolved_config,
     sse_response,
     text_chunk,
+)
+
+from infrastructure.providers.chat_completions import (
+    OpenAICompatibleChatCompletionsClient,
 )
 from services.context.snapshot import ContextSnapshot
 from services.model.retry import ModelRetryRunner, RetryPolicy
@@ -156,11 +156,17 @@ def test_partial_output_is_visible_when_stream_fails_midway() -> None:
     first_chunk = f"data: {json.dumps(text_chunk('hello'))}\n\n".encode()
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=_MidStreamFailure(first_chunk))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_MidStreamFailure(first_chunk),
+        )
 
     events, error = run_stream(handler)
 
-    assert [event.text for event in events if event.type == "content_delta"] == ["hello"]
+    assert [event.text for event in events if event.type == "content_delta"] == [
+        "hello"
+    ]
     assert isinstance(error, ProviderError)
     assert error.error_type == "network_error"
     assert error.retryable is True
@@ -219,7 +225,9 @@ def test_adapter_does_not_secretly_retry_and_runner_owns_retries() -> None:
         _SequenceHandler(
             [
                 lambda _request: error_response(500, "server exploded"),
-                lambda _request: sse_response([text_chunk("recovered", finish_reason="stop")]),
+                lambda _request: sse_response(
+                    [text_chunk("recovered", finish_reason="stop")]
+                ),
             ]
         )
     )

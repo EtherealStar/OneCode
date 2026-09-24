@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from textual.app import App
@@ -49,7 +49,9 @@ def _permission_request():
         classification=SimpleNamespace(read_only=True),
         tool_input={"command": "ls"},
         options=(
-            PermissionOption(id="allow_once", label="allow once", action="allow", scope="once"),
+            PermissionOption(
+                id="allow_once", label="allow once", action="allow", scope="once"
+            ),
             PermissionOption(
                 id="allow_session_directory",
                 label="allow this directory for this session",
@@ -185,7 +187,7 @@ def test_session_picker_returns_session_id() -> None:
         session_id="abc",
         title="hello",
         message_count=3,
-        updated_at=datetime(2026, 1, 1, 12, 0),
+        updated_at=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
     )
 
     async def scenario() -> None:
@@ -219,7 +221,9 @@ def test_provider_picker_selects_first() -> None:
 
     options = (
         ConnectOption(provider_id="openai", display_name="OpenAI"),
-        ConnectOption(provider_id="custom", display_name="Custom", requires_base_url=True),
+        ConnectOption(
+            provider_id="custom", display_name="Custom", requires_base_url=True
+        ),
     )
 
     async def scenario() -> None:

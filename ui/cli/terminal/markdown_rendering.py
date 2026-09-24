@@ -53,9 +53,7 @@ class MarkdownTableBlock:
 
 
 _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEPARATOR_RE = re.compile(
-    r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$"
-)
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 
@@ -102,10 +100,8 @@ def _split_row(line: str) -> tuple[str, ...]:
     """将 | a | b | c | 行拆分为 ("a", "b", "c") 单元格元组。"""
 
     stripped = line.strip()
-    if stripped.startswith("|"):
-        stripped = stripped[1:]
-    if stripped.endswith("|"):
-        stripped = stripped[:-1]
+    stripped = stripped.removeprefix("|")
+    stripped = stripped.removesuffix("|")
     parts = _CELL_SPLIT_RE.split(stripped)
     return tuple(p.strip() for p in parts)
 
@@ -329,7 +325,11 @@ def _render_horizontal(
                     cell_text = ""
                 visible = _display_width(cell_text)
                 align = "center" if is_header else alignments[c]
-                line += " " + _pad_aligned(cell_text, visible, column_widths[c], align) + " │"
+                line += (
+                    " "
+                    + _pad_aligned(cell_text, visible, column_widths[c], align)
+                    + " │"
+                )
             result.append(line)
         return result
 
@@ -375,7 +375,11 @@ def _render_vertical(
         if row_idx > 0:
             lines.append(separator)
         for col_idx, cell in enumerate(row):
-            label = block.headers[col_idx] if col_idx < len(block.headers) else f"Column {col_idx + 1}"
+            label = (
+                block.headers[col_idx]
+                if col_idx < len(block.headers)
+                else f"Column {col_idx + 1}"
+            )
             value = _ANSI_ESCAPE_RE.sub("", cell).rstrip()
             value = re.sub(r"\s+", " ", value).strip()
             if not value:
@@ -428,14 +432,14 @@ def render_markdown_table_block(
 
 
 __all__ = [
-    "MarkdownTableBlock",
-    "parse_markdown_table_block",
-    "render_markdown_table_block",
-    "render_cached_markdown",
-    "_render_assistant_segment",
-    "SAFETY_MARGIN",
-    "MIN_COLUMN_WIDTH",
     "MAX_ROW_LINES",
+    "MIN_COLUMN_WIDTH",
+    "SAFETY_MARGIN",
+    "MarkdownTableBlock",
+    "_render_assistant_segment",
+    "parse_markdown_table_block",
+    "render_cached_markdown",
+    "render_markdown_table_block",
 ]
 
 
@@ -451,7 +455,6 @@ from rich.text import Text as _RichText
 
 from ui.cli.terminal.text_cache import TextCache as _TextCache
 from ui.cli.theme import RICH_THEME as _RICH_THEME
-
 
 # render_cached_markdown 共享的模块级缓存。
 # 缓存键为 (text_hash, width)；仅存储渲染后的 ANSI 行而不缓存原始文本，
@@ -544,7 +547,9 @@ def _split_around_table(text: str, table) -> tuple[str, str]:
     lines = text.split("\n")
     start = None
     for idx in range(len(lines) - 1):
-        if table_row_re.match(lines[idx] or "") and table_sep_re.match(lines[idx + 1] or ""):
+        if table_row_re.match(lines[idx] or "") and table_sep_re.match(
+            lines[idx + 1] or ""
+        ):
             start = idx
             break
     if start is None:

@@ -58,7 +58,6 @@ from services.memory import (
     RelevantMemoryContextPreparer,
     RelevantMemorySelector,
 )
-from services.model.types import ProviderError
 from services.observability import (
     ErrorLogRecorder,
     JsonlErrorLogSink,
@@ -83,8 +82,8 @@ from services.tools.registry import ToolRegistry
 from services.tools.types import ToolDescriptor
 from tools.agent import descriptor as agent_descriptor
 from tools.ask_user_question import descriptor as ask_user_question_descriptor
-from tools.bash import descriptor as bash_descriptor
 from tools.background_task_stop import descriptor as background_task_stop_descriptor
+from tools.bash import descriptor as bash_descriptor
 from tools.edit_file import descriptor as edit_file_descriptor
 from tools.enter_plan_mode import descriptor as enter_plan_mode_descriptor
 from tools.exit_plan_mode import descriptor as exit_plan_mode_descriptor
@@ -208,7 +207,9 @@ class BackgroundSessionMemoryExtractor:
             )
             if output_path is not None:
                 _append_output(output_path, "dream: updating session memory\n")
-                _append_output(output_path, f"parent_session_id: {job.parent_session_id}\n")
+                _append_output(
+                    output_path, f"parent_session_id: {job.parent_session_id}\n"
+                )
             try:
                 result = await self.extractor.run_extraction_job(job, state)
             except asyncio.CancelledError:
@@ -218,7 +219,9 @@ class BackgroundSessionMemoryExtractor:
                 _append_output(output_path, "dream: completed\n")
                 result_session_id = result.get("result_session_id")
                 if result_session_id:
-                    _append_output(output_path, f"child_session_id: {result_session_id}\n")
+                    _append_output(
+                        output_path, f"child_session_id: {result_session_id}\n"
+                    )
             return result
 
         task = self._background_task_manager.start_dream(
@@ -241,6 +244,13 @@ def _append_output(path: Path, text: str) -> None:
         return
 
 
+def _require_tool_executor(runtime: ApplicationRuntime) -> ToolExecutor:
+    executor = runtime.tool_executor
+    if executor is None:
+        raise RuntimeError("Runtime has no tool executor to rebind.")
+    return executor
+
+
 @dataclass
 class ApplicationRuntime:
     workspace: Path
@@ -256,9 +266,7 @@ class ApplicationRuntime:
     permission_store: SessionPermissionStore | None = None
     permission_policy: PermissionPolicy | None = None
     permission_prompter: PermissionPrompter | None = None
-    trace_recorder: TraceRecorder = field(
-        default_factory=lambda: TraceRecorder.noop()
-    )
+    trace_recorder: TraceRecorder = field(default_factory=lambda: TraceRecorder.noop())
     error_log_recorder: ErrorLogRecorder = field(
         default_factory=lambda: ErrorLogRecorder.noop()
     )
@@ -282,7 +290,9 @@ class ApplicationRuntime:
     guard: SandboxGuard | None = None
     base_descriptors: tuple[ToolDescriptor, ...] = ()
     subagent_runner_ref: dict[str, SubagentRunner] | None = None
-    long_term_memory_extractor_ref: dict[str, LongTermMemoryExtractionService] | None = None
+    long_term_memory_extractor_ref: (
+        dict[str, LongTermMemoryExtractionService] | None
+    ) = None
     plan_store: PlanStore | None = None
     user_question_prompter: UserQuestionPrompter | None = None
 
@@ -292,7 +302,7 @@ class ApplicationRuntime:
         state: RuntimeState,
         message_store: MessageStore,
         file_state_cache: FileStateCache | None = None,
-    ) -> "ApplicationRuntime":
+    ) -> ApplicationRuntime:
         self.trace_recorder.switch_session(state.session_id)
         self.error_log_recorder.switch_session(state.session_id)
         if self.current_model_context is not None:
@@ -324,7 +334,9 @@ class ApplicationRuntime:
                 result_store=result_store,
             )
         file_state_cache = file_state_cache or FileStateCache()
-        bind_file_state_cache = getattr(self.tool_executor, "bind_file_state_cache", None)
+        bind_file_state_cache = getattr(
+            self.tool_executor, "bind_file_state_cache", None
+        )
         if callable(bind_file_state_cache):
             bind_file_state_cache(file_state_cache)
         attachment_collector = self.attachment_collector
@@ -382,7 +394,7 @@ class ApplicationRuntime:
             context_engine=context_engine,
             # session rebind 复用应用拥有的同一 model client，不复制所有权。
             model_client=self.model_client,
-            tool_executor=self.tool_executor,
+            tool_executor=_require_tool_executor(self),
             trace_recorder=self.trace_recorder,
             current_model_context=self.current_model_context,
             hooks=self.hooks,
@@ -402,7 +414,9 @@ class ApplicationRuntime:
         if self.permission_store is not None:
             self.permission_store.clear()
         if self.mcp_manager is not None:
-            state.metadata["mcp_server_instructions"] = self.mcp_manager.snapshot().instructions
+            state.metadata["mcp_server_instructions"] = (
+                self.mcp_manager.snapshot().instructions
+            )
         return replace(
             self,
             state=state,
@@ -419,8 +433,8 @@ class ApplicationRuntime:
     def with_model_config(
         self,
         *,
-        model_client: Any | None = None,
-    ) -> "ApplicationRuntime":
+        model_client: Any = None,
+    ) -> ApplicationRuntime:
         """在保留活跃会话的同时重新加载 .env 中的提供商配置。
 
         应用拥有并复用模型 client：会话重绑定（`with_session`）沿用同一实例，
@@ -460,6 +474,8 @@ class ApplicationRuntime:
                 self.subagent_runner_ref["runner"] = subagent_runner
 
         registry = self.registry
+        if registry is None:
+            raise RuntimeError("Runtime has no tool registry to rebind.")
         if subagent_runner is not None and self.base_descriptors:
             registry = ToolRegistry(
                 (
@@ -521,13 +537,14 @@ class ApplicationRuntime:
             ),
         )
 
-        result_store = ToolResultStorage(self.message_store.transcript_store.session_dir)
-        file_state_cache = (
-            self.tool_executor.file_state_cache
-            if hasattr(self.tool_executor, "file_state_cache")
-            else FileStateCache()
+        result_store = ToolResultStorage(
+            self.message_store.transcript_store.session_dir
         )
-        tool_executor: ToolExecutor = self.tool_executor
+        current_executor = _require_tool_executor(self)
+        file_state_cache = (
+            getattr(current_executor, "file_state_cache", None) or FileStateCache()
+        )
+        tool_executor: ToolExecutor = current_executor
         if self.guard is not None:
             tool_executor = RegistryToolExecutor(
                 registry,
@@ -683,7 +700,9 @@ def build_runtime(
     )
     registry = ToolRegistry(base_descriptors, permission_policy=permission_policy)
     result_store = ToolResultStorage(message_store.transcript_store.session_dir)
-    session_memory_store = SessionMemoryStore(message_store.transcript_store.session_dir)
+    session_memory_store = SessionMemoryStore(
+        message_store.transcript_store.session_dir
+    )
     long_term_memory_store = LongTermMemoryStore(workspace)
     instruction_memory_loader = InstructionMemoryLoader(
         workspace,
@@ -715,9 +734,7 @@ def build_runtime(
         workspace=workspace,
         reader=attachment_reader,
         file_state_cache=file_state_cache,
-        shared_sources=(
-            BackgroundTaskNotificationSource(background_task_manager),
-        ),
+        shared_sources=(BackgroundTaskNotificationSource(background_task_manager),),
     )
     current_model_context = CurrentModelContext()
     model_client = create_model_client(workspace / ".env")
@@ -907,9 +924,7 @@ def _iter_untrusted_project_mcp_server_requests(
     trust_store: McpTrustStore,
 ) -> tuple[tuple[McpServerConfig, McpTrustPromptRequest], ...]:
     allowed_env_keys = {item.upper() for item in BASE_STDIO_ENV_ALLOWLIST}
-    base_env_keys = sorted(
-        key for key in os.environ if key.upper() in allowed_env_keys
-    )
+    base_env_keys = sorted(key for key in os.environ if key.upper() in allowed_env_keys)
     requests = []
     for config in mcp_config.servers.values():
         if (
@@ -1029,8 +1044,8 @@ def build_unconfigured_runtime(workspace: Path) -> ApplicationRuntime:
 __all__ = [
     "ApplicationRuntime",
     "BackgroundSessionMemoryExtractor",
-    "McpTrustPromptRequest",
     "McpTrustMode",
+    "McpTrustPromptRequest",
     "TrustChoice",
     "build_runtime",
     "build_unconfigured_runtime",

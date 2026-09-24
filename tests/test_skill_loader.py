@@ -27,7 +27,9 @@ def test_loader_returns_empty_when_skill_dirs_do_not_exist(
     assert get_commands(tmp_path / "workspace") == ()
 
 
-def test_loader_discovers_project_skill_and_frontmatter(tmp_path: Path, monkeypatch) -> None:
+def test_loader_discovers_project_skill_and_frontmatter(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("ONECODE_HOME", str(tmp_path / "home"))
     workspace = tmp_path / "workspace"
     write_skill(

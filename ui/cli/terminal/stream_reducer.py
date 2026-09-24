@@ -62,15 +62,14 @@ reducer 的设计动机是测试友好:可以构造一系列 ``AgentEvent`` 然�
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from core.stream_events import event_requires_attribution
 from ui.cli.terminal.stream_state import (
     CliStreamUiState,
     CommitKind,
     StaticCommit,
-    StreamMode,
     StreamingToolUseState,
+    StreamMode,
     ToolStatus,
 )
 
@@ -171,7 +170,7 @@ def _mark_tool_error(state: CliStreamUiState, call_id: str) -> None:
 
 def _require_attribution(
     state: CliStreamUiState,
-    event: "AgentEvent",
+    event: AgentEvent,
 ) -> tuple[str, int] | None:
     """返回 (assistant_call_id, model_turn_index)，失败时返回 None。
 
@@ -268,9 +267,7 @@ def release_ready_tool_result_commits(
     StaticCommit 列表（已追加到 pending_static_commits）。
     """
 
-    bucket = state.completed_tool_results_by_assistant.setdefault(
-        assistant_call_id, {}
-    )
+    bucket = state.completed_tool_results_by_assistant.setdefault(assistant_call_id, {})
     next_index = state.next_tool_result_index_to_release_by_assistant.get(
         assistant_call_id, 0
     )
@@ -288,9 +285,7 @@ def release_ready_tool_result_commits(
         state.pending_static_commits.append(commit)
         released.append(commit)
         next_index += 1
-    state.next_tool_result_index_to_release_by_assistant[
-        assistant_call_id
-    ] = next_index
+    state.next_tool_result_index_to_release_by_assistant[assistant_call_id] = next_index
     return released
 
 
@@ -320,7 +315,7 @@ def queue_assistant_checkpoint(
     return commit
 
 
-def reduce_stream_event(state: CliStreamUiState, event: "AgentEvent") -> None:
+def reduce_stream_event(state: CliStreamUiState, event: AgentEvent) -> None:
     """就地将一个 AgentEvent 折叠进 state 中。
 
     该函数是纯函数：绝不向 stdout 输出，绝不构造 Rich Console，
@@ -465,10 +460,8 @@ def reduce_stream_event(state: CliStreamUiState, event: "AgentEvent") -> None:
                 # 让它能被后面到达的 result 正常释放。
                 declared_index = _next_declared_index(state, tool_call_id)
         state.tools.pop(tool_call_id, None)
-        bucket = state.completed_tool_results_by_assistant.setdefault(
-            call_id, {}
-        )
-        bucket[declared_index] = result
+        bucket = state.completed_tool_results_by_assistant.setdefault(call_id, {})
+        bucket[declared_index] = cast("ToolExecutionResult", result)
         release_ready_tool_result_commits(state, call_id)
         if state.has_active_tools():
             _set_mode(state, StreamMode.TOOL_RUNNING)

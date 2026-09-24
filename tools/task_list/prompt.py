@@ -1,4 +1,5 @@
 """task_list 工具的提示词文本。"""
+
 PROMPT = """Purpose:
 List visible durable tasks in the current task list.
 

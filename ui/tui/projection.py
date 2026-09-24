@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any
 
 from application.history import HistoryRecord
 from application.types import (
@@ -65,7 +66,7 @@ class _MessageState:
     group_key: str | None = None
     text: str = ""
     attachments: list[UiPart] = field(default_factory=list)
-    tools: "OrderedDict[str, UiPart]" = field(default_factory=OrderedDict)
+    tools: OrderedDict[str, UiPart] = field(default_factory=OrderedDict)
 
 
 class ConversationProjection:
@@ -150,7 +151,9 @@ class ConversationProjection:
     # --- 入口方法 ---------------------------------------------------------
 
     def replace(self, snapshot: SessionSnapshot) -> ViewChange:
-        previous = {state.message_id: self._message_view(state) for state in self._messages}
+        previous = {
+            state.message_id: self._message_view(state) for state in self._messages
+        }
         previous_order = [state.message_id for state in self._messages]
         reset = (
             self._session_id != snapshot.session_id
@@ -309,20 +312,14 @@ class ConversationProjection:
         return ViewChange(run_changed=True, queue_changed=removed)
 
     def _on_assistant_delta(self, update: AssistantDelta) -> ViewChange:
-        group_key = self._group_key(
-            update.assistant_call_id, update.model_turn_index
-        )
+        group_key = self._group_key(update.assistant_call_id, update.model_turn_index)
         state, created = self._ensure_assistant(group_key)
         if update.text:
             state.text += update.text
-        return ViewChange(
-            updated_ids=(state.message_id,), structure_changed=created
-        )
+        return ViewChange(updated_ids=(state.message_id,), structure_changed=created)
 
     def _on_message_committed(self, update: MessageCommitted) -> ViewChange:
-        group_key = self._group_key(
-            update.assistant_call_id, update.model_turn_index
-        )
+        group_key = self._group_key(update.assistant_call_id, update.model_turn_index)
         state = self._groups.get(group_key)
         created = False
         if state is None:
@@ -369,9 +366,7 @@ class ConversationProjection:
             tool_input=update.input,
             metadata=metadata,
         )
-        return ViewChange(
-            updated_ids=(state.message_id,), structure_changed=created
-        )
+        return ViewChange(updated_ids=(state.message_id,), structure_changed=created)
 
     def _on_detail_loaded(self, update: DetailLoaded) -> ViewChange:
         if update.ref.session_id != self._session_id:
@@ -443,11 +438,14 @@ class ConversationProjection:
             self._merge_history_tool_result(record)
 
     def _merge_history_tool_result(self, record: HistoryRecord) -> None:
+        tool_call_id = record.tool_call_id
+        if tool_call_id is None:
+            return
         state = self._group_for_record(record)
-        part = state.tools.get(record.tool_call_id) if state is not None else None
+        part = state.tools.get(tool_call_id) if state is not None else None
         if part is None:
-            state = self._find_declared_tool(record.tool_call_id)
-            part = state.tools.get(record.tool_call_id) if state is not None else None
+            state = self._find_declared_tool(tool_call_id)
+            part = state.tools.get(tool_call_id) if state is not None else None
         if state is None or part is None:
             # 无法配对的工具结果绝不会演化为永久的对话消息。
             return
@@ -456,11 +454,11 @@ class ConversationProjection:
             detail_ref = DetailRef(
                 session_id=self._session_id,
                 kind="tool_result",
-                identifier=record.tool_call_id,
+                identifier=tool_call_id,
                 relative_path=record.external_result_path,
             )
         detail_error = "missing_artifact" if record.missing_external_result else None
-        state.tools[record.tool_call_id] = replace(
+        state.tools[tool_call_id] = replace(
             part,
             status="error" if record.is_error else "completed",
             is_error=record.is_error,
@@ -563,7 +561,11 @@ class ConversationProjection:
         return state, True
 
     def _ensure_assistant(
-        self, group_key: str, *, message_id: str | None = None, lifecycle: str = LIFECYCLE_DRAFT
+        self,
+        group_key: str,
+        *,
+        message_id: str | None = None,
+        lifecycle: str = LIFECYCLE_DRAFT,
     ) -> tuple[_MessageState, bool]:
         state = self._groups.get(group_key)
         if state is not None:
@@ -633,18 +635,23 @@ class ConversationProjection:
     ) -> str | None:
         if assistant_call_id is None and model_turn_index is None:
             return None
-        return (
-            f"{self._session_id}|call|{model_turn_index}|{assistant_call_id}"
-        )
+        return f"{self._session_id}|call|{model_turn_index}|{assistant_call_id}"
 
     def _synthetic_id(self, group_key: str) -> str:
         return f"draft::{group_key}"
 
     def _message_view(self, state: _MessageState) -> UiMessage:
         parts: list[UiPart] = []
-        if state.role in {MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT, MESSAGE_ROLE_SYSTEM}:
-            if state.text:
-                parts.append(UiPart(kind=PART_TEXT, content=state.text))
+        if (
+            state.role
+            in {
+                MESSAGE_ROLE_USER,
+                MESSAGE_ROLE_ASSISTANT,
+                MESSAGE_ROLE_SYSTEM,
+            }
+            and state.text
+        ):
+            parts.append(UiPart(kind=PART_TEXT, content=state.text))
         if state.role == MESSAGE_ROLE_USER:
             parts.extend(state.attachments)
         elif state.role == MESSAGE_ROLE_ASSISTANT:

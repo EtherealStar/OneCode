@@ -14,13 +14,12 @@ from rich.console import Console
 from rich.text import Text
 
 from ui.cli.terminal.markdown_rendering import render_cached_markdown
+from ui.cli.theme import RICH_THEME
 from ui.cli.tool_renderers import (
     render_fallback_tool_result,
     render_tool_result,
 )
-from ui.cli.theme import RICH_THEME
 from ui.cli.types import CliRuntime
-
 
 # 所有静态打印器共享的模块级控制台。共享该实例可避免
 # 每次打印都构建新 Rich Console 的开销，这在长会话重放数百个工具横幅时尤为重要。
@@ -102,9 +101,7 @@ def print_assistant_start() -> None:
     我们在流式传输前先提交此前缀，这样即使流式中途发生中断，也能留下可见的 assistant 标识。
     """
 
-    static_console().print(
-        Text("onecode>", style=assistant_prefix_style())
-    )
+    static_console().print(Text("onecode>", style=assistant_prefix_style()))
 
 
 def print_assistant_markdown(text: str) -> None:
@@ -121,9 +118,7 @@ def print_assistant_markdown(text: str) -> None:
 
     if not text:
         return
-    static_console().print(
-        Text("onecode>", style=assistant_prefix_style())
-    )
+    static_console().print(Text("onecode>", style=assistant_prefix_style()))
     width = static_console().width or 80
     cached_lines = render_cached_markdown(text, width=width)
     if cached_lines:
@@ -148,7 +143,9 @@ def print_assistant_inline(text: str) -> None:
 # --- 工具横幅 ---
 
 
-def print_tool_banner_start(tool_name: str, call_id: str, arguments: dict[str, Any] | None = None) -> None:
+def print_tool_banner_start(
+    tool_name: str, call_id: str, arguments: dict[str, Any] | None = None
+) -> None:
     """打印工具调用的起始行。
 
     静态区域仅需紧凑的单行摘要，因此我们直接格式化调用名称与受限的参数预览，
@@ -191,7 +188,11 @@ def print_tool_result(
     """
 
     if hasattr(result, "tool_call_id"):
-        line = render_tool_result(result, workspace=workspace) if workspace is not None else render_fallback_tool_result(result)
+        line = (
+            render_tool_result(result, workspace=workspace)
+            if workspace is not None
+            else render_fallback_tool_result(result)
+        )
     else:
         line = render_fallback_tool_result(result)
     print_static(Text(f"  ⎿  {line}", style="onecode.subtle"))

@@ -4,19 +4,18 @@ import asyncio
 
 from rich.console import Console
 from rich.theme import Theme as RichTheme
-
-from application.history import HistoryToolCall
-from application.types import DetailLoaded, DetailRef, DetailResult
-from ui.tui.projection import ConversationProjection
-from ui.tui.renderers.message import render_message
-from ui.tui.theme import RICH_STYLES
-
 from tui_test_support import (
     ConversationApp,
     assistant_record,
     make_snapshot,
     tool_result_record,
 )
+
+from application.history import HistoryToolCall
+from application.types import DetailLoaded, DetailRef, DetailResult
+from ui.tui.projection import ConversationProjection
+from ui.tui.renderers.message import render_message
+from ui.tui.theme import RICH_STYLES
 
 DETAIL_REF = DetailRef(
     session_id="s1",
@@ -119,9 +118,7 @@ def test_loaded_detail_is_shown_and_not_requested_again() -> None:
             await pilot.pause(0.1)
             widget = app.viewport.widget_for("a1")
             assert widget is not None
-            rendered = _render(
-                render_message(widget.message, details_expanded=True)
-            )
+            rendered = _render(render_message(widget.message, details_expanded=True))
             assert "FULL TOOL BODY" in rendered
             app.detail_requests.clear()
             app.viewport.set_message_expanded("a1", False)
@@ -157,9 +154,7 @@ def test_missing_artifact_keeps_summary_and_stops_retry() -> None:
             part = next(p for p in widget.message.parts if p.tool_name)
             assert part.detail_error == "missing_artifact"
             assert part.detail_ref is not None
-            rendered = _render(
-                render_message(widget.message, details_expanded=True)
-            )
+            rendered = _render(render_message(widget.message, details_expanded=True))
             assert "summary text" in rendered or "x.py" in rendered
             app.detail_requests.clear()
             app.viewport.set_message_expanded("a1", False)
@@ -174,7 +169,9 @@ def test_unknown_tool_expand_still_shows_body() -> None:
     async def scenario() -> None:
         call = HistoryToolCall("t7", "mcp_thing", {})
         history = (
-            assistant_record("a1", "", assistant_call_id="c1", model_turn_index=0, tool_calls=(call,)),
+            assistant_record(
+                "a1", "", assistant_call_id="c1", model_turn_index=0, tool_calls=(call,)
+            ),
             tool_result_record(
                 "tr7",
                 tool_call_id="t7",
@@ -192,9 +189,7 @@ def test_unknown_tool_expand_still_shows_body() -> None:
             await pilot.pause(0.1)
             widget = app.viewport.widget_for("a1")
             assert widget is not None
-            rendered = _render(
-                render_message(widget.message, details_expanded=True)
-            )
+            rendered = _render(render_message(widget.message, details_expanded=True))
             assert "tool output body" in rendered
 
     asyncio.run(scenario())

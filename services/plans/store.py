@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from pathlib import Path
 import secrets
 import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
 
-from core.runtime_state import PlanState, RuntimeState
+from core.runtime_state import RuntimeState
 
 DEFAULT_PLAN_DIR = ".onecode"
 PLANS_SUBDIR = "plans"

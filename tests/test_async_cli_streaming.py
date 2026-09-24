@@ -10,7 +10,6 @@ from core.runtime_state import RuntimeState
 from core.stream_events import AgentEvent
 from services.context.message_store import MessageStore
 from services.tools.registry import ToolRegistry
-
 from ui.cli.batch import run_batch_async
 from ui.cli.types import CliRuntime
 

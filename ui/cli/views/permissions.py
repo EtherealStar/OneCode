@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
@@ -28,10 +28,12 @@ def render_permissions(runtime: CliRuntime) -> Group:
     )
 
 
-def _session_table(runtime: CliRuntime) -> object:
+def _session_table(runtime: CliRuntime) -> RenderableType:
     store = runtime.permission_store
     if store is None:
-        return Text(f"{SYMBOLS.info} Session permissions: disabled", style="onecode.subtle")
+        return Text(
+            f"{SYMBOLS.info} Session permissions: disabled", style="onecode.subtle"
+        )
     snapshot = store.snapshot()
     table = Table(title="Session", box=None, show_header=False)
     table.add_column("field", style="onecode.subtle")
@@ -51,18 +53,22 @@ def _session_table(runtime: CliRuntime) -> object:
     return table
 
 
-def _project_table(runtime: CliRuntime) -> object:
+def _project_table(runtime: CliRuntime) -> RenderableType:
     policy = runtime.permission_policy
     project_store = policy.project_store if policy is not None else None
     if project_store is None:
-        return Text(f"{SYMBOLS.info} Project permissions: disabled", style="onecode.subtle")
+        return Text(
+            f"{SYMBOLS.info} Project permissions: disabled", style="onecode.subtle"
+        )
     table = Table(title="Project", box=None, show_header=False)
     table.add_column("field", style="onecode.subtle")
     table.add_column("value")
-    table.add_row("settings", display_path(project_store.settings_path, runtime.workspace))
+    table.add_row(
+        "settings", display_path(project_store.settings_path, runtime.workspace)
+    )
     try:
         rules = project_store.load_rules()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         table.add_row("error", f"{type(exc).__name__}: {exc}")
         return table
     by_behavior: dict[str, list[str]] = defaultdict(list)

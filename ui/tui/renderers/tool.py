@@ -19,9 +19,9 @@ from pathlib import Path
 from rich.text import Text
 
 _SECRET_KEY = re.compile(
-    r"(api[_-]?key|token|secret|password|authorization|credential)", re.I
+    r"(api[_-]?key|token|secret|password|authorization|credential)", re.IGNORECASE
 )
-_PATH_KEY = re.compile(r"(^|[_-])(path|cwd|home|file)([_-]|$)", re.I)
+_PATH_KEY = re.compile(r"(^|[_-])(path|cwd|home|file)([_-]|$)", re.IGNORECASE)
 _INLINE_SECRET = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*([^,\s]+)"
 )
@@ -37,9 +37,7 @@ def redact_sensitive(value: object, *, key: str = "") -> object:
     if isinstance(value, (list, tuple)):
         return [redact_sensitive(item) for item in value]
     if isinstance(value, str):
-        value = _INLINE_SECRET.sub(
-            lambda match: f"{match.group(1)}=[已隐藏]", value
-        )
+        value = _INLINE_SECRET.sub(lambda match: f"{match.group(1)}=[已隐藏]", value)
         value = re.sub(r"(?i)([A-Z]:\\|/)(?:[^\s,;]+)", "[路径已隐藏]", value)
         return value[:2000] + ("…" if len(value) > 2000 else "")
     return value
@@ -86,7 +84,7 @@ class ToolPresentationRegistry:
         if presenter is not None:
             try:
                 return presenter(name, tool_input, result_preview, is_error)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
         return _generic_presenter(name, tool_input, result_preview, is_error)
 
@@ -99,8 +97,12 @@ def build_tool_presentation_registry(
     del workspace_root  # 保留以维持调用兼容性；路径保持字面处理
     registry = ToolPresentationRegistry()
 
-    registry.register("read_file", _generic_path_presenter(lambda values: values.get("path")))
-    registry.register("read_docs", _generic_path_presenter(lambda values: values.get("path")))
+    registry.register(
+        "read_file", _generic_path_presenter(lambda values: values.get("path"))
+    )
+    registry.register(
+        "read_docs", _generic_path_presenter(lambda values: values.get("path"))
+    )
     registry.register("write_file", _write_presenter)
     registry.register("edit_file", _edit_presenter)
     registry.register("glob", _search_presenter(lambda values: values.get("pattern")))
@@ -207,9 +209,7 @@ def _bash_presenter(
 # --- 辅助函数 --------------------------------------------------------------
 
 
-def _body(
-    result_preview: str | None, tool_input: Mapping[str, object] | None
-) -> str:
+def _body(result_preview: str | None, tool_input: Mapping[str, object] | None) -> str:
     if result_preview is not None:
         return _safe_text(result_preview)
     if not tool_input:
@@ -226,7 +226,9 @@ def _safe_text(value: str) -> str:
     return str(redact_sensitive(value, key="result"))
 
 
-def _arguments_summary(tool_input: Mapping[str, object] | None, *, limit: int = 120) -> str:
+def _arguments_summary(
+    tool_input: Mapping[str, object] | None, *, limit: int = 120
+) -> str:
     if not tool_input:
         return ""
     parts: list[str] = []

@@ -35,7 +35,7 @@ def test_normalize_path_pattern_preserves_wildcard(tmp_path: Path) -> None:
 
     pattern = normalize_path_pattern(repo / "*")
 
-    assert pattern.endswith(f"{Path('repo')}/*") or pattern.endswith(f"{Path('repo')}\\*")
+    assert pattern.endswith((f"{Path('repo')}/*", f"{Path('repo')}\\*"))
 
 
 def test_guard_allows_workspace_path(tmp_path: Path) -> None:

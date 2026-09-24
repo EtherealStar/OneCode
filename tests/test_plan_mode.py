@@ -10,7 +10,6 @@ import pytest
 
 from core.runtime_state import PermissionMode, RuntimeState
 from services.permissions import PermissionPolicy
-from services.permissions.types import PermissionDecision
 from services.plans import (
     PlanStore,
     build_plan_attachments_for_state,
@@ -22,18 +21,12 @@ from services.plans.attachments import (
     build_plan_mode_exit_attachment,
     build_plan_mode_reentry_attachment,
 )
-from services.plans.prompts import (
-    render_plan_mode_exit,
-    render_plan_mode_intro,
-    render_plan_mode_reentry,
-)
 from services.tools.types import (
     ToolCall,
     ToolCallClassification,
     ToolDescriptor,
     ToolTarget,
 )
-
 
 # ---------------------------------------------------------------------------
 # PlanStore
@@ -171,7 +164,9 @@ def _descriptor(name: str) -> ToolDescriptor:
     )
 
 
-def _read_only_call(name: str, file_path: str) -> tuple[ToolCall, ToolCallClassification]:
+def _read_only_call(
+    name: str, file_path: str
+) -> tuple[ToolCall, ToolCallClassification]:
     return (
         ToolCall(id="c1", name=name, input={"file_path": file_path}),
         ToolCallClassification(
@@ -210,9 +205,7 @@ def test_plan_mode_allows_read_only_bash(tmp_path: Path) -> None:
         read_only=True,
         modifies_filesystem=False,
         concurrency_safe=True,
-        targets=(
-            ToolTarget(kind="command", operation="execute", value="git status"),
-        ),
+        targets=(ToolTarget(kind="command", operation="execute", value="git status"),),
     )
     decision = _policy().evaluate(
         tool_call=ToolCall(id="b1", name="bash", input={"command": "git status"}),
@@ -232,11 +225,17 @@ def test_plan_mode_denies_write_outside_plan_file(tmp_path: Path) -> None:
         modifies_filesystem=True,
         concurrency_safe=False,
         targets=(
-            ToolTarget(kind="file", operation="write", value=str(tmp_path / "src" / "x.py")),
+            ToolTarget(
+                kind="file", operation="write", value=str(tmp_path / "src" / "x.py")
+            ),
         ),
     )
     decision = _policy().evaluate(
-        tool_call=ToolCall(id="w1", name="write_file", input={"file_path": str(tmp_path / "src" / "x.py")}),
+        tool_call=ToolCall(
+            id="w1",
+            name="write_file",
+            input={"file_path": str(tmp_path / "src" / "x.py")},
+        ),
         descriptor=descriptor,
         classification=classification,
         guard_policies=(),
@@ -264,7 +263,9 @@ def test_plan_mode_allows_write_to_active_plan_file(tmp_path: Path) -> None:
         ),
     )
     decision = _policy().evaluate(
-        tool_call=ToolCall(id="w1", name="write_file", input={"file_path": str(plan_path)}),
+        tool_call=ToolCall(
+            id="w1", name="write_file", input={"file_path": str(plan_path)}
+        ),
         descriptor=descriptor,
         classification=classification,
         guard_policies=(),
@@ -279,7 +280,12 @@ def test_plan_mode_hides_implementation_tools() -> None:
     policy = _policy()
     for hidden in ("task_create", "task_update", "skill"):
         assert policy.is_tool_visible(_descriptor(hidden), state) is False
-    for allowed in ("read_file", "ask_user_question", "enter_plan_mode", "exit_plan_mode"):
+    for allowed in (
+        "read_file",
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode",
+    ):
         assert policy.is_tool_visible(_descriptor(allowed), state) is True
 
 
@@ -290,7 +296,10 @@ def test_plan_mode_hides_implementation_tools() -> None:
 
 def test_plan_attachments_intro_lists_path_and_workflow() -> None:
     payload = build_plan_mode_attachment(Path("C:/plans/demo.md"))
-    assert "C:/plans/demo.md" in payload["content"] or "C:\\plans\\demo.md" in payload["content"]
+    assert (
+        "C:/plans/demo.md" in payload["content"]
+        or "C:\\plans\\demo.md" in payload["content"]
+    )
     assert "ask_user_question" in payload["content"]
     assert "exit_plan_mode" in payload["content"]
 
@@ -340,6 +349,7 @@ def test_enter_plan_mode_tool_returns_plan_path(tmp_path: Path) -> None:
     runtime = _runtime_for(state)
     # The handler is async; we drive it synchronously here.
     import asyncio
+
     result = asyncio.run(descriptor.handler({}, runtime))
     payload = json.loads(result.content)
     assert payload["permission_mode"] == "plan"
@@ -356,6 +366,7 @@ def test_exit_plan_mode_tool_requires_plan_mode(tmp_path: Path) -> None:
     descriptor = exit_descriptor(store)
     runtime = _runtime_for(state)
     import asyncio
+
     result = asyncio.run(descriptor.handler({}, runtime))
     payload = json.loads(result.content)
     assert payload["error"] == "not_in_plan_mode"
@@ -371,6 +382,7 @@ def test_exit_plan_mode_tool_reports_awaiting_approval(tmp_path: Path) -> None:
     descriptor = exit_descriptor(store)
     runtime = _runtime_for(state)
     import asyncio
+
     result = asyncio.run(descriptor.handler({}, runtime))
     payload = json.loads(result.content)
     assert payload["status"] == "awaiting_approval"
@@ -378,8 +390,8 @@ def test_exit_plan_mode_tool_reports_awaiting_approval(tmp_path: Path) -> None:
 
 
 def test_ask_user_question_tool_uses_prompter(tmp_path: Path) -> None:
-    from tools.ask_user_question import descriptor as ask_descriptor
     from services.questions.types import AnswerRecord, QuestionResponse
+    from tools.ask_user_question import descriptor as ask_descriptor
 
     class _Prompter:
         async def ask_questions(self, questions):
@@ -393,6 +405,7 @@ def test_ask_user_question_tool_uses_prompter(tmp_path: Path) -> None:
     descriptor = ask_descriptor(_Prompter())
     runtime = _runtime_for(RuntimeState())
     import asyncio
+
     result = asyncio.run(
         descriptor.handler(
             {
@@ -436,7 +449,9 @@ def test_cli_plan_command_enters_plan_mode(tmp_path: Path) -> None:
     from ui.cli.types import CliRuntime
 
     state = RuntimeState()
-    message_store = MessageStore(transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path)
+    message_store = MessageStore(
+        transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path
+    )
     runtime = CliRuntime(
         workspace=tmp_path,
         state=state,
@@ -462,7 +477,9 @@ def test_cli_plan_command_open_prints_path(tmp_path: Path) -> None:
     from ui.cli.types import CliRuntime
 
     state = RuntimeState()
-    message_store = MessageStore(transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path)
+    message_store = MessageStore(
+        transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path
+    )
     runtime = CliRuntime(
         workspace=tmp_path,
         state=state,
@@ -471,8 +488,10 @@ def test_cli_plan_command_open_prints_path(tmp_path: Path) -> None:
     )
     result = dispatch_command(runtime, "/plan open")
     payload = result.renderable
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
+
     buffer = StringIO()
     Console(file=buffer, force_terminal=False, width=200).print(payload)
     output = buffer.getvalue()
@@ -486,7 +505,9 @@ def test_cli_plan_command_show_displays_content(tmp_path: Path) -> None:
     from ui.cli.types import CliRuntime
 
     state = RuntimeState()
-    message_store = MessageStore(transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path)
+    message_store = MessageStore(
+        transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path
+    )
     runtime = CliRuntime(
         workspace=tmp_path,
         state=state,
@@ -513,7 +534,9 @@ def test_cli_plan_command_approve_exits_plan_mode(tmp_path: Path) -> None:
     from ui.cli.types import CliRuntime
 
     state = RuntimeState()
-    message_store = MessageStore(transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path)
+    message_store = MessageStore(
+        transcript_root=tmp_path, session_id=state.session_id, cwd=tmp_path
+    )
     runtime = CliRuntime(
         workspace=tmp_path,
         state=state,

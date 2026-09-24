@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 from infrastructure.config.env import provider_env_prefix
 from infrastructure.providers.connection import ConnectOption, ProviderConnectionService
@@ -49,7 +49,9 @@ def write_provider_env(env_path: Path, update: ProviderEnvUpdate) -> None:
     for line in lines:
         key = _line_key(line)
         if key == ACTIVE_PROVIDER_KEY:
-            output.append(f"{ACTIVE_PROVIDER_KEY}={_format_env_value(update.provider_id)}")
+            output.append(
+                f"{ACTIVE_PROVIDER_KEY}={_format_env_value(update.provider_id)}"
+            )
             active_seen = True
             continue
         if key in provider_keys:
@@ -60,7 +62,9 @@ def write_provider_env(env_path: Path, update: ProviderEnvUpdate) -> None:
             provider_comment_index = len(output) - 1
 
     if not active_seen:
-        output.insert(0, f"{ACTIVE_PROVIDER_KEY}={_format_env_value(update.provider_id)}")
+        output.insert(
+            0, f"{ACTIVE_PROVIDER_KEY}={_format_env_value(update.provider_id)}"
+        )
         if provider_comment_index is not None:
             provider_comment_index += 1
 
@@ -72,7 +76,7 @@ def write_provider_env(env_path: Path, update: ProviderEnvUpdate) -> None:
 
     provider_lines = _provider_assignment_lines(provider_assignments)
     assert provider_comment_index is not None
-    output[provider_comment_index + 1:provider_comment_index + 1] = provider_lines
+    output[provider_comment_index + 1 : provider_comment_index + 1] = provider_lines
 
     env_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = env_path.with_name(f".{env_path.name}.tmp")
@@ -102,10 +106,7 @@ def _format_env_value(value: str) -> str:
 
 
 def _provider_assignment_lines(assignments: dict[str, str]) -> list[str]:
-    return [
-        f"{key}={_format_env_value(value)}"
-        for key, value in assignments.items()
-    ]
+    return [f"{key}={_format_env_value(value)}" for key, value in assignments.items()]
 
 
 def read_existing_env(env_path: Path) -> dict[str, str | None]:
@@ -117,7 +118,11 @@ def read_existing_env(env_path: Path) -> dict[str, str | None]:
         if key is not None:
             raw_value = line.strip().split("=", 1)[1].strip()
             # 若存在外层引号则予以剥除。
-            if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
+            if (
+                len(raw_value) >= 2
+                and raw_value[0] == raw_value[-1]
+                and raw_value[0] in {'"', "'"}
+            ):
                 raw_value = raw_value[1:-1]
             result[key] = raw_value or None
     return result

@@ -23,8 +23,7 @@ from tools.skill.prompt import PROMPT
 
 
 class SkillProvider(Protocol):
-    def find_skill(self, name: str, cwd: Path) -> SkillCommand | None:
-        ...
+    def find_skill(self, name: str, cwd: Path) -> SkillCommand | None: ...
 
 
 class SkillForkRunner(Protocol):
@@ -35,8 +34,7 @@ class SkillForkRunner(Protocol):
         args: str,
         parent_session_id: str,
         parent_tool_call_id: str,
-    ) -> SubagentResult:
-        ...
+    ) -> SubagentResult: ...
 
 
 INPUT_SCHEMA: dict[str, Any] = {
@@ -92,9 +90,13 @@ def _validator_for(
         if command is None:
             return ValidationResult.failure(f"Unknown skill: {skill_name}")
         if command.disable_model_invocation:
-            return ValidationResult.failure(f"Skill cannot be model-invoked: {skill_name}")
+            return ValidationResult.failure(
+                f"Skill cannot be model-invoked: {skill_name}"
+            )
         if not command.user_invocable:
-            return ValidationResult.failure(f"Skill is not user-invocable: {skill_name}")
+            return ValidationResult.failure(
+                f"Skill is not user-invocable: {skill_name}"
+            )
         return ValidationResult.success()
 
     return validate
@@ -196,9 +198,8 @@ def _expanded_content(command: SkillCommand) -> str:
     if command.root is None:
         return content
     root_text = str(command.root)
-    return (
-        f"Base directory for this skill: {root_text}\n\n"
-        + content.replace("${ONECODE_SKILL_DIR}", root_text)
+    return f"Base directory for this skill: {root_text}\n\n" + content.replace(
+        "${ONECODE_SKILL_DIR}", root_text
     )
 
 

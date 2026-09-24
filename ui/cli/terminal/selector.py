@@ -8,10 +8,10 @@ Esc 取消并返回 None；方向键移动高亮；Enter 选中。
 
 from __future__ import annotations
 
-import asyncio
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Generic, Sequence, TextIO, TypeVar
+from typing import Generic, TextIO, TypeVar
 
 from prompt_toolkit import Application
 from prompt_toolkit.formatted_text import FormattedText
@@ -22,7 +22,6 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 
 from ui.cli.terminal.transient import can_enter_alternate_screen
-
 
 T = TypeVar("T")
 
@@ -58,8 +57,10 @@ class TransientSelector(Generic[T]):
     ) -> SelectorItem[T] | None:
         if not self._items:
             return None
-        if input is None and output is None and not can_enter_alternate_screen(
-            self._stdout
+        if (
+            input is None
+            and output is None
+            and not can_enter_alternate_screen(self._stdout)
         ):
             return None
         app = self._build_application(input=input, output=output)

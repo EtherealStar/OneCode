@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import json
-from pathlib import Path
 import threading
-from typing import Any, Iterable
 import uuid
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
 
 from services.tasks.types import TaskRecord, TaskStatus, task_from_json, task_to_json
 
@@ -98,7 +99,9 @@ class TaskStore:
             metadata = _merge_metadata(task.metadata, updates.metadata)
             updated = replace(
                 task,
-                subject=updates.subject if updates.subject is not None else task.subject,
+                subject=updates.subject
+                if updates.subject is not None
+                else task.subject,
                 description=(
                     updates.description
                     if updates.description is not None
@@ -226,7 +229,7 @@ class TaskStore:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
-                raise ValueError("task JSON root must be an object")
+                raise TypeError("task JSON root must be an object")
             return task_from_json(data)
         except Exception as exc:
             raise TaskStoreError(f"Could not read task file {path}: {exc}") from exc
@@ -269,7 +272,9 @@ class TaskStore:
                 stack.extend(task.blocks)
         return False
 
-    def _unfinished_blockers(self, task_list_id: str, task: TaskRecord) -> tuple[str, ...]:
+    def _unfinished_blockers(
+        self, task_list_id: str, task: TaskRecord
+    ) -> tuple[str, ...]:
         tasks = {item.id: item for item in self.list_tasks(task_list_id)}
         return tuple(
             blocker_id

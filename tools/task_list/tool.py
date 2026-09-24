@@ -15,7 +15,6 @@ from services.tools.types import (
 )
 from tools.task_list.prompt import PROMPT
 
-
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {},
@@ -105,7 +104,11 @@ def format_task_list(tasks: tuple[TaskRecord, ...]) -> str:
         if task.owner:
             suffix += f" owner={task.owner}"
         if unfinished:
-            suffix += " [blocked by " + ", ".join(f"#{task_id}" for task_id in unfinished) + "]"
+            suffix += (
+                " [blocked by "
+                + ", ".join(f"#{task_id}" for task_id in unfinished)
+                + "]"
+            )
         lines.append(f"  #{task.id} [{task.status}] {task.subject}{suffix}")
     return "\n".join(lines)
 

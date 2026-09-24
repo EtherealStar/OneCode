@@ -13,8 +13,8 @@ from services.observability.trace import TraceRecorder, TraceSpan
 __all__ = [
     "ErrorLogRecorder",
     "ErrorLogSink",
-    "JsonlTraceSink",
     "JsonlErrorLogSink",
+    "JsonlTraceSink",
     "NoopErrorLogSink",
     "NoopTraceSink",
     "TraceRecord",

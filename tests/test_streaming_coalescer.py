@@ -20,8 +20,6 @@ on:
 
 from __future__ import annotations
 
-from typing import Any
-
 from core.stream_events import AgentEvent
 from ui.cli.terminal.streaming_coalescer import StreamingCoalescer
 
@@ -43,6 +41,7 @@ def _tool_name(name: str) -> AgentEvent:
 
 def _result(call_id: str = "c1") -> AgentEvent:
     from services.tools.types import ToolExecutionResult
+
     return AgentEvent(
         type="tool_result",
         result=ToolExecutionResult(
@@ -131,7 +130,9 @@ def test_tool_progress_collapses_to_latest_message() -> None:
     # c2. c1's intermediate messages must be dropped.
     progress_events = [ev for ev in applied if ev.type == "tool_progress"]
     assert len(progress_events) == 2
-    by_call_id = {ev.metadata["tool_call_id"]: ev.metadata["message"] for ev in progress_events}
+    by_call_id = {
+        ev.metadata["tool_call_id"]: ev.metadata["message"] for ev in progress_events
+    }
     assert by_call_id == {"c1": "step 9", "c2": "other"}
 
 

@@ -10,5 +10,4 @@ from services.model.stream import ModelStreamEvent
 
 
 class ModelClient(Protocol):
-    def stream(self, snapshot: ContextSnapshot) -> AsyncIterator[ModelStreamEvent]:
-        ...
+    def stream(self, snapshot: ContextSnapshot) -> AsyncIterator[ModelStreamEvent]: ...

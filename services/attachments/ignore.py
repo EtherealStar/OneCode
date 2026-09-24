@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ATTACHMENT_IGNORED_DIRS = frozenset(
     {
         ".git",

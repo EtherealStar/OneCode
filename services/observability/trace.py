@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
 import contextvars
-from contextvars import ContextVar, Token
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import time
 import uuid
-from typing import Any
+from collections.abc import Callable, Mapping
+from contextvars import ContextVar, Token
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal, Self
 
 from services.observability.events import TraceRecord
 from services.observability.sanitize import sanitize_attributes
@@ -37,11 +37,11 @@ class TraceRecorder:
         self.workspace = workspace
         self.sink = sink or NoopTraceSink()
         self.trace_id = trace_id or str(uuid.uuid4())
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._id_generator = id_generator or (lambda: str(uuid.uuid4()))
 
     @classmethod
-    def noop(cls, session_id: str = "") -> "TraceRecorder":
+    def noop(cls, session_id: str = "") -> TraceRecorder:
         return cls(session_id=session_id, sink=NoopTraceSink())
 
     @property
@@ -69,7 +69,7 @@ class TraceRecorder:
         attributes: Mapping[str, Any] | None = None,
         *,
         parent_span_id: str | None = None,
-    ) -> "TraceSpan":
+    ) -> TraceSpan:
         span_id = self._id_generator()
         parent_id = parent_span_id or _CURRENT_SPAN_ID.get()
         self._emit(
@@ -87,7 +87,7 @@ class TraceRecorder:
         attributes: Mapping[str, Any] | None = None,
         *,
         parent_span_id: str | None = None,
-    ) -> "TraceSpan":
+    ) -> TraceSpan:
         return self.start_span(name, attributes, parent_span_id=parent_span_id)
 
     def flush(self) -> None:
@@ -111,7 +111,7 @@ class TraceRecorder:
         records: list[dict[str, Any]] = []
         try:
             with path.open("r", encoding="utf-8") as handle:
-                lines = handle.readlines()[-max(1, limit):]
+                lines = handle.readlines()[-max(1, limit) :]
         except OSError:
             return []
         for line in lines:
@@ -125,7 +125,7 @@ class TraceRecorder:
 
     def _end_span(
         self,
-        span: "TraceSpan",
+        span: TraceSpan,
         attributes: Mapping[str, Any] | None = None,
         *,
         error: BaseException | None = None,
@@ -174,14 +174,14 @@ class TraceRecorder:
                 ),
             )
             self.sink.emit(record)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return
 
     def _timestamp(self) -> str:
         value = self._clock()
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 class TraceSpan:
@@ -205,7 +205,7 @@ class TraceSpan:
     def span_id(self) -> str:
         return self._span_id
 
-    def __enter__(self) -> "TraceSpan":
+    def __enter__(self) -> Self:
         self._token = _CURRENT_SPAN_ID.set(self.span_id)
         return self
 
@@ -214,7 +214,7 @@ class TraceSpan:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: object,
-    ) -> bool:
+    ) -> Literal[False]:
         _ = exc_type, traceback
         self.end(error=exc)
         if self._token is not None:
@@ -223,7 +223,9 @@ class TraceSpan:
             except ValueError:
                 # 异步生成器可能会在与进入 span 时不同的上下文中被关闭，
                 # 例如 CLI 取消流式轮次时。追踪清理不得将取消操作变为运行时错误。
-                contextvars.copy_context().run(_CURRENT_SPAN_ID.set, self.parent_span_id)
+                contextvars.copy_context().run(
+                    _CURRENT_SPAN_ID.set, self.parent_span_id
+                )
             self._token = None
         return False
 

@@ -27,7 +27,9 @@ def parse_skill_markdown(
         or name
     )
     context: SkillContext = (
-        "fork" if _clean_string(frontmatter.get("context")).lower() == "fork" else "inline"
+        "fork"
+        if _clean_string(frontmatter.get("context")).lower() == "fork"
+        else "inline"
     )
     return SkillCommand(
         name=name,

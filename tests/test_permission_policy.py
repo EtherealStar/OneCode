@@ -149,20 +149,23 @@ def test_project_tool_deny_hides_tool_and_denies_execution(tmp_path: Path) -> No
     registry = ToolRegistry([descriptor], permission_policy=policy)
 
     assert registry.visible_descriptors(state) == ()
-    assert policy.evaluate(
-        tool_call=ToolCall(
-            id="call-1",
-            name="edit_file",
-            input={"file_path": "a.txt", "old_string": "a", "new_string": "b"},
-        ),
-        descriptor=descriptor,
-        classification=descriptor.classify_input(
-            {"file_path": "a.txt", "old_string": "a", "new_string": "b"},
-            ToolRuntime(state=state),
-        ),
-        guard_policies=(),
-        state=state,
-    ).action == "deny"
+    assert (
+        policy.evaluate(
+            tool_call=ToolCall(
+                id="call-1",
+                name="edit_file",
+                input={"file_path": "a.txt", "old_string": "a", "new_string": "b"},
+            ),
+            descriptor=descriptor,
+            classification=descriptor.classify_input(
+                {"file_path": "a.txt", "old_string": "a", "new_string": "b"},
+                ToolRuntime(state=state),
+            ),
+            guard_policies=(),
+            state=state,
+        ).action
+        == "deny"
+    )
 
 
 def test_project_bash_content_rules_are_deny_first(tmp_path: Path) -> None:
@@ -191,7 +194,9 @@ def test_project_bash_content_rules_are_deny_first(tmp_path: Path) -> None:
     policy = PermissionPolicy(project_store=store)
     state = RuntimeState()
     descriptor = bash_descriptor()
-    runtime = ToolRuntime(state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace)))
+    runtime = ToolRuntime(
+        state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace))
+    )
 
     allowed_input = {"command": "npm run test"}
     allowed = policy.evaluate(
@@ -234,7 +239,9 @@ def test_project_ask_rule_keeps_tool_visible_but_requests_permission(
     state = RuntimeState()
     descriptor = bash_descriptor()
     registry = ToolRegistry([descriptor], permission_policy=policy)
-    runtime = ToolRuntime(state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace)))
+    runtime = ToolRuntime(
+        state=state, guard=SandboxGuard(SandboxBoundary(cwd=workspace))
+    )
     tool_input = {"command": "git status"}
 
     decision = policy.evaluate(

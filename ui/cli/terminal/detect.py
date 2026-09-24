@@ -147,7 +147,7 @@ def _brightness_from_osc11_match(match: re.Match[bytes]) -> TerminalBrightness:
 def _relative_luminance(r: float, g: float, b: float) -> float:
     """按照 WCAG 标准计算相对亮度，通道取值范围为 0 至 255。"""
 
-    def channel(value: int) -> float:
+    def channel(value: float) -> float:
         s = value / 255.0
         return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
 

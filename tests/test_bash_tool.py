@@ -96,11 +96,19 @@ def test_bash_classifies_readonly_and_write_commands() -> None:
     assert readonly.read_only is True
     assert readonly.modifies_filesystem is False
     assert write.read_only is False
-    assert any(target.kind == "file" and target.operation == "write" for target in write.targets)
-    assert any(target.kind == "command" and target.operation == "execute" for target in write.targets)
+    assert any(
+        target.kind == "file" and target.operation == "write"
+        for target in write.targets
+    )
+    assert any(
+        target.kind == "command" and target.operation == "execute"
+        for target in write.targets
+    )
 
 
-def test_unknown_command_prompts_permission_without_file_targets(tmp_path: Path) -> None:
+def test_unknown_command_prompts_permission_without_file_targets(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     policy = PermissionPolicy()

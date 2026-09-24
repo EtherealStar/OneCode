@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-import uuid
 
 from core.transitions import TransitionReason
 from services.model.types import ModelUsage

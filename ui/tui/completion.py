@@ -96,7 +96,9 @@ class CompletionOverlay(OptionList):
             options.append(Option(row, id=item.identity))
         if not options and empty_label is not None:
             options.append(
-                Option(Text(empty_label, style="ui.meta"), id="__empty__", disabled=True)
+                Option(
+                    Text(empty_label, style="ui.meta"), id="__empty__", disabled=True
+                )
             )
         self.add_options(options)
         self.display = True

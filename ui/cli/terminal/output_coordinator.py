@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from prompt_toolkit.application import run_in_terminal
 
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 # 排队等待下次刷新的单次静态文本行。用于取消通知及流式路径希望推入回滚历史的其他小型 Rich 可渲染对象。
 @dataclass
 class _PendingStatusLine:
-    text: Union[str, "Text"]
+    text: str | Text
 
 
 @dataclass
@@ -67,7 +67,7 @@ class _PendingCommit:
     静态提交本身与载荷无关，因此工作区信息存放在此处而非硬编码到提交中。
     """
 
-    commit: "StaticCommit"
+    commit: StaticCommit
     workspace: Path | None = None
 
     @property
@@ -101,7 +101,7 @@ class _CommitQueue:
     在二次调用 queue_commit 时将被丢弃。
     """
 
-    commits: list["StaticCommit"] = field(default_factory=list)
+    commits: list[_PendingCommit] = field(default_factory=list)
     status_lines: list[_PendingStatusLine] = field(default_factory=list)
     _seen_keys: set[tuple[str, int]] = field(default_factory=set)
 
@@ -147,7 +147,7 @@ class TerminalOutputCoordinator:
 
     def queue_commit(
         self,
-        commit: "StaticCommit",
+        commit: StaticCommit,
         *,
         workspace: Path | None = None,
     ) -> None:
@@ -170,11 +170,9 @@ class TerminalOutputCoordinator:
         if key in self._queue._seen_keys:
             return
         self._queue._seen_keys.add(key)
-        self._queue.commits.append(
-            _PendingCommit(commit=commit, workspace=workspace)
-        )
+        self._queue.commits.append(_PendingCommit(commit=commit, workspace=workspace))
 
-    def queue_status_line(self, text: "Text | str") -> None:
+    def queue_status_line(self, text: Text | str) -> None:
         """暂存单次静态文本行（例如取消通知）。
 
         该行在 flush_ready_checkpoints 期间逐字追加到静态控制台。
@@ -251,5 +249,6 @@ class TerminalOutputCoordinator:
 
     def pending_status_line_count(self) -> int:
         return len(self._queue.status_lines)
+
 
 __all__ = ["TerminalOutputCoordinator"]

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from services.subagents.types import SubagentRequest
+from services.subagents.types import SubagentRequest, SubagentResult
 from services.tools.types import (
     ToolCallClassification,
     ToolDescriptor,
@@ -62,7 +63,9 @@ def _handler_for(
         runtime: ToolRuntime,
     ) -> ToolExecutionResult:
         if tool_input.get("run_in_background") is True:
-            return _start_background_agent(tool_input, runtime, runner, background_task_manager)
+            return _start_background_agent(
+                tool_input, runtime, runner, background_task_manager
+            )
         # handler 是从工具执行进入子运行时的唯一桥梁。
         result = await runner.run(
             SubagentRequest(
@@ -101,6 +104,16 @@ def _handler_for(
         )
 
     return handle
+
+
+def _append_agent_output(output_path: Path, result: SubagentResult) -> None:
+    with output_path.open("a", encoding="utf-8", errors="replace") as handle:
+        handle.write(f"child_session_id: {result.session_id}\n")
+        handle.write(f"agent_type: {result.agent_type}\n")
+        handle.write(f"transition: {result.transition}\n\n")
+        handle.write(result.final_text)
+        if result.final_text and not result.final_text.endswith("\n"):
+            handle.write("\n")
 
 
 def _start_background_agent(
@@ -144,13 +157,7 @@ def _start_background_agent(
         if task is not None:
             output_path = Path(str(task.metadata.get("output_path_abs", "")))
             if output_path:
-                with output_path.open("a", encoding="utf-8", errors="replace") as handle:
-                    handle.write(f"child_session_id: {result.session_id}\n")
-                    handle.write(f"agent_type: {result.agent_type}\n")
-                    handle.write(f"transition: {result.transition}\n\n")
-                    handle.write(result.final_text)
-                    if result.final_text and not result.final_text.endswith("\n"):
-                        handle.write("\n")
+                await asyncio.to_thread(_append_agent_output, output_path, result)
         if result.is_error:
             raise RuntimeError(result.final_text)
         return {

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Awaitable, Iterable, Protocol
+from collections.abc import Awaitable, Iterable
+from typing import Any, Protocol, cast
 
 from core.runtime_state import RuntimeState
 from services.attachments.projector import AttachmentProjector
@@ -19,8 +20,7 @@ class InnerContextPreparer(Protocol):
         Iterable[dict[str, Any]]
         | PreparedContext
         | Awaitable[Iterable[dict[str, Any]] | PreparedContext]
-    ):
-        ...
+    ): ...
 
 
 class AttachmentContextPreparer:
@@ -43,9 +43,13 @@ class AttachmentContextPreparer:
         if self.inner is None:
             prepared = messages
         else:
-            prepared = self.inner.prepare(messages, state)
-            if inspect.isawaitable(prepared):
-                prepared = await prepared
+            maybe = self.inner.prepare(messages, state)
+            if inspect.isawaitable(maybe):
+                prepared = await cast(
+                    "Awaitable[Iterable[dict[str, Any]] | PreparedContext]", maybe
+                )
+            else:
+                prepared = maybe
         usage_hints: dict[str, Any] = {}
         transcript_refs: tuple[str, ...] = ()
         if isinstance(prepared, PreparedContext):

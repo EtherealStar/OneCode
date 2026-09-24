@@ -14,7 +14,6 @@ from ui.tui.conversation.render_cache import (
 )
 from ui.tui.projection_types import (
     LIFECYCLE_COMPLETED,
-    LIFECYCLE_DRAFT,
     PART_ATTACHMENT,
     PART_TEXT,
     PART_TOOL,

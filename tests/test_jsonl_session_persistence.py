@@ -145,8 +145,12 @@ def test_duplicate_tool_call_id_externalized_results_do_not_overwrite(
     assert first_path == "tool-results/call-1.txt"
     assert second_path.startswith("tool-results/call-1-")
     assert first_path != second_path
-    assert (current_session_dir / first_path).read_text(encoding="utf-8") == first_content
-    assert (current_session_dir / second_path).read_text(encoding="utf-8") == second_content
+    assert (current_session_dir / first_path).read_text(
+        encoding="utf-8"
+    ) == first_content
+    assert (current_session_dir / second_path).read_text(
+        encoding="utf-8"
+    ) == second_content
 
     transcript_store = JsonlTranscriptStore(
         sessions_dir(tmp_path),
@@ -191,9 +195,9 @@ def test_duplicate_tool_call_id_same_content_reuses_externalized_result(
     second_path = records[1]["message"]["metadata"]["tool_result_path"]
 
     assert first_path == second_path == "tool-results/call-1.txt"
-    assert sorted(path.name for path in (current_session_dir / "tool-results").iterdir()) == [
-        "call-1.txt"
-    ]
+    assert sorted(
+        path.name for path in (current_session_dir / "tool-results").iterdir()
+    ) == ["call-1.txt"]
 
 
 def test_clear_starts_new_session_without_deleting_old_transcript(
@@ -254,7 +258,9 @@ def test_replace_messages_for_compaction_appends_new_chain_without_deleting_hist
     assert records[2]["parent_uuid"] is None
     assert records[3]["parent_uuid"] == records[2]["uuid"]
     assert records[2]["message"]["metadata"]["compaction"]["reason"] == "manual"
-    assert records[2]["message"]["metadata"]["compaction"]["boundary_id"] == "boundary-1"
+    assert (
+        records[2]["message"]["metadata"]["compaction"]["boundary_id"] == "boundary-1"
+    )
 
     restored_state = RuntimeState()
     restored_store = MessageStore.from_transcript(

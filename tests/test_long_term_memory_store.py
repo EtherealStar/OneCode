@@ -29,7 +29,9 @@ def test_entrypoint_truncates_by_line_count(tmp_path):
     workspace = tmp_path / "repo"
     store = LongTermMemoryStore(workspace)
     store.ensure_exists()
-    store.entrypoint_path.write_text("\n".join(f"- item {i}" for i in range(220)), encoding="utf-8")
+    store.entrypoint_path.write_text(
+        "\n".join(f"- item {i}" for i in range(220)), encoding="utf-8"
+    )
 
     text, truncated = store.truncated_entrypoint(max_lines=200, max_chars=25_000)
 

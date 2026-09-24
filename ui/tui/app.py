@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, ClassVar, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -35,7 +36,7 @@ from services.questions.types import AnswerRecord, QuestionResponse
 from ui.tui.command_views import command_view
 from ui.tui.completion import CompletionItem, CompletionOverlay
 from ui.tui.composer import Composer
-from ui.tui.conversation import ConversationView, DetailRequested
+from ui.tui.conversation.view import ConversationView, DetailRequested
 from ui.tui.modals import (
     CommandOutputModal,
     CredentialModal,
@@ -69,7 +70,7 @@ def default_runtime_factory(workspace: Path, *, trust_prompt: Callable | None = 
 class OneCodeTuiApp(App[None]):
     TITLE = "OneCode"
     CSS_PATH = "onecode.tcss"
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+c", "cancel_or_clear", "取消/清空", show=False),
         Binding("end,ctrl+end", "jump_to_latest", "最新消息", show=False),
         Binding("ctrl+o", "toggle_details", "展开/折叠详情", show=False),
@@ -143,7 +144,7 @@ class OneCodeTuiApp(App[None]):
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
         view = self.query_one_optional(ConversationView)
         if view is not None:
@@ -160,7 +161,7 @@ class OneCodeTuiApp(App[None]):
                 self.workspace,
                 trust_prompt=self._trust_prompt or self._modal_trust_prompt,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.notify(f"启动失败: {exc}", severity="error")
             return
         self._controller = SessionController(runtime)
@@ -178,12 +179,10 @@ class OneCodeTuiApp(App[None]):
         loop = self._event_loop
         if loop is None:
             return "skip"
-        future = asyncio.run_coroutine_threadsafe(
-            self._ask_trust(request), loop
-        )
+        future = asyncio.run_coroutine_threadsafe(self._ask_trust(request), loop)
         try:
             return future.result()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "skip"
 
     async def _ask_trust(self, request: Any) -> str:
@@ -204,7 +203,7 @@ class OneCodeTuiApp(App[None]):
         async def run() -> None:
             try:
                 result = await self.push_screen_wait(modal)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                 if not future.done():
                     future.set_exception(exc)
                 return
@@ -241,7 +240,7 @@ class OneCodeTuiApp(App[None]):
                 self._handle_update(update)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             self.notify(f"会话更新失败: {exc}", severity="error")
 
     def _apply_change(self, change: Any) -> None:
@@ -275,7 +274,7 @@ class OneCodeTuiApp(App[None]):
                     await run_panel()
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
                     await self._record_error("interaction", exc)
         finally:
             self._panel_task = None
@@ -319,13 +318,11 @@ class OneCodeTuiApp(App[None]):
                 return ""
             plan_file = plan_store.read_plan(state)
             return plan_file.read() if plan_file.exists() else ""
-        except Exception:
+        except Exception:  # noqa: BLE001
             return ""
 
     def _handle_interaction_request(self, request: InteractionRequest) -> None:
-        self._enqueue_panel(
-            lambda request=request: self._resolve_interaction(request)
-        )
+        self._enqueue_panel(lambda request=request: self._resolve_interaction(request))
 
     async def _resolve_interaction(self, request: InteractionRequest) -> None:
         controller = self._controller
@@ -358,9 +355,7 @@ class OneCodeTuiApp(App[None]):
             elif choice == "reject":
                 await controller.respond(request.request_id, kind, "reject")
             else:
-                await controller.respond(
-                    request.request_id, kind, {"cancelled": True}
-                )
+                await controller.respond(request.request_id, kind, {"cancelled": True})
         else:
             await controller.respond(request.request_id, kind, None)
 
@@ -370,9 +365,7 @@ class OneCodeTuiApp(App[None]):
             selection = await self._show_modal(QuestionModal(question))
             if selection is None:
                 return QuestionResponse(declined=True, feedback="cancelled")
-            answer: Any = (
-                tuple(selection) if question.multi_select else selection[0]
-            )
+            answer: Any = tuple(selection) if question.multi_select else selection[0]
             answers.append(AnswerRecord(question=question.question, answer=answer))
         return QuestionResponse(answers=tuple(answers))
 
@@ -392,9 +385,7 @@ class OneCodeTuiApp(App[None]):
             if invocation is None:
                 receipt = await controller.submit(text)
                 if receipt.status == "rejected":
-                    self.notify(
-                        _reject_reason(receipt.reason), severity="warning"
-                    )
+                    self.notify(_reject_reason(receipt.reason), severity="warning")
                     return
                 if composer is not None and composer.text == text:
                     composer.clear_text()
@@ -403,7 +394,7 @@ class OneCodeTuiApp(App[None]):
                 if composer is not None and composer.text == text:
                     composer.clear_text()
                 await self._handle_command_outcome(outcome)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.notify("执行失败，请重试", severity="error")
             await self._record_error("submit", exc)
 
@@ -515,17 +506,13 @@ class OneCodeTuiApp(App[None]):
             return
         overlay.exit_mode()
 
-    def _show_command_completion(
-        self, overlay: CompletionOverlay, text: str
-    ) -> None:
+    def _show_command_completion(self, overlay: CompletionOverlay, text: str) -> None:
         from application.commands import command_registry
 
         prefix = text.lower()
         items: list[CompletionItem] = []
         for spec in command_registry():
-            displays = (spec.display_name, *(
-                f"/{alias}" for alias in spec.aliases
-            ))
+            displays = (spec.display_name, *(f"/{alias}" for alias in spec.aliases))
             for display in displays:
                 if not display.startswith(prefix):
                     continue
@@ -550,9 +537,7 @@ class OneCodeTuiApp(App[None]):
         index = before.rfind("@")
         if index < 0:
             return False
-        if index > 0 and not before[index - 1].isspace():
-            return False
-        return True
+        return index <= 0 or before[index - 1].isspace()
 
     def _schedule_file_completion(
         self, overlay: CompletionOverlay, text: str, cursor: int
@@ -573,7 +558,7 @@ class OneCodeTuiApp(App[None]):
             items = await asyncio.to_thread(
                 _file_completion_items, self.workspace, text, cursor
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             items = ()
         if generation != self._completion_generation:
             return
@@ -636,10 +621,8 @@ class OneCodeTuiApp(App[None]):
 
     async def _open_session_picker(self) -> None:
         try:
-            sessions = await asyncio.to_thread(
-                list_session_summaries, self.workspace
-            )
-        except Exception as exc:
+            sessions = await asyncio.to_thread(list_session_summaries, self.workspace)
+        except Exception as exc:  # noqa: BLE001
             self.notify("无法读取会话列表", severity="error")
             await self._record_error("session_list", exc)
             return
@@ -651,12 +634,12 @@ class OneCodeTuiApp(App[None]):
             self.notify(outcome.error, severity="error")
 
     async def _run_connect_flow(self) -> None:
+        from infrastructure.providers.catalog import get_provider_definition
         from ui.cli.connect import (
             ProviderEnvUpdate,
             existing_key_for_provider,
             list_connect_options,
         )
-        from infrastructure.providers.catalog import get_provider_definition
 
         options = list_connect_options()
         if not options:
@@ -681,7 +664,7 @@ class OneCodeTuiApp(App[None]):
                 credentials.base_url,
             )
             models = tuple(model.id for model in fetched)
-        except Exception:
+        except Exception:  # noqa: BLE001
             models = ()
         model = await self._show_modal(ModelPickerModal(models))
         if not model:
@@ -697,7 +680,7 @@ class OneCodeTuiApp(App[None]):
                     base_url=credentials.base_url,
                 ),
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.notify("无法保存模型配置", severity="error")
             await self._record_error("connect_save", exc)
             return
@@ -740,14 +723,12 @@ class OneCodeTuiApp(App[None]):
     async def _record_error(self, operation: str, error: BaseException) -> None:
         if self._controller is None:
             return
-        recorder = getattr(
-            self._controller.runtime, "error_log_recorder", None
-        )
+        recorder = getattr(self._controller.runtime, "error_log_recorder", None)
         if recorder is None:
             return
         try:
             recorder.record_error(error, source=f"tui_{operation}")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 
@@ -801,8 +782,11 @@ def _plan_summary(payload: Any) -> str:
 
 def _file_completion_items(workspace: Path, text: str, cursor: int):
     from ui.cli.suggestions import suggestions_for
+    from ui.cli.types import CliRuntime
 
-    shim = _WorkspaceShim(workspace)
+    # `_WorkspaceShim` deliberately exposes only `workspace`; suggestions_for
+    # touches no other runtime state for file/directory completion.
+    shim = cast(CliRuntime, _WorkspaceShim(workspace))
     return [
         CompletionItem(
             mode="file",

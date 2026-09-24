@@ -15,8 +15,8 @@ from tools.read_file import descriptor as read_file_descriptor
 from ui.cli import renderer
 from ui.cli.commands import dispatch_command, resolve_resume_target
 from ui.cli.resume import list_session_summaries
-from ui.cli.views.common import strip_ansi
 from ui.cli.types import CliRuntime
+from ui.cli.views.common import strip_ansi
 
 
 class FakeModelClient:

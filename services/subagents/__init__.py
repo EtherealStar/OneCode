@@ -6,8 +6,8 @@ from services.subagents.forking import build_forked_messages
 from services.subagents.types import AgentDefinition, SubagentRequest, SubagentResult
 
 __all__ = [
-    "AgentDefinition",
     "BUILT_IN_AGENTS",
+    "AgentDefinition",
     "CurrentModelContext",
     "SubagentRequest",
     "SubagentResult",

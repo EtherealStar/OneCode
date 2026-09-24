@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+from tui_test_support import ConversationApp, make_snapshot
+
+from application.types import AssistantDelta, MessageCommitted
 from ui.tui.conversation.refresh_scheduler import UiRefreshScheduler
 from ui.tui.projection import ConversationProjection
 from ui.tui.renderers.message import render_message
-
-from application.types import AssistantDelta, MessageCommitted
-from tui_test_support import ConversationApp, make_snapshot
 
 
 class FakeTimer:

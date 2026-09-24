@@ -1,4 +1,5 @@
 """task_update 工具的提示词文本。"""
+
 PROMPT = """Purpose:
 Update a durable task in the current task list.
 

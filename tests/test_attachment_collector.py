@@ -90,7 +90,6 @@ def test_collects_directory_attachment_with_entry_limit(tmp_path: Path) -> None:
     assert attachment["truncated"] is True
 
 
-
 def test_ambiguous_name_becomes_resolution_error_attachment(
     tmp_path: Path,
 ) -> None:

@@ -36,9 +36,7 @@ class SessionPermissionStore:
         operation: str,
         directory: Path,
     ) -> None:
-        self._allowed_directories.add(
-            (tool_name, operation, resolve_path(directory))
-        )
+        self._allowed_directories.add((tool_name, operation, resolve_path(directory)))
 
     def is_allowed(
         self,

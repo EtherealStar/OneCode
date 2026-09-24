@@ -71,7 +71,10 @@ class Recorder:
 
 
 def sse_body(chunks: Iterable[dict[str, Any]]) -> str:
-    return "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+    return (
+        "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        + "data: [DONE]\n\n"
+    )
 
 
 def sse_response(
@@ -107,7 +110,9 @@ def error_response(
     )
 
 
-def text_chunk(content: str | None = None, *, finish_reason: str | None = None) -> dict[str, Any]:
+def text_chunk(
+    content: str | None = None, *, finish_reason: str | None = None
+) -> dict[str, Any]:
     delta: dict[str, Any] = {}
     if content is not None:
         delta["content"] = content

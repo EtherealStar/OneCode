@@ -6,20 +6,22 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-
-from core.context_engine import ContextEngine
-from core.loop import AgentLoop
-from core.runtime_state import RuntimeState
-from infrastructure.config.env import ResolvedProviderConfig
-from infrastructure.filesystem.onecode_paths import sessions_dir
-from infrastructure.providers.chat_completions import OpenAICompatibleChatCompletionsClient
-from infrastructure.providers.catalog import get_provider_definition
 from sdk_test_support import (
     SSE_HEADERS,
     async_sdk,
     error_response,
     text_chunk,
     tool_call_chunk,
+)
+
+from core.context_engine import ContextEngine
+from core.loop import AgentLoop
+from core.runtime_state import RuntimeState
+from infrastructure.config.env import ResolvedProviderConfig
+from infrastructure.filesystem.onecode_paths import sessions_dir
+from infrastructure.providers.catalog import get_provider_definition
+from infrastructure.providers.chat_completions import (
+    OpenAICompatibleChatCompletionsClient,
 )
 from services.context.message_store import MessageStore
 from services.guard import SandboxBoundary, SandboxGuard
@@ -189,10 +191,7 @@ def test_provider_loop_can_read_then_edit_file(
             tool_call_turn(
                 "call_edit",
                 "edit_file",
-                (
-                    '{"file_path":"a.txt","old_string":"old",'
-                    '"new_string":"new"}'
-                ),
+                ('{"file_path":"a.txt","old_string":"old","new_string":"new"}'),
             ),
             text_turn("edit complete"),
         ]
@@ -253,9 +252,7 @@ def test_provider_loop_streams_answer_and_pairs_transcript(tmp_path: Path) -> No
     tool_result = next(
         record for record in records if record.message.get("role") == "tool_result"
     )
-    declared_ids = [
-        call["id"] for call in assistant.message.get("tool_calls", [])
-    ]
+    declared_ids = [call["id"] for call in assistant.message.get("tool_calls", [])]
     assert declared_ids == ["call_read"]
     assert tool_result.message["tool_call_id"] == "call_read"
     assert tool_result.assistant_call_id == assistant.assistant_call_id
@@ -305,7 +302,9 @@ def test_provider_loop_retries_rate_limit_once_with_trace(tmp_path: Path) -> Non
     ]
     assert len(retry_transitions) == 1
     assert retry_transitions[0].metadata["attempt"] == 1
-    assert [event.text for event in events if event.type == "completed"] == ["recovered"]
+    assert [event.text for event in events if event.type == "completed"] == [
+        "recovered"
+    ]
 
     retry_records = [
         record

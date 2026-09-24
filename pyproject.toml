@@ -18,7 +18,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
+    "pyright>=1.1.414",
     "pytest>=8.0.0",
+    "pytest-testmon>=2.2.0",
+    "ruff>=0.16.8",
 ]
 
 [build-system]
@@ -46,3 +50,22 @@ exclude = ["reference*", "tests*", "docs*", "lessons*", "assets*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+include = ["*.py", "*.pyi"]
+exclude = ["docs", "reference", "lessons"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = [
+    "application",
+    "core",
+    "infrastructure",
+    "prompts",
+    "services",
+    "tools",
+    "ui",
+    "utils",
+]

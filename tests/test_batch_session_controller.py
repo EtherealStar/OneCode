@@ -122,6 +122,7 @@ def _install(
     line: Any = "hello",
 ) -> None:
     if line == "EOF":
+
         def raise_eof(prompt: str = "") -> str:
             raise EOFError
 
@@ -141,7 +142,9 @@ def test_batch_streams_success(tmp_path: Path, monkeypatch: Any, capsys: Any) ->
     assert "hello" in output
 
 
-def test_batch_renders_tool_result(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+def test_batch_renders_tool_result(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
     runtime = _make_runtime(tmp_path, ToolLoop(tmp_path))
     _install(monkeypatch, runtime)
 
@@ -181,9 +184,7 @@ def test_batch_eof_is_clean_exit(tmp_path: Path, monkeypatch: Any, capsys: Any) 
     assert "Running..." not in capsys.readouterr().out
 
 
-def test_batch_permission_deny_is_observed(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_batch_permission_deny_is_observed(tmp_path: Path, monkeypatch: Any) -> None:
     loop = PermissionLoop()
     runtime = _make_runtime(tmp_path, loop)
     _install(monkeypatch, runtime)
@@ -191,9 +192,7 @@ def test_batch_permission_deny_is_observed(
     async def deny(self: Any, request: Any) -> PermissionResponse:
         return PermissionResponse(action="deny", feedback="no")
 
-    monkeypatch.setattr(
-        "ui.cli.batch.BatchPermissionPrompter.request_permission", deny
-    )
+    monkeypatch.setattr("ui.cli.batch.BatchPermissionPrompter.request_permission", deny)
 
     assert asyncio.run(run_batch_async(tmp_path)) == 0
     assert loop.observed is not None
@@ -210,9 +209,7 @@ def test_batch_question_interrupt_is_structured(
     async def decline(self: Any, questions: Any) -> QuestionResponse:
         return QuestionResponse(declined=True, feedback="interrupted")
 
-    monkeypatch.setattr(
-        "ui.cli.batch.BatchUserQuestionPrompter.ask_questions", decline
-    )
+    monkeypatch.setattr("ui.cli.batch.BatchUserQuestionPrompter.ask_questions", decline)
 
     assert asyncio.run(run_batch_async(tmp_path)) == 0
     assert loop.observed is not None
@@ -252,6 +249,7 @@ def test_batch_import_does_not_pull_textual() -> None:
         capture_output=True,
         text=True,
         cwd=str(repo_root),
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "BATCH_OK" in result.stdout

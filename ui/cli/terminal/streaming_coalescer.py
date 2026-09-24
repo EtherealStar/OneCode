@@ -26,7 +26,9 @@ if TYPE_CHECKING:
 # 可合并的事件类型。assistant_delta 累积文本，tool_progress 覆盖针对调用的进度字符串
 # （同一调用 ID 的多个事件折叠为最终值）。tool_call_delta 携带流式工具调用名称；
 # reducer 仅读取首个名称，因此合并是安全的。
-_COALESCED_EVENT_TYPES = frozenset({"assistant_delta", "tool_progress", "tool_call_delta"})
+_COALESCED_EVENT_TYPES = frozenset(
+    {"assistant_delta", "tool_progress", "tool_call_delta"}
+)
 
 
 class StreamingCoalescer:
@@ -41,7 +43,7 @@ class StreamingCoalescer:
     def __init__(
         self,
         *,
-        apply: Callable[["AgentEvent"], None],
+        apply: Callable[[AgentEvent], None],
         window_seconds: float = 0.016,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -62,7 +64,7 @@ class StreamingCoalescer:
         self._has_pending_tool_delta = False
         self._last_flush = clock()
 
-    def push(self, event: "AgentEvent") -> bool:
+    def push(self, event: AgentEvent) -> bool:
         """缓冲 event；若为低频事件则立即生效。
 
         当事件立即生效时返回 True（调用方应安排屏幕重绘）；

@@ -7,12 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from tui_test_support import make_snapshot
+
 from application.commands import CommandOutcome
 from application.types import (
     CancelResult,
     DetailRef,
     DetailResult,
-    InteractionRequest,
     InteractionRequested,
     ResponseResult,
     SnapshotUpdate,
@@ -20,7 +21,6 @@ from application.types import (
 )
 from services.permissions import PermissionOption, PermissionResponse
 from services.tools.types import ToolExecutionResult
-from textual.app import App
 from ui.tui.app import OneCodeTuiApp
 from ui.tui.composer import Composer
 from ui.tui.conversation.view import ConversationView
@@ -29,8 +29,6 @@ from ui.tui.modals import (
     PermissionModal,
     PlanApprovalModal,
 )
-
-from tui_test_support import make_snapshot
 
 
 class FakeRuntime:
@@ -78,9 +76,7 @@ class FakeController:
         from application.types import SubmissionReceipt
 
         self.submissions.append(text)
-        return SubmissionReceipt(
-            input_id="input-1", session_id="s1", status="started"
-        )
+        return SubmissionReceipt(input_id="input-1", session_id="s1", status="started")
 
     async def execute_command(self, line: str) -> CommandOutcome:
         self.commands.append(line)
@@ -227,9 +223,7 @@ def test_detail_request_is_routed_to_controller(tmp_path: Path) -> None:
             ref = DetailRef(
                 session_id="s1", kind="tool_result", identifier="t1", relative_path="x"
             )
-            app.on_detail_requested(
-                SimpleNamespace(detail_ref=ref)
-            )
+            app.on_detail_requested(SimpleNamespace(detail_ref=ref))
             await pilot.pause()
             assert controller.details == [ref]
 
@@ -300,7 +294,9 @@ def test_permission_interaction_opens_modal_and_responds(tmp_path: Path) -> None
         app, controller = _build_app(tmp_path)
         async with app.run_test() as pilot:
             await pilot.pause()
-            await controller.push(InteractionRequested(generation=1, sequence=1, request=request))
+            await controller.push(
+                InteractionRequested(generation=1, sequence=1, request=request)
+            )
             await pilot.pause()
             assert any(
                 isinstance(screen, PermissionModal) for screen in app.screen_stack
@@ -444,7 +440,10 @@ def test_interaction_resolved_dismisses_open_modal(tmp_path: Path) -> None:
 
             await controller.push(
                 InteractionResolved(
-                    generation=1, sequence=2, request_id="permission-2", outcome="cancelled"
+                    generation=1,
+                    sequence=2,
+                    request_id="permission-2",
+                    outcome="cancelled",
                 )
             )
             await pilot.pause()
