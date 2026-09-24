@@ -83,6 +83,8 @@ pre-push 阶段定义四个 `always_run: true`、`pass_filenames: false` 的 hoo
 
 不要把四条命令塞进平台相关的 shell 脚本；分开的 hook 名称能明确显示具体失败边界，并能在 Windows、WSL 和 GitHub 开发环境中复用 uv 命令。
 
+实施说明（2026-09-24）：两个 Ruff hook 必须显式声明 `exclude: ^(docs|reference|lessons)/`。pre-commit 以显式文件参数调用 `ruff`，而 Ruff 的 `[tool.ruff].exclude` 不作用于显式传入的文件；缺少该 exclude 时 `reference/` 会被格式化。`pytest-testmon` hook 的 `files` 白名单已限定范围为 `application|core|infrastructure|prompts|services|tools|ui|utils|tests` 目录及 `pyproject.toml`、`uv.lock`，无需额外 exclude。细节见 [decisions.md](./decisions.md)。
+
 安装并验证两种 hook：
 
     uv run pre-commit install --hook-type pre-commit --hook-type pre-push

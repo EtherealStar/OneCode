@@ -161,6 +161,26 @@ Rationale: 让生命周期/装配前置条件显式化符合 AGENTS.md 对并发
 
 Consequences: 未完全装配的 runtime 现在会以 `RuntimeError` 快速失败，而不是在更深处触发 `AttributeError`；`with_model_config` 仍通过 `getattr` 容忍缺少 `file_state_cache` 的鸭子类型 executor（测试替身）。
 
+## 2026-09-24: pre-commit 的 Ruff hooks 显式排除参考目录
+
+Decision: 在 `.pre-commit-config.yaml` 的 `ruff-check-fix` 与 `ruff-format` hooks 上增加 `exclude: ^(docs|reference|lessons)/`，而不是只依赖 `pyproject.toml` 的 `[tool.ruff].exclude`。
+
+Context: pre-commit 会把匹配到的文件作为显式参数传给 `ruff check`/`ruff format`；Ruff 官方行为是**显式传入的文件不受 `exclude` 约束**。首次 `pre-commit run --all-files` 因此改写了 24 个 `reference/ui/*.py` 文件，违背“Ruff 只覆盖项目 Python 代码”的既定范围。
+
+Rationale: 检查边界必须由 hook 自身保证，才能在 pre-commit 的显式文件模式下与 Ruff 配置保持一致；这也避免误改 `docs/`、`lessons/` 中的参考代码。
+
+Consequences: 若未来新增需要排除的目录，必须同时更新 `[tool.ruff].exclude` 与两个 hook 的 `exclude`；`pytest-testmon` hook 已用 `files` 白名单限定在生产目录、`tests/`、`pyproject.toml` 和 `uv.lock`，无需额外排除。
+
+## 2026-09-24: testmon 以 AST 指纹选择测试
+
+Decision: 接受 pytest-testmon 2.2.0 基于 AST/方法指纹（而非原始文本）判断改动，纯注释、docstring 与空白改动不触发测试选择；本地 commit 阶段使用 `--testmon`，pre-push 与远端仍为全量。
+
+Context: 验证中发现追加注释后 `--testmon` 报告 `changed files: 0`，而修改常量后才选择测试。Python 3.14 下 coverage 会以 sysmon core 运行并输出 “dynamic contexts … incomplete” 警告，但实测依赖记录（820 test_execution、2083 依赖边）与选择均正常。
+
+Rationale: 指纹粒度只影响“是否重跑”，不会漏掉真实语义改动；全量边界（pre-push/CI）已吸收选择算法风险。
+
+Consequences: 纯文档字符串改写不会触发本地增量测试，需依赖 pre-push/CI 覆盖；若升级 testmon 或 coverage 后选择明显异常，按计划重建 `.testmondata` 并以全量为准。
+
 ## Unresolved Operational Item
 
 主分支 required status checks 需要 GitHub 仓库管理权限。计划要求把 `quality` 和 `tests` 设为 required；实施者若没有权限，必须在 `progress.md` 记录阻塞、准确 job 名称和需要仓库管理员执行的设置，不能默认为 workflow 文件存在就已经阻止不合格合并。

@@ -1,0 +1,58 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check-fix
+        name: ruff check --fix (staged)
+        language: system
+        entry: uv run --frozen ruff check --fix
+        files: \.pyi?$
+        exclude: ^(docs|reference|lessons)/
+        stages: [pre-commit]
+
+      - id: ruff-format
+        name: ruff format (staged)
+        language: system
+        entry: uv run --frozen ruff format
+        files: \.pyi?$
+        exclude: ^(docs|reference|lessons)/
+        stages: [pre-commit]
+
+      - id: pytest-testmon
+        name: pytest affected tests (testmon)
+        language: system
+        entry: uv run --frozen python -m pytest --testmon tests -q
+        pass_filenames: false
+        files: ^(application|core|infrastructure|prompts|services|tools|ui|utils|tests)/.*\.pyi?$|^pyproject\.toml$|^uv\.lock$
+        stages: [pre-commit]
+
+      - id: ruff-check-all
+        name: ruff check (all)
+        language: system
+        entry: uv run --frozen ruff check .
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: ruff-format-check
+        name: ruff format --check (all)
+        language: system
+        entry: uv run --frozen ruff format --check .
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: pyright
+        name: pyright
+        language: system
+        entry: uv run --frozen pyright
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: pytest-full
+        name: pytest full suite (testmon refresh)
+        language: system
+        entry: uv run --frozen python -m pytest --testmon-noselect tests -q
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
