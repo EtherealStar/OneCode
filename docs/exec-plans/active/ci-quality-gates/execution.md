@@ -120,6 +120,8 @@ pre-push 阶段定义四个 `always_run: true`、`pass_filenames: false` 的 hoo
 
 CI 不读取或恢复 `.testmondata`，不执行 `ruff --fix` 或 `ruff format` 写模式，也不需要模型供应商密钥。为 workflow 内 uv 缓存启用 setup-uv 的官方缓存，但不得缓存 `.venv` 或测试选择数据库作为正确性前提。
 
+实施说明（2026-09-24）：workflow 已新增为 `.github/workflows/ci.yml`。`concurrency.group` 取 `${{ github.workflow }}-${{ github.ref }}` 并设 `cancel-in-progress: true`，使同一事件与 ref 上的旧运行被新 commit 取消，同时因 push（`refs/heads/*`）与 pull request（`refs/pull/*/merge`）ref 不同而不互相取消。setup-uv 使用 `enable-cache: true`，只缓存 uv 缓存。两个 action 采用计划已验证的 SHA：checkout v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1`、setup-uv v9.0.0 `c771a70e6277c0a99b617c7a806ffedaca235ff9`，实施时未升级。
+
 完成条件：workflow YAML 被 GitHub 接受，一次真实 push 和一次 pull request 更新都创建 `quality` 与 `tests` 检查；两者在当前基线通过，失败日志中的本地复现命令与上述命令一致。
 
 ### Batch 2: 验证失败路径并配置所需检查
