@@ -18,6 +18,98 @@ from services.model.types import ModelUsage, ProviderError
 from services.tools.types import ToolCall
 
 
+# SDK 3.18.0 Chat Completions `create()` 已声明的可选参数名。
+# 命中的 default_params 字段按 SDK 具名参数传递，其余经 extra_body 传递。
+SDK_CHAT_OPTION_NAMES = frozenset(
+    {
+        "audio",
+        "frequency_penalty",
+        "function_call",
+        "functions",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_tokens",
+        "metadata",
+        "modalities",
+        "moderation",
+        "n",
+        "parallel_tool_calls",
+        "prediction",
+        "presence_penalty",
+        "prompt_cache_key",
+        "prompt_cache_options",
+        "prompt_cache_retention",
+        "reasoning_effort",
+        "response_format",
+        "safety_identifier",
+        "seed",
+        "service_tier",
+        "stop",
+        "store",
+        "stream_options",
+        "temperature",
+        "tool_choice",
+        "top_logprobs",
+        "top_p",
+        "user",
+        "verbosity",
+        "web_search_options",
+    }
+)
+
+# 运行时保留字段：由 OneCode 决定，配置不得覆盖。
+_RESERVED_CHAT_FIELDS = frozenset({"model", "messages", "tools", "stream"})
+
+
+@dataclass(frozen=True)
+class ChatCompletionsRequest:
+    """SDK `chat.completions.create()` 的请求投影。"""
+
+    named: dict[str, Any]
+    extra_body: dict[str, Any]
+
+    def to_body(self) -> dict[str, Any]:
+        return {**self.named, **self.extra_body}
+
+
+def build_chat_completions_request(
+    config: ResolvedProviderConfig,
+    snapshot: ContextSnapshot,
+    *,
+    stream: bool = True,
+) -> ChatCompletionsRequest:
+    """把配置与上下文投影成 SDK 请求参数。
+
+    运行时决定 `model`、`messages`、`tools`、`stream` 与输出上限；
+    `default_params` 中 SDK 已声明的可选参数是具名参数，其余字段走
+    `extra_body`，且无法覆盖运行时保留字段。
+    """
+
+    named: dict[str, Any] = {
+        "model": config.model,
+        "messages": _project_messages(snapshot),
+        "stream": stream,
+    }
+    if snapshot.tool_schemas:
+        named["tools"] = list(snapshot.tool_schemas)
+
+    extra_body: dict[str, Any] = {}
+    for key, value in config.default_params.items():
+        if key in _RESERVED_CHAT_FIELDS:
+            continue
+        if key in SDK_CHAT_OPTION_NAMES:
+            named[key] = value
+        else:
+            extra_body[key] = value
+
+    max_output_tokens = _requested_max_output_tokens(snapshot)
+    if max_output_tokens is not None:
+        named["max_tokens"] = max_output_tokens
+
+    return ChatCompletionsRequest(named=named, extra_body=extra_body)
+
+
 @dataclass
 class _ToolCallAccumulator:
     index: int
@@ -117,24 +209,7 @@ class OpenAICompatibleChatCompletionsClient:
         )
 
     def _build_payload(self, snapshot: ContextSnapshot) -> dict[str, Any]:
-        messages: list[dict[str, Any]] = []
-        if snapshot.system_prompt:
-            messages.append({"role": "system", "content": snapshot.system_prompt})
-        messages.extend(_project_messages(snapshot.messages))
-
-        payload: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-            **self.config.default_params,
-        }
-        if snapshot.tool_schemas:
-            payload["tools"] = list(snapshot.tool_schemas)
-        request_overrides = snapshot.usage_hints.get("request_overrides")
-        if isinstance(request_overrides, dict):
-            max_output_tokens = request_overrides.get("max_output_tokens")
-            if isinstance(max_output_tokens, int) and max_output_tokens > 0:
-                payload["max_tokens"] = max_output_tokens
-        return payload
+        return build_chat_completions_request(self.config, snapshot).to_body()
 
     def _headers(self) -> dict[str, str]:
         if not self.config.api_key:
@@ -291,7 +366,21 @@ def _arguments_delta_chars(raw_delta: dict[str, Any]) -> int:
     return len(arguments) if isinstance(arguments, str) else 0
 
 
-def _project_messages(messages: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+def _requested_max_output_tokens(snapshot: ContextSnapshot) -> int | None:
+    request_overrides = snapshot.usage_hints.get("request_overrides")
+    if not isinstance(request_overrides, dict):
+        return None
+    max_output_tokens = request_overrides.get("max_output_tokens")
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        return max_output_tokens
+    return None
+
+
+def _project_messages(snapshot: ContextSnapshot) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    if snapshot.system_prompt:
+        messages.append({"role": "system", "content": snapshot.system_prompt})
+    messages.extend(snapshot.messages)
     projected: list[dict[str, Any]] = []
     for message in messages:
         if message.get("role") == "tool_result":
