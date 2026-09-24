@@ -4,9 +4,9 @@
 
 ## Current State
 
-- Status: Milestones 1–2 complete; Milestone 3 not started。Milestone 1 已随 `9627fd9` 提交，Milestone 2 的全部改动按用户要求**未提交**，保留在工作区审核。
-- Current milestone: Milestone 2 — 建立快速的本地开发、commit 和 push 门禁（已完成）
-- Last updated: 2026-09-24 13:36 CST
+- Status: Milestones 1–2 complete and committed（`9627fd9`、`ede0a84`）；Milestone 3 Batch 1 已完成本地部分（workflow 文件 + 本地基线校验），Batch 2 远端验证待提交/推送授权。Milestone 3 改动按用户要求**未提交**。
+- Current milestone: Milestone 3 — 建立远端全量 GitHub CI 和合并门禁（Batch 1 本地部分完成，远端验收待推送）
+- Last updated: 2026-09-24 13:52 CST
 
 ## Milestones And Batches
 
@@ -18,7 +18,7 @@
   - [x] Batch 1: 建立并验证 testmon 增量测试数据库
   - [x] Batch 2: 配置 pre-commit 与 pre-push hooks
 - [ ] Milestone 3: 建立远端全量 GitHub CI 和合并门禁
-  - [ ] Batch 1: 添加只读、可复现的 GitHub Actions workflow
+  - [~] Batch 1: 添加只读、可复现的 GitHub Actions workflow（文件已新增并本地校验；远端真实运行待推送后确认）
   - [ ] Batch 2: 验证失败路径并配置所需检查
 
 ## Surprises And Discoveries
@@ -150,6 +150,33 @@
 
 - 偏差：本里程碑仍在 Python 3.14.5 + Windows 上验证（与 Milestone 1 一致）；testmon 数据库只服务本地，pre-push 与后续 CI 仍以全量 `--testmon-noselect`/普通 pytest 为事实来源。
 
+### Milestone 3 执行证据（2026-09-24，Windows，本地 Python 3.14.5）
+
+- Command: `git ls-remote` / GitHub API 校验 action 版本
+  Result: `actions/checkout` v7.0.1 = `3d3c42e5aac5ba805825da76410c181273ba90b1`、`astral-sh/setup-uv` v9.0.0 = `c771a70e6277c0a99b617c7a806ffedaca235ff9`，与计划一致；SHA 未升级，无需新决策。
+  （本地 shell 无直连 GitHub 网络，版本号与 SHA 通过 GitHub REST API 只读校验。）
+
+- 新增 `.github/workflows/ci.yml`：`name: CI`，监听全部 `push` 与 `pull_request`；`concurrency` 以 `${{ github.workflow }}-${{ github.ref }}` 取消同 ref 旧运行；顶层权限仅 `contents: read`；`quality` 与 `tests` 两个 job 各自 `ubuntu-latest`、固定 SHA 的 checkout/setup-uv、启用 uv 缓存。
+  Result: 文件为唯一工作区改动（`git status --short` 仅 `?? .github/`）。
+
+- Command: `uv run python -c "import yaml; yaml.safe_load(...)"`
+  Result: YAML 解析通过，顶层键为 `name`、`on`、`concurrency`、`permissions`、`jobs`，jobs 为 `quality`/`tests`。
+
+- Command: `uv run ruff check --output-format=github .`
+  Result: 退出码 0（无 GitHub 注解输出）。
+
+- Command: `uv run ruff format --check .`
+  Result: `373 files already formatted`，退出码 0。
+
+- Command: `uv run pyright`
+  Result: `0 errors, 1 warning, 0 informations`，退出码 0。
+
+- Command: `uv run python -m pytest tests -q`
+  Result: `820 passed in 45.63s`，退出码 0。
+
+- 待完成（阻塞）：Batch 1 的远端验收与 Batch 2 需要一次真实 `git commit` + `git push` 到 `origin`（`https://github.com/EtherealStar/OneCode.git`）。用户当前要求“先不提交”，且本会话 shell 无直连 GitHub 网络，因此远端运行、失败路径验证和主分支 required status checks 尚未执行。
+  待执行项：推送后确认 `quality`/`tests` 在 push 与 pull request 上创建并通过；在临时分支构造 Ruff/Pyright/pytest 失败确认红灯后恢复转绿；如具备仓库管理权限，把 `quality`、`tests` 设为 required status checks。
+
 ## Artifacts And Notes
 
 - 计划入口：[plan.md](./plan.md)
@@ -178,4 +205,4 @@ Milestone 2 实施决策与偏差：
 - hook 级 `exclude: ^(docs|reference|lessons)/` 是必需的：Ruff 的 `[tool.ruff].exclude` 不作用于显式传入的文件，详见 `decisions.md`。
 - 两个失败路径的临时文件与生产代码验证改动均已恢复，工作区除本计划交付物外保持干净。
 
-后续：只剩 Milestone 3 —— 新增并验证 `.github/workflows/ci.yml`，并（如有权限）配置主分支 required status checks。
+Milestone 3 Batch 1 已新增 `.github/workflows/ci.yml` 并在本地通过等价质量命令与全量测试校验；action 版本与固定 SHA 已用 GitHub API 复核。远端真实运行（Batch 1 验收）与失败/恢复路径、required status checks（Batch 2）待获得提交/推送授权后执行；本会话 shell 无直连 GitHub 网络。为此计划目录暂不移动到 `completed/`。

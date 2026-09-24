@@ -181,6 +181,16 @@ Rationale: 指纹粒度只影响“是否重跑”，不会漏掉真实语义改
 
 Consequences: 纯文档字符串改写不会触发本地增量测试，需依赖 pre-push/CI 覆盖；若升级 testmon 或 coverage 后选择明显异常，按计划重建 `.testmondata` 并以全量为准。
 
+## 2026-09-24: CI 并发取消与 uv 缓存实现
+
+Decision: `.github/workflows/ci.yml` 的 `concurrency.group` 使用 `${{ github.workflow }}-${{ github.ref }}`，`cancel-in-progress: true`；setup-uv 使用 `enable-cache: true`，只缓存 uv 缓存，不缓存 `.venv` 或 `.testmondata`。
+
+Context: 计划要求同一事件和分支上的旧运行被新 commit 取消，并允许为 uv 缓存启用官方缓存。`github.ref` 对 push 是 `refs/heads/<branch>`、对 pull request 是 `refs/pull/<n>/merge`，因此按 ref 分组既能在各自事件内取消旧运行，又不会让 push 与 PR 运行互相取消。
+
+Rationale: 用 ref 作为分组键精确匹配“同一事件和分支”，同时保留 push 与 pull_request 双触发。
+
+Consequences: 同仓库已打开 PR 的分支仍可能同时产生 push 与 pull_request 运行（预期内的重复成本）；`.venv` 始终由 `uv sync --locked --dev` 重建，不作为正确性来源。
+
 ## Unresolved Operational Item
 
 主分支 required status checks 需要 GitHub 仓库管理权限。计划要求把 `quality` 和 `tests` 设为 required；实施者若没有权限，必须在 `progress.md` 记录阻塞、准确 job 名称和需要仓库管理员执行的设置，不能默认为 workflow 文件存在就已经阻止不合格合并。
