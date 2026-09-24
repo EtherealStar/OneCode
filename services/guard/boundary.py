@@ -129,8 +129,10 @@ def classify_path(
 
 def _is_unsafe_root_worktree(path: Path) -> bool:
     # git worktree 查询失败时可能退化成文件系统根目录；若信任该结果，
-    # 会意外允许整个盘符。
-    return Path(path) == Path(path).anchor
+    # 会意外允许整个盘符。注意 anchor 是字符串，必须包成 Path 再比较，
+    # 否则 Path == str 恒为 False，该判定会永远失效。
+    candidate = Path(path)
+    return candidate.is_absolute() and candidate == Path(candidate.anchor)
 
 
 def _match_denied(

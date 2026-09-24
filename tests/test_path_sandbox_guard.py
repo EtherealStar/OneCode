@@ -68,7 +68,10 @@ def test_root_worktree_does_not_allow_arbitrary_paths(tmp_path: Path) -> None:
     external = tmp_path / "external.txt"
     cwd.mkdir()
     external.write_text("outside", encoding="utf-8")
-    guard = SandboxGuard(SandboxBoundary(cwd=cwd, worktree=Path(Path.cwd().anchor)))
+    # 使用与 external 同一盘符/挂载点的文件系统根目录，确保该用例在
+    # Windows 与 Unix 上都能真正检验根目录 worktree 被拒绝。
+    root_worktree = Path(tmp_path.anchor)
+    guard = SandboxGuard(SandboxBoundary(cwd=cwd, worktree=root_worktree))
 
     policy = guard.check_path(external, operation="read")
 
