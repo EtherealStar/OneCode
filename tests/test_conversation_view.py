@@ -185,7 +185,9 @@ def test_tool_completion_order_does_not_move_cards() -> None:
                 )
             )
             app.push_change(change)
-            await pilot.pause(0.05)
+            # 视图通过去抖调度器异步刷新；测试直接同步刷出，避免依赖
+            # 固定 pause 时长，也无需轮询等待。
+            app.view.refresh_now()
             widget = app.viewport.widget_for("a1")
             assert widget is not None
             tool_ids = [p.tool_call_id for p in widget.message.parts if p.tool_name]
