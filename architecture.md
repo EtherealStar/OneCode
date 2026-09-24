@@ -121,7 +121,7 @@ flowchart TD
 
 模型层由 `infrastructure/providers/` 内的 OpenAI Python SDK 客户端发出标准 Chat Completions 与 Models API 请求，并处理 HTTP、SSE 和标准响应对象。OneCode 仍投影 `ContextSnapshot`、生成 `ModelStreamEvent`、归一化 `ProviderError`，并管理重试、工具权限与执行、上下文和会话。SDK 类型和异常不越过 infrastructure 边界；`core/` 与 `services/` 继续只依赖供应商中立接口。`/connect` 的候选端点顺序及 Ollama 原生 API 保留在 provider 基础设施中。
 
-客户端由应用层拥有和复用，配置热重载及会话关闭时释放；SDK 默认重试关闭，`ModelRetryRunner` 继续决定重试并即时转发流事件。标准 Chat Completions 流、标准模型发现与连通性探测已由 SDK 接管（见执行计划 Milestone 2/3）。接口和数据流的完整目标见 [模型供应商架构](docs/design-docs/model-provider-architecture.md)，实施顺序见 [SDK 迁移计划](docs/exec-plans/active/openai-sdk-provider-runtime/plan.md)。
+客户端由应用层拥有和复用，配置热重载及会话关闭时释放；SDK 默认重试关闭，`ModelRetryRunner` 继续决定重试并即时转发流事件。标准 Chat Completions 流、标准模型发现与连通性探测已由 SDK 接管（见执行计划 Milestone 2/3）。接口和数据流的完整目标见 [模型供应商架构](docs/design-docs/model-provider-architecture.md)，实施顺序见 [SDK 迁移计划](docs/exec-plans/completed/openai-sdk-provider-runtime/plan.md)。
 
 ## 当前代码模块地图
 

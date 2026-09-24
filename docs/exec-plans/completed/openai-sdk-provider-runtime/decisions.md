@@ -85,3 +85,13 @@ Consequences: `close_model_client` 先尝试 `aclose()` 再尝试 `close()` 并 
 ## Open Questions
 
 当前没有阻止撰写计划的产品决策。实施中的 SDK 细节由锁定版本的隔离测试确定；若测试推翻以上选择，先更新本文件再继续。
+
+## 2026-09-24: Milestone 4 验收与文档对齐
+
+Decision: 以 `tests/test_runtime_integration.py` 的两条端到端用例作为最终验收：一次真实工具调用（read_file 声明→执行→结果回填→续轮）与一次 429 后重试成功。验收同时断言 transcript 的 assistant/tool_result 配对、逐段 `assistant_delta`、两次请求与单条 `model_retry` trace。文档对齐只修正与实现不符的文字：把 `core-runtime-architecture.md` 时序图中的“缓冲后的事件 (失败attempt丢弃)”改为“立即转发的事件 (部分输出保持可见)”。
+
+Context: 计划的 Batch 1 要求不依赖真实凭证做跨模块演练；Batch 2 要求把先行文档中的缓冲式重试描述纠正为现行非缓冲语义，但不得改变已验证的行为。
+
+Rationale: 端到端测试是唯一能同时覆盖工具执行器、transcript 归属、流式 UI 事件与重试次数/trace 的自动化证据；文档只纠正契约偏差，不引入新设计。
+
+Consequences: 计划四个里程碑全部达成，归档到 `docs/exec-plans/completed/`；`architecture.md` 与 `model-provider-architecture.md` 中指向该计划的链接改指 completed 路径。剩余两个失败测试（`test_search_tools`、`test_conversation_view`）是工作树既有、与本计划无关。

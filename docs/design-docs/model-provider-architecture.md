@@ -1,6 +1,6 @@
 # Model And Provider Architecture
 
-本文定义 OneCode 模型边界的目标设计。OpenAI Python SDK 是 `infrastructure/providers/` 内的标准 API 客户端；`core/` 和 `services/` 只依赖 OneCode 的供应商中立协议。标准 Chat Completions 模型流、标准模型发现、`/connect` 标准探测与 SDK client 生命周期均已由 SDK 接管；实施步骤见 [执行计划](../exec-plans/active/openai-sdk-provider-runtime/plan.md)。
+本文定义 OneCode 模型边界的目标设计。OpenAI Python SDK 是 `infrastructure/providers/` 内的标准 API 客户端；`core/` 和 `services/` 只依赖 OneCode 的供应商中立协议。标准 Chat Completions 模型流、标准模型发现、`/connect` 标准探测与 SDK client 生命周期均已由 SDK 接管；实施步骤见 [执行计划](../exec-plans/completed/openai-sdk-provider-runtime/plan.md)。
 
 ## 边界与职责
 
@@ -88,4 +88,4 @@ SDK 的低层 typed chunk 流负责 SSE 解码。adapter 立即发出文本增�
 
 ## 实施状态
 
-标准模型边界已迁移完成（Milestone 2 与 3）：`chat_completions.py` 消费 SDK typed chunk 并把 SDK 异常归一化为 `ProviderError`，`factory.py` 按 `ResolvedProviderConfig` 构建并注入 `AsyncOpenAI`（`max_retries=0`、显式 `timeout`），`services/model/retry.py` 仍是唯一重试决策者。`model_catalog.py` 的标准 `/models` 与 `/connect` 标准 Chat Completions 探测改由同步 SDK client 发出，Ollama 原生端点仍走隔离的通用 HTTP 路径；`http.py` 只保留该路径的 `UrllibHttpTransport` 与共享错误归一化，无调用者的异步传输和 SSE parser 已删除。应用拥有并复用 SDK client：`application/session.py` 在 worker、子任务与流结束后关闭它，热重载先构建新 client、成功安装后关闭旧 client、失败时关闭新 client。以[执行计划](../exec-plans/active/openai-sdk-provider-runtime/plan.md)及其 progress 追踪交付与剩余验收。
+标准模型边界已迁移完成（Milestone 2 与 3）：`chat_completions.py` 消费 SDK typed chunk 并把 SDK 异常归一化为 `ProviderError`，`factory.py` 按 `ResolvedProviderConfig` 构建并注入 `AsyncOpenAI`（`max_retries=0`、显式 `timeout`），`services/model/retry.py` 仍是唯一重试决策者。`model_catalog.py` 的标准 `/models` 与 `/connect` 标准 Chat Completions 探测改由同步 SDK client 发出，Ollama 原生端点仍走隔离的通用 HTTP 路径；`http.py` 只保留该路径的 `UrllibHttpTransport` 与共享错误归一化，无调用者的异步传输和 SSE parser 已删除。应用拥有并复用 SDK client：`application/session.py` 在 worker、子任务与流结束后关闭它，热重载先构建新 client、成功安装后关闭旧 client、失败时关闭新 client。以[执行计划](../exec-plans/completed/openai-sdk-provider-runtime/plan.md)及其 progress 追踪交付与剩余验收。

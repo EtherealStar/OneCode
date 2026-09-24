@@ -75,7 +75,7 @@ sequenceDiagram
     Loop->>Retry: stream(λ model.stream(snapshot))
     Retry->>Model: stream(snapshot)
     Model-->>Retry: ModelStreamEvent*
-    Retry-->>Loop: 缓冲后的事件 (失败attempt丢弃)
+    Retry-->>Loop: 立即转发的事件 (部分输出保持可见)
     alt context_limit_exceeded 且首次
       Loop->>Loop: reactive compact → reactive_compact_retry → continue
     else output_interrupted
